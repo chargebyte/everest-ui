@@ -80,6 +80,7 @@ export function renderSafetyPage(container, {
           pageConfig.actions.read_settings.action,
           values
         );
+        console.log(readSafetySettingsRequest);
         sendSafetyRequest(
           sendPayload,
           addLog,

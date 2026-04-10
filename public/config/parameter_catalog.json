@@ -26,27 +26,27 @@
           ],
           "fields": [
             {
-              "id": "overtemperature_threshold",
-              "display_name": "Overtemperature Threshold",
+              "id": "abort-temperature",
+              "display_name": "Abort Temperature",
               "description": "Shutdown threshold for this PT1000 channel.",
               "value_type": "float",
               "unit": "degC",
-              "backend_path": "pt1000_{instance}.overtemperature_threshold"
+              "backend_path": "pt1000_{instance}.abort-temperature"
             },
             {
-              "id": "temperature_calibration",
-              "display_name": "Temperature Calibration",
+              "id": "resistance-offset",
+              "display_name": "Resistance Offset",
               "description": "Calibration offset/resistance for this PT1000 channel.",
               "value_type": "float",
               "unit": "ohm",
-              "backend_path": "pt1000_{instance}.temperature_calibration"
+              "backend_path": "pt1000_{instance}.resistance-offset"
             },
             {
-              "id": "overtemperature_protection",
+              "id": "overtemperature-protection",
               "display_name": "Overtemperature Protection",
               "description": "Enable or disable PT1000 channel protection.",
               "value_type": "boolean",
-              "backend_path": "pt1000_{instance}.overtemperature_protection"
+              "backend_path": "pt1000_{instance}.overtemperature-protection"
             }
           ]
         },
@@ -54,21 +54,39 @@
           "id": "contactors",
           "display_name": "Contactors",
           "instances": [
-            { "id": "contactor1", "display_name": "Contactor 1" },
-            { "id": "contactor2", "display_name": "Contactor 2" }
+            { "id": "0", "display_name": "Contactor 1" },
+            { "id": "1", "display_name": "Contactor 2" }
           ],
           "fields": [
             {
-              "id": "mode",
-              "display_name": "Mode",
+              "id": "type",
+              "display_name": "Type",
               "description": "fill in later",
               "value_type": "enum",
               "enum_values": [
                 "disabled",
                 "without-feedback",
-                "with-feedback"
+                "with-feedback",
+                "without-feedback-normally-open",
+                "with-feedback-normally-open"
               ],
-              "backend_path": "contactors_{instance}.mode"
+              "backend_path": "contactors_{instance}.type"
+            },
+            {
+              "id": "close-time",
+              "display_name": "Close Time",
+              "description": "fill in later",
+              "value_type": "integer",
+              "unit": "ms",
+              "backend_path": "contactors_{instance}.close-time"
+            },
+            {
+              "id": "open-time",
+              "display_name": "Open Time",
+              "description": "fill in later",
+              "value_type": "integer",
+              "unit": "ms",
+              "backend_path": "contactors_{instance}.open-time"
             }
           ]
         },
@@ -76,16 +94,21 @@
           "id": "estops",
           "display_name": "Emergency Stops",
           "instances": [
-            { "id": "estop1", "display_name": "E-Stop 1" },
-            { "id": "estop2", "display_name": "E-Stop 2" },
-            { "id": "estop3", "display_name": "E-Stop 3" }
+            { "id": "0", "display_name": "E-Stop 1" },
+            { "id": "1", "display_name": "E-Stop 2" },
+            { "id": "2", "display_name": "E-Stop 3" }
           ],
           "fields": [
             {
               "id": "enabled",
               "display_name": "Enabled",
               "description": "fill in later",
-              "value_type": "boolean",
+              "value_type": "enum",
+              "enum_values": [
+                "disabled",
+                "active-low",
+                "active-high"
+              ],
               "backend_path": "estops_{instance}.enabled"
             }
           ]

@@ -3,7 +3,8 @@
 // Copyright 2026 chargebyte GmbH
 
 const kUiElementMappers = {
-  settings_table: mapSettingsTableResponse
+  settings_table: mapSettingsTableResponse,
+  settings_matrix: mapSettingsMatrixResponse
 };
 
 export function mapResponse(uiElementType, requestResponseObject, message) {
@@ -16,6 +17,17 @@ export function mapResponse(uiElementType, requestResponseObject, message) {
 }
 
 function mapSettingsTableResponse(requestResponseObject, message) {
+  const mappedObject = structuredClone(requestResponseObject);
+  const backendParameters = message.parameters;
+
+  Object.values(mappedObject).forEach((entry) => {
+    entry.value = readBackendValue(backendParameters, entry.backend_path);
+  });
+
+  return mappedObject;
+}
+
+function mapSettingsMatrixResponse(requestResponseObject, message) {
   const mappedObject = structuredClone(requestResponseObject);
   const backendParameters = message.parameters;
 
