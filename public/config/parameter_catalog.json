@@ -1,0 +1,339 @@
+{
+  "modules": {
+    "safety": {
+      "title": "Safety Controller",
+      "actions": {
+        "read_settings": {
+          "group": "safety",
+          "action": "read_settings",
+          "parameters_mode": "empty"
+        },
+        "write_settings": {
+          "group": "safety",
+          "action": "write_settings",
+          "parameters_mode": "from_catalog"
+        }
+      },
+      "settings_matrix": [
+        {
+          "id": "pt1000",
+          "display_name": "PT1000 Resistors",
+          "instances": [
+            { "id": "0", "display_name": "PT1000 1" },
+            { "id": "1", "display_name": "PT1000 2" },
+            { "id": "2", "display_name": "PT1000 3" },
+            { "id": "3", "display_name": "PT1000 4" }
+          ],
+          "fields": [
+            {
+              "id": "overtemperature_threshold",
+              "display_name": "Overtemperature Threshold",
+              "description": "Shutdown threshold for this PT1000 channel.",
+              "value_type": "float",
+              "unit": "degC",
+              "backend_path": "pt1000_{instance}.overtemperature_threshold"
+            },
+            {
+              "id": "temperature_calibration",
+              "display_name": "Temperature Calibration",
+              "description": "Calibration offset/resistance for this PT1000 channel.",
+              "value_type": "float",
+              "unit": "ohm",
+              "backend_path": "pt1000_{instance}.temperature_calibration"
+            },
+            {
+              "id": "overtemperature_protection",
+              "display_name": "Overtemperature Protection",
+              "description": "Enable or disable PT1000 channel protection.",
+              "value_type": "boolean",
+              "backend_path": "pt1000_{instance}.overtemperature_protection"
+            }
+          ]
+        },
+        {
+          "id": "contactors",
+          "display_name": "Contactors",
+          "instances": [
+            { "id": "contactor1", "display_name": "Contactor 1" },
+            { "id": "contactor2", "display_name": "Contactor 2" }
+          ],
+          "fields": [
+            {
+              "id": "mode",
+              "display_name": "Mode",
+              "description": "fill in later",
+              "value_type": "enum",
+              "enum_values": [
+                "disabled",
+                "without-feedback",
+                "with-feedback"
+              ],
+              "backend_path": "contactors_{instance}.mode"
+            }
+          ]
+        },
+        {
+          "id": "estops",
+          "display_name": "Emergency Stops",
+          "instances": [
+            { "id": "estop1", "display_name": "E-Stop 1" },
+            { "id": "estop2", "display_name": "E-Stop 2" },
+            { "id": "estop3", "display_name": "E-Stop 3" }
+          ],
+          "fields": [
+            {
+              "id": "enabled",
+              "display_name": "Enabled",
+              "description": "fill in later",
+              "value_type": "boolean",
+              "backend_path": "estops_{instance}.enabled"
+            }
+          ]
+        }
+      ]
+    },
+    "everest": {
+      "title": "EVerest Configuration",
+      "actions": {
+        "read_config_parameters": {
+          "group": "everest",
+          "action": "read_config_parameters",
+          "parameters_mode": "empty"
+        },
+        "write_config_parameters": {
+          "group": "everest",
+          "action": "write_config_parameters",
+          "parameters_mode": "from_catalog"
+        },
+        "download_config": {
+          "group": "everest",
+          "action": "download_config",
+          "parameters_mode": "empty"
+        },
+        "upload_config": {
+          "group": "everest",
+          "action": "upload_config",
+          "parameters_mode": "raw_field",
+          "payload_field": "config_yaml"
+        }
+      },
+      "settings_table": {
+        "general": [
+          {
+            "id": "supported_scheduled_mode",
+            "display_name": "Scheduled Mode",
+            "description": "fill in later",
+            "value_type": "boolean",
+            "radio_group": 1,
+            "backend_path": "Evse15118D20.supported_scheduled_mode"
+          },
+          {
+            "id": "supported_dynamic_mode",
+            "display_name": "Dynamic Mode",
+            "description": "fill in later",
+            "value_type": "boolean",
+            "radio_group": 1,
+            "backend_path": "Evse15118D20.supported_dynamic_mode"
+          },
+          {
+            "id": "disable_authentication",
+            "display_name": "Disable Authentication",
+            "description": "fill in later",
+            "value_type": "boolean",
+            "backend_path": "EvseManager.disable_authentication"
+          }
+        ],
+        "profinet": [
+          {
+            "id": "charger_name",
+            "display_name": "Charger Name",
+            "description": "fill in later",
+            "value_type": "string",
+            "backend_path": "profinet.charger_name"
+          },
+          {
+            "id": "update_time_s",
+            "display_name": "Update Time",
+            "description": "fill in later",
+            "value_type": "integer",
+            "unit": "s",
+            "backend_path": "profinet.update_time_s"
+          },
+          {
+            "id": "bidirectional_enable",
+            "display_name": "Bidirectional Enable",
+            "description": "fill in later",
+            "value_type": "boolean",
+            "backend_path": "profinet.bidirectional_enable"
+          },
+          {
+            "id": "profinet_timeout_ms",
+            "display_name": "Profinet Timeout",
+            "description": "fill in later",
+            "value_type": "integer",
+            "unit": "ms",
+            "backend_path": "profinet.timeout_ms"
+          },
+          {
+            "id": "device",
+            "display_name": "Device",
+            "description": "fill in later",
+            "value_type": "string",
+            "backend_path": "profinet.device"
+          },
+          {
+            "id": "debug_mode",
+            "display_name": "Debug Mode",
+            "description": "fill in later",
+            "value_type": "boolean",
+            "backend_path": "profinet.debug_mode"
+          }
+        ]
+      },
+      "config_loader": {
+        "loader": [
+          {
+            "id": "direct_config",
+            "display_name": "Direct config"
+          }
+        ]
+      }
+    },
+    "ocpp": {
+      "title": "OCPP Configuration",
+      "actions": {
+        "read_settings": {
+          "group": "ocpp",
+          "action": "read_settings",
+          "parameters_mode": "empty"
+        },
+        "write_settings": {
+          "group": "ocpp",
+          "action": "write_settings",
+          "parameters_mode": "from_catalog"
+        }
+      },
+      "settings_table": {
+        "general": [
+          {
+            "id": "enabled",
+            "display_name": "OCPP Enabled",
+            "description": "",
+            "value_type": "boolean",
+            "backend_path": "OCPP201.enabled"
+          },
+          {
+            "id": "csms_server_address",
+            "display_name": "CSMS Server Address",
+            "description": "",
+            "value_type": "string",
+            "backend_path": "InternalCtrlr.csms_server_address"
+          },
+          {
+            "id": "energy_consumption_point",
+            "display_name": "Energy Consumption Point",
+            "description": "",
+            "value_type": "string",
+            "backend_path": "InternalCtrlr.energy_consumption_point"
+          }
+        ],
+        "security": [
+          {
+            "id": "user_id",
+            "display_name": "User ID",
+            "description": "",
+            "value_type": "string",
+            "backend_path": "InternalCtrlr.user_id"
+          },
+          {
+            "id": "password",
+            "display_name": "Password",
+            "description": "",
+            "value_type": "secret_string",
+            "backend_path": "InternalCtrlr.password"
+          },
+          {
+            "id": "security_profile",
+            "display_name": "Security Profile",
+            "description": "",
+            "value_type": "string",
+            "backend_path": "InternalCtrlr.security_profile"
+          }
+        ]
+      }
+    },
+    "pcap": {
+      "title": "PCAP Trace Recording",
+      "actions": {
+        "write": {
+          "group": "pcap",
+          "action": "write",
+          "parameters_mode": "from_catalog"
+        },
+        "read": {
+          "group": "pcap",
+          "action": "read",
+          "parameters_mode": "empty"
+        }
+      },
+      "capture": {
+        "capture_configuration": [
+          {
+            "id": "interface",
+            "display_name": "Interface",
+            "description": "",
+            "value_type": "string",
+            "backend_path": "general.interface"
+          }
+        ]
+      }
+    },
+    "firmware": {
+      "title": "Firmware Update",
+      "actions": {
+        "read_version": {
+          "group": "firmware",
+          "action": "read_version",
+          "parameters_mode": "empty"
+        },
+        "update_image": {
+          "group": "firmware",
+          "action": "update_image",
+          "parameters_mode": "raw_field",
+          "payload_field": "image_file"
+        }
+      },
+      "updater": {
+        "firmware": [
+          {
+            "id": "controller_firmware",
+            "display_name": "Controller Firmware"
+          }
+        ]
+      }
+    },
+    "logs": {
+      "title": "Error Logs",
+      "actions": {
+        "read": {
+          "group": "logs",
+          "action": "read",
+          "parameters_mode": "empty"
+        },
+        "download": {
+          "group": "logs",
+          "action": "download",
+          "parameters_mode": "raw_object"
+        }
+      },
+      "files_download": {
+        "errors": [
+          {
+            "id": "error_logs",
+            "display_name": "Error Logs"
+          }
+        ]
+      }
+    }
+  }
+}
