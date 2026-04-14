@@ -204,7 +204,7 @@ QJsonObject fillRequestedReadParameters(const QJsonObject &requestParameters,
     for (const QString &parameterKey : parameterKeys) {
         const QJsonObject requestBlock = requestParameters.value(parameterKey).toObject();
         if (parameterKey.startsWith(QStringLiteral("pt1000_"))) {
-            const QString indexString = parameterKey.sliced(QStringLiteral("pt1000_").size());
+            const QString indexString = parameterKey.mid(QStringLiteral("pt1000_").size());
             const int index = indexString.toInt();
             if (index >= 0 && index < pt1000Entries.size()) {
                 filledParameters.insert(parameterKey,
@@ -215,7 +215,7 @@ QJsonObject fillRequestedReadParameters(const QJsonObject &requestParameters,
 
         if (parameterKey.startsWith(QStringLiteral("contactors_"))) {
             const QString indexString =
-                parameterKey.sliced(QStringLiteral("contactors_").size());
+                parameterKey.mid(QStringLiteral("contactors_").size());
             const int index = indexString.toInt();
             if (index >= 0 && index < contactorEntries.size()) {
                 filledParameters.insert(
@@ -225,7 +225,7 @@ QJsonObject fillRequestedReadParameters(const QJsonObject &requestParameters,
         }
 
         if (parameterKey.startsWith(QStringLiteral("estops_"))) {
-            const QString indexString = parameterKey.sliced(QStringLiteral("estops_").size());
+            const QString indexString = parameterKey.mid(QStringLiteral("estops_").size());
             const int index = indexString.toInt();
             if (index >= 0 && index < estopEntries.size()) {
                 filledParameters.insert(parameterKey,

@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHostAddress>
 #include <QProcess>
 #include <QTcpSocket>
 #include <QTextStream>
