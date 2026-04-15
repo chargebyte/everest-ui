@@ -66,16 +66,12 @@ void RpcApiClient::start() {
 }
 
 bool RpcApiClient::isReady() const {
-    // qInfo() << "RpcApiClient::isReady: entered";
-    bool return_value = (m_rpcApiConfigured &&
-                         m_webSocket.state() == QAbstractSocket::ConnectedState &&
-                         m_handshakeComplete);
-    // qInfo() << "RpcApiClient::isReady: return_value: " << return_value;
-    return return_value;
+    return m_rpcApiConfigured &&
+           m_webSocket.state() == QAbstractSocket::ConnectedState &&
+           m_handshakeComplete;
 }
 
 RpcApiEvseStateResult RpcApiClient::getEvseState(int evseIndex) {
-    // qInfo() << "RpcApiClient::getEvseState: entered";
     if (!m_rpcApiConfigured) {
         return RpcApiEvseStateResult{
             .success = false,

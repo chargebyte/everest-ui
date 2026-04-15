@@ -430,7 +430,6 @@ ModuleResponse ensureEverestConfigSymlink(ModuleResponse response) {
 }
 
 EverestStateAllowedResult checkEverestStateAllowed(int evseIndex) {
-    // qInfo() << "checkEverestStateAllowed: entered";
     if (!g_rpcApiClient) {
         return EverestStateAllowedResult{
             .success = false,
@@ -481,7 +480,6 @@ EverestStateAllowedResult checkEverestStateAllowed(int evseIndex) {
 }
 
 ModuleResponse restartEverestStack(ModuleResponse response) {
-    // qInfo() << "restartEverestStack: entered";
     const EverestStateAllowedResult stateAllowedResult = checkEverestStateAllowed(1);
     if (!stateAllowedResult.success) {
         response.parameters = QJsonObject{
@@ -489,13 +487,11 @@ ModuleResponse restartEverestStack(ModuleResponse response) {
         };
         return response;
     }
-    // qInfo() << "restartEverestStack: EVerest in allowed state";
 
     return executeEverestRestart(response);
 }
 
 ModuleResponse executeEverestRestart(ModuleResponse response) {
-    // qInfo() << "executeEverestRestart: entered";
     SystemdService systemdService;
     if (!systemdService.restartUnit(QStringLiteral("everest.service"))) {
         response.parameters = QJsonObject{
@@ -504,25 +500,15 @@ ModuleResponse executeEverestRestart(ModuleResponse response) {
         return response;
     }
 
-    // qInfo() << "executeEverestRestart: everest.service restarted";
-
     response = waitForEverestServiceActive(response);
     if (!response.parameters.isEmpty()) {
         return response;
     }
 
-    // qInfo() << "executeEverestRestart: everest.service active";
-
     response = waitForRpcApiReady(response);
     if (!response.parameters.isEmpty()) {
         return response;
     }
-
-    QEventLoop waitLoop;
-    QTimer::singleShot(1000, &waitLoop, &QEventLoop::quit);
-    waitLoop.exec();
-
-    // qInfo() << "executeEverestRestart: RpcApi ready";
 
     const EverestStateAllowedResult stateAllowedResult = checkEverestStateAllowed(1);
     if (!stateAllowedResult.success) {
@@ -538,7 +524,6 @@ ModuleResponse executeEverestRestart(ModuleResponse response) {
 }
 
 ModuleResponse waitForEverestServiceActive(ModuleResponse response) {
-    // qInfo() << "waitForEverestServiceActive: entered";
     SystemdService systemdService;
     bool isUnitActive = false;
     bool waitTimedOut = false;
@@ -568,8 +553,6 @@ ModuleResponse waitForEverestServiceActive(ModuleResponse response) {
     timeoutTimer.start();
     waitLoop.exec();
 
-    // qInfo() << "waitForEverestServiceActive: wait-loop started";
-
     pollTimer.stop();
     timeoutTimer.stop();
 
@@ -580,13 +563,10 @@ ModuleResponse waitForEverestServiceActive(ModuleResponse response) {
         return response;
     }
 
-    // qInfo() << "waitForEverestServiceActive: everest.service active";
-
     return response;
 }
 
 ModuleResponse waitForRpcApiReady(ModuleResponse response) {
-    // qInfo() << "waitForRpcApiReady: entered";
     if (!g_rpcApiClient) {
         response.parameters = QJsonObject{
             {QStringLiteral("error"), QStringLiteral("rpc_api_not_configured")},
@@ -622,8 +602,6 @@ ModuleResponse waitForRpcApiReady(ModuleResponse response) {
     timeoutTimer.start();
     waitLoop.exec();
 
-    // qInfo() << "waitForRpcApiReady: wait-loop started";
-
     pollTimer.stop();
     timeoutTimer.stop();
 
@@ -633,8 +611,6 @@ ModuleResponse waitForRpcApiReady(ModuleResponse response) {
         };
         return response;
     }
-
-    // qInfo() << "waitForRpcApiReady: rpcApiReady == true";
 
     return response;
 }
