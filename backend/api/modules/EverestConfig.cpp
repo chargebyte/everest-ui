@@ -526,6 +526,17 @@ ModuleResponse executeEverestRestart(ModuleResponse response) {
     
     pollTimer.start();
     timeoutTimer.start();
+    waitLoop.exec();
+
+    pollTimer.stop();
+    timeoutTimer.stop();
+
+    if (waitTimedOut || !isUnitActive) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QStringLiteral("everest_restart_timeout")},
+        };
+        return response;
+    }
 
     const EverestStateAllowedResult stateAllowedResult = checkEverestStateAllowed(1);
     if (!stateAllowedResult.success) {

@@ -47,6 +47,7 @@ function createRequestResponseObject(sections) {
     (section.parameters || []).forEach((parameter) => {
       requestResponseObject[parameter.id] = {
         backend_path: parameter.backend_path,
+        value_type: parameter.value_type,
         value: null
       };
     });
@@ -230,8 +231,32 @@ function getSettingsTableValues(requestResponseObject, fieldMap) {
       return;
     }
 
-    parameterEntry.value = fieldElement.value;
+    parameterEntry.value = coerceSettingsTableValue(fieldElement.value, parameterEntry.value_type);
   });
 
   return updatedRequestResponseObject;
+}
+
+function coerceSettingsTableValue(value, valueType) {
+  if (valueType === 'integer') {
+    const trimmedValue = String(value).trim();
+    if (trimmedValue === '') {
+      return '';
+    }
+
+    const integerValue = Number.parseInt(trimmedValue, 10);
+    return Number.isNaN(integerValue) ? value : integerValue;
+  }
+
+  if (valueType === 'float') {
+    const trimmedValue = String(value).trim();
+    if (trimmedValue === '') {
+      return '';
+    }
+
+    const floatValue = Number.parseFloat(trimmedValue);
+    return Number.isNaN(floatValue) ? value : floatValue;
+  }
+
+  return value;
 }
