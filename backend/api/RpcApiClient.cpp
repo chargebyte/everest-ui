@@ -65,6 +65,12 @@ void RpcApiClient::start() {
     ensureConnected();
 }
 
+bool RpcApiClient::isReady() const {
+    return m_rpcApiConfigured &&
+           m_webSocket.state() == QAbstractSocket::ConnectedState &&
+           m_handshakeComplete;
+}
+
 RpcApiEvseStateResult RpcApiClient::getEvseState(int evseIndex) {    
     if (!m_rpcApiConfigured) {
         return RpcApiEvseStateResult{

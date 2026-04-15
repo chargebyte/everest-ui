@@ -499,23 +499,48 @@ ModuleResponse executeEverestRestart(ModuleResponse response) {
         };
         return response;
     }
-    
+
+    response = waitForEverestServiceActive(response);
+    if (!response.parameters.isEmpty()) {
+        return response;
+    }
+
+    response = waitForRpcApiReady(response);
+    if (!response.parameters.isEmpty()) {
+        return response;
+    }
+
+    const EverestStateAllowedResult stateAllowedResult = checkEverestStateAllowed(1);
+    if (!stateAllowedResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), stateAllowedResult.error},
+        };
+        return response;
+    }
+
+    response.parameters = QJsonObject{};
+    response.success = true;
+    return response;
+}
+
+ModuleResponse waitForEverestServiceActive(ModuleResponse response) {
+    SystemdService systemdService;
     bool isUnitActive = false;
     bool waitTimedOut = false;
     QEventLoop waitLoop;
     QTimer pollTimer;
     QTimer timeoutTimer;
-    
+
     pollTimer.setInterval(kEverestRestartPollIntervalMs);
     pollTimer.setSingleShot(false);
     timeoutTimer.setInterval(kEverestRestartWaitTimeoutMs);
     timeoutTimer.setSingleShot(true);
-    
+
     QObject::connect(&pollTimer, &QTimer::timeout, &waitLoop, [&]() {
         if (!systemdService.isUnitActive(QStringLiteral("everest.service"))) {
             return;
         }
-    
+
         isUnitActive = true;
         waitLoop.quit();
     });
@@ -523,7 +548,7 @@ ModuleResponse executeEverestRestart(ModuleResponse response) {
         waitTimedOut = true;
         waitLoop.quit();
     });
-    
+
     pollTimer.start();
     timeoutTimer.start();
     waitLoop.exec();
@@ -538,16 +563,55 @@ ModuleResponse executeEverestRestart(ModuleResponse response) {
         return response;
     }
 
-    const EverestStateAllowedResult stateAllowedResult = checkEverestStateAllowed(1);
-    if (!stateAllowedResult.success) {
+    return response;
+}
+
+ModuleResponse waitForRpcApiReady(ModuleResponse response) {
+    if (!g_rpcApiClient) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), stateAllowedResult.error},
+            {QStringLiteral("error"), QStringLiteral("rpc_api_not_configured")},
         };
         return response;
     }
 
-    response.parameters = QJsonObject{};
-    response.success = true;
+    bool rpcApiReady = false;
+    bool waitTimedOut = false;
+    QEventLoop waitLoop;
+    QTimer pollTimer;
+    QTimer timeoutTimer;
+
+    pollTimer.setInterval(kEverestRestartPollIntervalMs);
+    pollTimer.setSingleShot(false);
+    timeoutTimer.setInterval(kEverestRestartWaitTimeoutMs);
+    timeoutTimer.setSingleShot(true);
+
+    QObject::connect(&pollTimer, &QTimer::timeout, &waitLoop, [&]() {
+        if (!g_rpcApiClient->isReady()) {
+            return;
+        }
+
+        rpcApiReady = true;
+        waitLoop.quit();
+    });
+    QObject::connect(&timeoutTimer, &QTimer::timeout, &waitLoop, [&]() {
+        waitTimedOut = true;
+        waitLoop.quit();
+    });
+
+    pollTimer.start();
+    timeoutTimer.start();
+    waitLoop.exec();
+
+    pollTimer.stop();
+    timeoutTimer.stop();
+
+    if (waitTimedOut || !rpcApiReady) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QStringLiteral("rpc_api_not_connected")},
+        };
+        return response;
+    }
+
     return response;
 }
 

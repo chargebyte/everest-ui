@@ -45,6 +45,8 @@ ModuleResponse ensureEverestConfigOverlay(const ModuleRequest &request, ModuleRe
 ModuleResponse ensureEverestConfigSymlink(ModuleResponse response);
 ModuleResponse restartEverestStack(ModuleResponse response);
 ModuleResponse executeEverestRestart(ModuleResponse response);
+ModuleResponse waitForEverestServiceActive(ModuleResponse response);
+ModuleResponse waitForRpcApiReady(ModuleResponse response);
 EverestStateAllowedResult checkEverestStateAllowed(int evseIndex);
 
 ConfigPathResult loadEverestConfigPath(const QString &configKey);

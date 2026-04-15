@@ -49,6 +49,7 @@ class RpcApiClient : public QObject {
 public:
     explicit RpcApiClient(QObject *parent = nullptr);
     void start();
+    bool isReady() const;
     RpcApiEvseStateResult getEvseState(int evseIndex);
 
 private slots:
