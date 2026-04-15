@@ -510,14 +510,6 @@ ModuleResponse executeEverestRestart(ModuleResponse response) {
         return response;
     }
 
-    const EverestStateAllowedResult stateAllowedResult = checkEverestStateAllowed(1);
-    if (!stateAllowedResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), stateAllowedResult.error},
-        };
-        return response;
-    }
-
     response.parameters = QJsonObject{};
     response.success = true;
     return response;
