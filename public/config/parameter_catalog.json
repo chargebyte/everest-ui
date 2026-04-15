@@ -172,44 +172,44 @@
             "display_name": "Charger Name",
             "description": "fill in later",
             "value_type": "string",
-            "backend_path": "profinet.charger_name"
+            "backend_path": "Profinet.charger_name"
           },
           {
-            "id": "update_time_s",
+            "id": "update_time",
             "display_name": "Update Time",
             "description": "fill in later",
             "value_type": "integer",
             "unit": "s",
-            "backend_path": "profinet.update_time_s"
+            "backend_path": "Profinet.update_time"
           },
           {
             "id": "bidirectional_enable",
             "display_name": "Bidirectional Enable",
             "description": "fill in later",
             "value_type": "boolean",
-            "backend_path": "profinet.bidirectional_enable"
+            "backend_path": "Profinet.bidirectional_enable"
           },
           {
-            "id": "profinet_timeout_ms",
+            "id": "profinet_timeout",
             "display_name": "Profinet Timeout",
             "description": "fill in later",
             "value_type": "integer",
             "unit": "ms",
-            "backend_path": "profinet.timeout_ms"
+            "backend_path": "Profinet.profinet_timeout"
           },
           {
             "id": "device",
             "display_name": "Device",
             "description": "fill in later",
             "value_type": "string",
-            "backend_path": "profinet.device"
+            "backend_path": "Profinet.device"
           },
           {
             "id": "debug_mode",
             "display_name": "Debug Mode",
             "description": "fill in later",
             "value_type": "boolean",
-            "backend_path": "profinet.debug_mode"
+            "backend_path": "Profinet.debug_mode"
           }
         ]
       },
