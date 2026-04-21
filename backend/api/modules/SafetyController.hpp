@@ -7,6 +7,7 @@
 
 #include "RequestResponseTypes.hpp"
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
 
@@ -37,11 +38,17 @@ SafetyControllerConfigPathResult loadSafetyControllerSettingsPath(const QString 
 QString loadBackendConfigValue(const QString &configKey);
 QJsonObject readRequestedParametersFromYaml(const QJsonObject &requestParameters,
                                             const QJsonObject &yamlRoot);
+QJsonObject updateRequestParametersInYaml(const QJsonObject &requestParameters,
+                                          const QJsonObject &yamlRoot);
 QJsonObject readPt1000ParametersFromYaml(const QJsonObject &requestBlock,
                                          const QJsonValue &yamlEntry);
 QJsonObject readContactorParametersFromYaml(const QJsonObject &requestBlock,
                                             const QJsonValue &yamlEntry);
 QJsonObject readEstopParametersFromYaml(const QJsonObject &requestBlock, const QJsonValue &yamlEntry);
+QJsonValue updatePt1000ParametersInYaml(const QJsonObject &requestBlock);
+QJsonValue updateContactorParametersInYaml(const QJsonObject &requestBlock);
+QJsonValue updateEstopParametersInYaml(const QJsonObject &requestBlock);
+bool writeSafetyControllerYamlFile(const QString &yamlPath, const QJsonObject &yamlRoot);
 }
 
 #endif // SAFETY_CONTROLLER_HPP

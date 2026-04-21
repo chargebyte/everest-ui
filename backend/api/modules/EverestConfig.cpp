@@ -276,27 +276,6 @@ bool writeEverestConfigOverlay(const QString &overlayPath, const QJsonObject &ov
     return stream.status() == QTextStream::Ok;
 }
 
-QString formatYamlScalar(const QJsonValue &value) {
-    if (value.isBool()) {
-        return value.toBool() ? QStringLiteral("true") : QStringLiteral("false");
-    }
-
-    if (value.isDouble()) {
-        return QString::number(value.toDouble(), 'g', 15);
-    }
-
-    if (value.isNull() || value.isUndefined()) {
-        return QStringLiteral("null");
-    }
-
-    const QString stringValue = value.toString();
-    QString escapedValue = stringValue;
-    escapedValue.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
-    escapedValue.replace(QLatin1Char('"'), QStringLiteral("\\\""));
-    escapedValue.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
-    return QLatin1Char('"') + escapedValue + QLatin1Char('"');
-}
-
 ModuleResponse ensureEverestBaseConfig(ModuleResponse response) {
     const ConfigPathResult baseConfigPathResult =
         loadEverestConfigPath(QStringLiteral("everest_base_config_path"));

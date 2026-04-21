@@ -59,7 +59,6 @@ QString resolveActiveModuleKey(const QString &moduleName, const QJsonObject &bas
 QString generateActiveModuleKey(const QString &moduleName,
                                 const QJsonObject &activeModulesObject);
 bool writeEverestConfigOverlay(const QString &overlayPath, const QJsonObject &overlayObject);
-QString formatYamlScalar(const QJsonValue &value);
 QJsonObject fillRequestedReadParameters(const QJsonObject &requestParameters,
                                         const QJsonObject &yamlRoot);
 }

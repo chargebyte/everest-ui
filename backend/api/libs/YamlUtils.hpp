@@ -5,6 +5,7 @@
 #ifndef YAML_UTILS_HPP
 #define YAML_UTILS_HPP
 
+#include <QJsonValue>
 #include <QJsonObject>
 #include <QString>
 
@@ -15,5 +16,6 @@ struct YamlLoadResult {
 };
 
 YamlLoadResult loadYamlFile(const QString &path);
+QString formatYamlScalar(const QJsonValue &value);
 
 #endif // YAML_UTILS_HPP

@@ -11,6 +11,7 @@
 
 #include <QFile>
 #include <QJsonArray>
+#include <QTextStream>
 
 #include <stdexcept>
 
@@ -93,13 +94,50 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
 }
 
 ModuleResponse handleWriteRequest(const ModuleRequest &request) {
-    return ModuleResponse{
+    ModuleResponse response{
         .requestId = request.requestId,
         .group = QStringLiteral("safety"),
         .action = request.action,
-        .parameters = request.parameters,
+        .parameters = QJsonObject{},
         .success = false,
     };
+
+    const SafetyControllerConfigPathResult binPathResult =
+        loadSafetyControllerSettingsPath(QStringLiteral("safety_controller_settings_bin"));
+    if (!binPathResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), binPathResult.error},
+        };
+        return response;
+    }
+
+    const SafetyControllerConfigPathResult yamlPathResult =
+        loadSafetyControllerSettingsPath(QStringLiteral("safety_controller_settings_yaml"));
+    if (!yamlPathResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), yamlPathResult.error},
+        };
+        return response;
+    }
+
+    const YamlLoadResult yamlLoadResult = loadYamlFile(yamlPathResult.path);
+    if (!yamlLoadResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QStringLiteral("safety_controller_yaml_missing_reload_required")},
+        };
+        return response;
+    }
+
+    QJsonObject updatedParameters =
+        updateRequestParametersInYaml(request.parameters, yamlLoadResult.yamlRoot);
+    if (!writeSafetyControllerYamlFile(yamlPathResult.path, updatedParameters)) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QStringLiteral("safety_controller_yaml_write_failed")},
+        };
+        return response;
+    }
+
+    return response;
 }
 
 ModuleResponse readSafetyControllerSettingsAsYaml(const QString &binPath,
@@ -237,6 +275,52 @@ QJsonObject readRequestedParametersFromYaml(const QJsonObject &requestParameters
     return filledParameters;
 }
 
+QJsonObject updateRequestParametersInYaml(const QJsonObject &requestParameters,
+                                          const QJsonObject &yamlRoot) {
+    QJsonObject updatedYamlRoot = yamlRoot;
+    QJsonArray pt1000Entries = updatedYamlRoot.value(QStringLiteral("pt1000s")).toArray();
+    QJsonArray contactorEntries = updatedYamlRoot.value(QStringLiteral("contactors")).toArray();
+    QJsonArray estopEntries = updatedYamlRoot.value(QStringLiteral("estops")).toArray();
+
+    const auto parameterKeys = requestParameters.keys();
+    for (const QString &parameterKey : parameterKeys) {
+        const QJsonObject requestBlock = requestParameters.value(parameterKey).toObject();
+        if (parameterKey.startsWith(QStringLiteral("pt1000_"))) {
+            const QString indexString = parameterKey.mid(QStringLiteral("pt1000_").size());
+            const int index = indexString.toInt();
+            if (index >= 0 && index < pt1000Entries.size()) {
+                pt1000Entries.replace(index,
+                                      updatePt1000ParametersInYaml(requestBlock));
+            }
+            continue;
+        }
+
+        if (parameterKey.startsWith(QStringLiteral("contactors_"))) {
+            const QString indexString = parameterKey.mid(QStringLiteral("contactors_").size());
+            const int index = indexString.toInt();
+            if (index >= 0 && index < contactorEntries.size()) {
+                contactorEntries.replace(
+                    index, updateContactorParametersInYaml(requestBlock));
+            }
+            continue;
+        }
+
+        if (parameterKey.startsWith(QStringLiteral("estops_"))) {
+            const QString indexString = parameterKey.mid(QStringLiteral("estops_").size());
+            const int index = indexString.toInt();
+            if (index >= 0 && index < estopEntries.size()) {
+                estopEntries.replace(index,
+                                     updateEstopParametersInYaml(requestBlock));
+            }
+        }
+    }
+
+    updatedYamlRoot.insert(QStringLiteral("pt1000s"), pt1000Entries);
+    updatedYamlRoot.insert(QStringLiteral("contactors"), contactorEntries);
+    updatedYamlRoot.insert(QStringLiteral("estops"), estopEntries);
+    return updatedYamlRoot;
+}
+
 QJsonObject readPt1000ParametersFromYaml(const QJsonObject &requestBlock, const QJsonValue &yamlEntry) {
     QJsonObject filledBlock = requestBlock;
 
@@ -291,5 +375,91 @@ QJsonObject readEstopParametersFromYaml(const QJsonObject &requestBlock, const Q
     }
 
     return filledBlock;
+}
+
+QJsonValue updatePt1000ParametersInYaml(const QJsonObject &requestBlock) {
+    const bool overtemperatureProtection =
+        requestBlock.value(QStringLiteral("overtemperature-protection")).toBool();
+    if (!overtemperatureProtection) {
+        return QStringLiteral("disabled");
+    }
+
+    return QJsonObject{
+        {QStringLiteral("abort-temperature"),
+         requestBlock.value(QStringLiteral("abort-temperature")).toString().trimmed() +
+             QStringLiteral(" \u00b0C")},
+        {QStringLiteral("resistance-offset"),
+         requestBlock.value(QStringLiteral("resistance-offset")).toString().trimmed() +
+             QStringLiteral(" \u03a9")},
+    };
+}
+
+QJsonValue updateContactorParametersInYaml(const QJsonObject &requestBlock) {
+    const QString type = requestBlock.value(QStringLiteral("type")).toString();
+    if (type == QStringLiteral("disabled")) {
+        return QStringLiteral("disabled");
+    }
+
+    return QJsonObject{
+        {QStringLiteral("type"), type},
+        {QStringLiteral("close-time"),
+         requestBlock.value(QStringLiteral("close-time")).toString().trimmed() +
+             QStringLiteral(" ms")},
+        {QStringLiteral("open-time"),
+         requestBlock.value(QStringLiteral("open-time")).toString().trimmed() +
+             QStringLiteral(" ms")},
+    };
+}
+
+QJsonValue updateEstopParametersInYaml(const QJsonObject &requestBlock) {
+    return requestBlock.value(QStringLiteral("enabled"));
+}
+
+bool writeSafetyControllerYamlFile(const QString &yamlPath, const QJsonObject &yamlRoot) {
+    QFile yamlFile(yamlPath);
+    if (!yamlFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        return false;
+    }
+
+    QTextStream stream(&yamlFile);
+    stream << "version: "
+           << formatYamlScalar(yamlRoot.value(QStringLiteral("version"))) << "\n\n";
+
+    const auto writeSequence = [&stream](const QString &key,
+                                         const QJsonArray &entries,
+                                         const QStringList &objectFieldOrder) {
+        stream << key << ":\n";
+        for (const QJsonValue &entry : entries) {
+            if (entry.isObject()) {
+                const QJsonObject entryObject = entry.toObject();
+                bool firstField = true;
+                for (const QString &fieldName : objectFieldOrder) {
+                    if (!entryObject.contains(fieldName)) {
+                        continue;
+                    }
+
+                    stream << (firstField ? QStringLiteral("  - ") : QStringLiteral("    "))
+                           << fieldName << ": "
+                           << formatYamlScalar(entryObject.value(fieldName)) << "\n";
+                    firstField = false;
+                }
+                continue;
+            }
+
+            stream << "  - " << formatYamlScalar(entry) << "\n";
+        }
+    };
+
+    writeSequence(QStringLiteral("pt1000s"),
+                  yamlRoot.value(QStringLiteral("pt1000s")).toArray(),
+                  {QStringLiteral("abort-temperature"), QStringLiteral("resistance-offset")});
+    writeSequence(QStringLiteral("contactors"),
+                  yamlRoot.value(QStringLiteral("contactors")).toArray(),
+                  {QStringLiteral("type"), QStringLiteral("close-time"), QStringLiteral("open-time")});
+    writeSequence(QStringLiteral("estops"),
+                  yamlRoot.value(QStringLiteral("estops")).toArray(),
+                  {});
+
+    return stream.status() == QTextStream::Ok;
 }
 } // namespace SafetyController
