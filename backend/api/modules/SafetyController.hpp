@@ -34,6 +34,10 @@ ModuleResponse readSafetyControllerSettingsAsBin(const QString &binPath, ModuleR
 ModuleResponse convertSafetyControllerBinToYaml(const QString &binPath,
                                                 const QString &yamlPath,
                                                 ModuleResponse response);
+ModuleResponse convertSafetyControllerYamlToBin(const QString &yamlPath,
+                                                const QString &binPath,
+                                                ModuleResponse response);
+ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse response);
 SafetyControllerConfigPathResult loadSafetyControllerSettingsPath(const QString &configKey);
 QString loadBackendConfigValue(const QString &configKey);
 QJsonObject readRequestedParametersFromYaml(const QJsonObject &requestParameters,

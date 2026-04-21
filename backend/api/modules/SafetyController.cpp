@@ -137,6 +137,17 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
         return response;
     }
 
+    response = convertSafetyControllerYamlToBin(yamlPathResult.path, binPathResult.path, response);
+    if (!response.parameters.isEmpty()) {
+        return response;
+    }
+
+    response = flashSafetyControllerBin(binPathResult.path, response);
+    if (!response.parameters.isEmpty()) {
+        return response;
+    }
+
+    response.success = true;
     return response;
 }
 
@@ -207,6 +218,51 @@ ModuleResponse convertSafetyControllerBinToYaml(const QString &binPath,
     }
 
     yamlFile.close();
+    return response;
+}
+
+ModuleResponse convertSafetyControllerYamlToBin(const QString &yamlPath,
+                                                const QString &binPath,
+                                                ModuleResponse response) {
+    ConsoleConnector console;
+    ConsoleConnector::ExecOptions options;
+    const ConsoleConnector::RunResult result = console.executeTemplate(
+        QStringLiteral("ra-pb-create -i {yaml_path} -o {bin_path}"),
+        {
+            {QStringLiteral("{yaml_path}"), yamlPath},
+            {QStringLiteral("{bin_path}"), binPath},
+        },
+        options,
+        ConsoleConnector::ExecMode::Sync);
+
+    if (result.exitCode == 0) {
+        return response;
+    }
+
+    response.parameters = QJsonObject{
+        {QStringLiteral("error"), QStringLiteral("safety_controller_pb_create_failed")},
+        {QStringLiteral("stderr"), QString::fromUtf8(result.stderrData).trimmed()},
+    };
+    return response;
+}
+
+ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse response) {
+    ConsoleConnector console;
+    ConsoleConnector::ExecOptions options;
+    const ConsoleConnector::RunResult result = console.executeTemplate(
+        QStringLiteral("ra-update -a data flash {bin_path}"),
+        {{QStringLiteral("{bin_path}"), binPath}},
+        options,
+        ConsoleConnector::ExecMode::Sync);
+
+    if (result.exitCode == 0) {
+        return response;
+    }
+
+    response.parameters = QJsonObject{
+        {QStringLiteral("error"), QStringLiteral("safety_controller_flash_failed")},
+        {QStringLiteral("stderr"), QString::fromUtf8(result.stderrData).trimmed()},
+    };
     return response;
 }
 
