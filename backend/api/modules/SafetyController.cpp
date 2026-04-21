@@ -73,7 +73,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
         return response;
     }
 
-    response = ensureSafetyControllerSettingsYaml(binPathResult.path, yamlPathResult.path, response);
+    response = readSafetyControllerSettingsAsYaml(binPathResult.path, yamlPathResult.path, response);
     if (!response.parameters.isEmpty()) {
         return response;
     }
@@ -87,7 +87,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
     }
 
     response.parameters =
-        fillRequestedReadParameters(request.parameters, yamlLoadResult.yamlRoot);
+        readRequestedParametersFromYaml(request.parameters, yamlLoadResult.yamlRoot);
     response.success = true;
     return response;
 }
@@ -102,10 +102,10 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
     };
 }
 
-ModuleResponse ensureSafetyControllerSettingsYaml(const QString &binPath,
-                                                 const QString &yamlPath,
-                                                 ModuleResponse response) {
-    response = dumpSafetyControllerSettingsBin(binPath, response);
+ModuleResponse readSafetyControllerSettingsAsYaml(const QString &binPath,
+                                                  const QString &yamlPath,
+                                                  ModuleResponse response) {
+    response = readSafetyControllerSettingsAsBin(binPath, response);
     if (!response.parameters.isEmpty()) {
         return response;
     }
@@ -113,7 +113,7 @@ ModuleResponse ensureSafetyControllerSettingsYaml(const QString &binPath,
     return convertSafetyControllerBinToYaml(binPath, yamlPath, response);
 }
 
-ModuleResponse dumpSafetyControllerSettingsBin(const QString &binPath, ModuleResponse response) {
+ModuleResponse readSafetyControllerSettingsAsBin(const QString &binPath, ModuleResponse response) {
     ConsoleConnector console;
     ConsoleConnector::ExecOptions options;
     const ConsoleConnector::RunResult result = console.executeTemplate(
@@ -193,8 +193,8 @@ QString loadBackendConfigValue(const QString &configKey) {
     return ::readBackendConfigValue(configKey);
 }
 
-QJsonObject fillRequestedReadParameters(const QJsonObject &requestParameters,
-                                        const QJsonObject &yamlRoot) {
+QJsonObject readRequestedParametersFromYaml(const QJsonObject &requestParameters,
+                                            const QJsonObject &yamlRoot) {
     QJsonObject filledParameters = requestParameters;
     const QJsonArray pt1000Entries = yamlRoot.value(QStringLiteral("pt1000s")).toArray();
     const QJsonArray contactorEntries = yamlRoot.value(QStringLiteral("contactors")).toArray();
@@ -208,7 +208,7 @@ QJsonObject fillRequestedReadParameters(const QJsonObject &requestParameters,
             const int index = indexString.toInt();
             if (index >= 0 && index < pt1000Entries.size()) {
                 filledParameters.insert(parameterKey,
-                                        fillPt1000Parameters(requestBlock, pt1000Entries.at(index)));
+                                        readPt1000ParametersFromYaml(requestBlock, pt1000Entries.at(index)));
             }
             continue;
         }
@@ -219,7 +219,7 @@ QJsonObject fillRequestedReadParameters(const QJsonObject &requestParameters,
             const int index = indexString.toInt();
             if (index >= 0 && index < contactorEntries.size()) {
                 filledParameters.insert(
-                    parameterKey, fillContactorParameters(requestBlock, contactorEntries.at(index)));
+                    parameterKey, readContactorParametersFromYaml(requestBlock, contactorEntries.at(index)));
             }
             continue;
         }
@@ -229,7 +229,7 @@ QJsonObject fillRequestedReadParameters(const QJsonObject &requestParameters,
             const int index = indexString.toInt();
             if (index >= 0 && index < estopEntries.size()) {
                 filledParameters.insert(parameterKey,
-                                        fillEstopParameters(requestBlock, estopEntries.at(index)));
+                                        readEstopParametersFromYaml(requestBlock, estopEntries.at(index)));
             }
         }
     }
@@ -237,7 +237,7 @@ QJsonObject fillRequestedReadParameters(const QJsonObject &requestParameters,
     return filledParameters;
 }
 
-QJsonObject fillPt1000Parameters(const QJsonObject &requestBlock, const QJsonValue &yamlEntry) {
+QJsonObject readPt1000ParametersFromYaml(const QJsonObject &requestBlock, const QJsonValue &yamlEntry) {
     QJsonObject filledBlock = requestBlock;
 
     if (yamlEntry.isString() && yamlEntry.toString() == QStringLiteral("disabled")) {
@@ -260,7 +260,7 @@ QJsonObject fillPt1000Parameters(const QJsonObject &requestBlock, const QJsonVal
     return filledBlock;
 }
 
-QJsonObject fillContactorParameters(const QJsonObject &requestBlock, const QJsonValue &yamlEntry) {
+QJsonObject readContactorParametersFromYaml(const QJsonObject &requestBlock, const QJsonValue &yamlEntry) {
     QJsonObject filledBlock = requestBlock;
 
     if (yamlEntry.isString() && yamlEntry.toString() == QStringLiteral("disabled")) {
@@ -283,7 +283,7 @@ QJsonObject fillContactorParameters(const QJsonObject &requestBlock, const QJson
     return filledBlock;
 }
 
-QJsonObject fillEstopParameters(const QJsonObject &requestBlock, const QJsonValue &yamlEntry) {
+QJsonObject readEstopParametersFromYaml(const QJsonObject &requestBlock, const QJsonValue &yamlEntry) {
     QJsonObject filledBlock = requestBlock;
 
     if (yamlEntry.isString()) {
