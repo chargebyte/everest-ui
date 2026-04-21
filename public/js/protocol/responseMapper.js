@@ -21,7 +21,10 @@ function mapSettingsTableResponse(requestResponseObject, message) {
   const backendParameters = message.parameters;
 
   Object.values(mappedObject).forEach((entry) => {
-    entry.value = readBackendValue(backendParameters, entry.backend_path);
+    const backendValue = readBackendValue(backendParameters, entry.backend_path);
+    entry.value = Object.hasOwn(entry, 'default_value')
+      ? entry.default_value
+      : backendValue;
   });
 
   return mappedObject;

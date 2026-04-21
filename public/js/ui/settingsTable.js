@@ -50,6 +50,10 @@ function createRequestResponseObject(sections) {
         value_type: parameter.value_type,
         value: null
       };
+
+      if (Object.hasOwn(parameter, 'default_value')) {
+        requestResponseObject[parameter.id].default_value = parameter.default_value;
+      }
     });
   });
 
