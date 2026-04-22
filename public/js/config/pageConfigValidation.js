@@ -181,7 +181,7 @@ function validateSettingsMatrixSectionEntries(block) {
 
 function validateSettingsTableRows(block) {
   const requiredKeys = ['id', 'display_name', 'description', 'value_type', 'backend_path'];
-  const optionalKeys = ['unit', 'radio_group'];
+  const optionalKeys = ['unit', 'radio_group', 'default_value'];
   const allowedKeys = new Set([...requiredKeys, ...optionalKeys]);
   const optionalKeyValidators = {
     unit(row) {
@@ -189,6 +189,31 @@ function validateSettingsTableRows(block) {
     },
     radio_group(row) {
       return Number.isInteger(row.radio_group);
+    },
+    default_value(row) {
+      if (!Object.hasOwn(row, 'default_value')) {
+        return true;
+      }
+
+      if (row.value_type === 'boolean') {
+        return typeof row.default_value === 'boolean';
+      }
+
+      if (row.value_type === 'integer') {
+        return Number.isInteger(row.default_value);
+      }
+
+      if (row.value_type === 'float') {
+        return typeof row.default_value === 'number';
+      }
+
+      if (row.value_type === 'string' ||
+          row.value_type === 'secret_string' ||
+          row.value_type === 'enum') {
+        return typeof row.default_value === 'string';
+      }
+
+      return false;
     }
   };
 
