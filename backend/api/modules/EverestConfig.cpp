@@ -5,6 +5,7 @@
 #include "EverestConfig.hpp"
 
 #include "BackendConfig.hpp"
+#include "EverestServiceControl.hpp"
 #include "ProtocolSchema.hpp"
 #include "RpcApiClient.hpp"
 #include "SystemdService.hpp"
@@ -19,8 +20,6 @@
 namespace EverestConfig {
 namespace {
 RpcApiClient *g_rpcApiClient = nullptr;
-constexpr int kEverestRestartWaitTimeoutMs = 10000;
-constexpr int kEverestRestartPollIntervalMs = 200;
 constexpr int kEverestSilFixedWaitMs = 5000;
 
 EverestAction toEverestAction(const QString &action) {
@@ -408,181 +407,34 @@ ModuleResponse ensureEverestConfigSymlink(ModuleResponse response) {
     return response;
 }
 
-EverestStateAllowedResult checkEverestStateAllowed(int evseIndex) {
-    if (!g_rpcApiClient) {
-        return EverestStateAllowedResult{
-            .success = false,
-            .state = QString(),
-            .error = QStringLiteral("rpc_api_client_unavailable"),
-        };
-    }
-
-    const QString whitelistValue =
-        loadBackendConfigValue(QStringLiteral("everest_restart_allowed_states"));
-    if (whitelistValue.isEmpty()) {
-        return EverestStateAllowedResult{
-            .success = false,
-            .state = QString(),
-            .error = QStringLiteral("everest_restart_allowed_states_missing"),
-        };
-    }
-
-    const RpcApiEvseStateResult evseStateResult = g_rpcApiClient->getEvseState(evseIndex);
-    if (!evseStateResult.success) {
-        return EverestStateAllowedResult{
-            .success = false,
-            .state = QString(),
-            .error = evseStateResult.error,
-        };
-    }
-
-    QStringList allowedStates =
-        whitelistValue.split(QLatin1Char(','), Qt::SkipEmptyParts);
-    for (QString &allowedState : allowedStates) {
-        allowedState = allowedState.trimmed();
-    }
-
-    if (!allowedStates.contains(evseStateResult.state)) {
-        return EverestStateAllowedResult{
-            .success = false,
-            .state = evseStateResult.state,
-            .error = QStringLiteral("config could not be applied because EVerest-stack is in state \"%1\" and cannot be restarted, please unplug the EV and try again")
-                         .arg(evseStateResult.state),
-        };
-    }
-
-    return EverestStateAllowedResult{
-        .success = true,
-        .state = evseStateResult.state,
-        .error = QString(),
-    };
-}
-
 ModuleResponse restartEverestStack(ModuleResponse response) {
-    const EverestStateAllowedResult stateAllowedResult = checkEverestStateAllowed(1);
+    const EverestStateAllowedResult stateAllowedResult =
+        EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
     if (!stateAllowedResult.success) {
+        QString error = stateAllowedResult.error;
+        if (stateAllowedResult.error == QStringLiteral("everest_state_not_allowed")) {
+            error =
+                QStringLiteral("config could not be applied because EVerest-stack is in state \"%1\" and cannot be restarted, please unplug the EV and try again")
+                    .arg(stateAllowedResult.state);
+        }
+
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), stateAllowedResult.error},
+            {QStringLiteral("error"), error},
         };
         return response;
     }
 
-    return executeEverestRestart(response);
-}
-
-ModuleResponse executeEverestRestart(ModuleResponse response) {
-    SystemdService systemdService;
-    if (!systemdService.restartUnit(QStringLiteral("everest.service"))) {
+    const EverestServiceControlResult restartResult =
+        EverestServiceControl::executeEverestRestart(g_rpcApiClient);
+    if (!restartResult.success) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QStringLiteral("everest_restart_failed")},
+            {QStringLiteral("error"), restartResult.error},
         };
-        return response;
-    }
-
-    response = waitForEverestServiceActive(response);
-    if (!response.parameters.isEmpty()) {
-        return response;
-    }
-
-    response = waitForRpcApiReady(response);
-    if (!response.parameters.isEmpty()) {
         return response;
     }
 
     response.parameters = QJsonObject{};
     response.success = true;
-    return response;
-}
-
-ModuleResponse waitForEverestServiceActive(ModuleResponse response) {
-    SystemdService systemdService;
-    bool isUnitActive = false;
-    bool waitTimedOut = false;
-    QEventLoop waitLoop;
-    QTimer pollTimer;
-    QTimer timeoutTimer;
-
-    pollTimer.setInterval(kEverestRestartPollIntervalMs);
-    pollTimer.setSingleShot(false);
-    timeoutTimer.setInterval(kEverestRestartWaitTimeoutMs);
-    timeoutTimer.setSingleShot(true);
-
-    QObject::connect(&pollTimer, &QTimer::timeout, &waitLoop, [&]() {
-        if (!systemdService.isUnitActive(QStringLiteral("everest.service"))) {
-            return;
-        }
-
-        isUnitActive = true;
-        waitLoop.quit();
-    });
-    QObject::connect(&timeoutTimer, &QTimer::timeout, &waitLoop, [&]() {
-        waitTimedOut = true;
-        waitLoop.quit();
-    });
-
-    pollTimer.start();
-    timeoutTimer.start();
-    waitLoop.exec();
-
-    pollTimer.stop();
-    timeoutTimer.stop();
-
-    if (waitTimedOut || !isUnitActive) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), QStringLiteral("everest_restart_timeout")},
-        };
-        return response;
-    }
-
-    return response;
-}
-
-ModuleResponse waitForRpcApiReady(ModuleResponse response) {
-    if (!g_rpcApiClient) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), QStringLiteral("rpc_api_not_configured")},
-        };
-        return response;
-    }
-
-    bool rpcApiReady = false;
-    bool waitTimedOut = false;
-    QEventLoop waitLoop;
-    QTimer pollTimer;
-    QTimer timeoutTimer;
-
-    pollTimer.setInterval(kEverestRestartPollIntervalMs);
-    pollTimer.setSingleShot(false);
-    timeoutTimer.setInterval(kEverestRestartWaitTimeoutMs);
-    timeoutTimer.setSingleShot(true);
-
-    QObject::connect(&pollTimer, &QTimer::timeout, &waitLoop, [&]() {
-        if (!g_rpcApiClient->isReady()) {
-            return;
-        }
-
-        rpcApiReady = true;
-        waitLoop.quit();
-    });
-    QObject::connect(&timeoutTimer, &QTimer::timeout, &waitLoop, [&]() {
-        waitTimedOut = true;
-        waitLoop.quit();
-    });
-
-    pollTimer.start();
-    timeoutTimer.start();
-    waitLoop.exec();
-
-    pollTimer.stop();
-    timeoutTimer.stop();
-
-    if (waitTimedOut || !rpcApiReady) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), QStringLiteral("rpc_api_not_connected")},
-        };
-        return response;
-    }
-
     return response;
 }
 

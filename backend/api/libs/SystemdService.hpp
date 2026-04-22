@@ -15,6 +15,7 @@ public:
     explicit SystemdService(QObject *parent = nullptr);
 
     bool restartUnit(const QString &unitName);
+    bool stopUnit(const QString &unitName);
     bool isUnitActive(const QString &unitName);
 
 private:

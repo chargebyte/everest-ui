@@ -67,6 +67,27 @@ bool SystemdService::restartUnit(const QString &unitName)
     return true;
 }
 
+bool SystemdService::stopUnit(const QString &unitName)
+{
+    if (!isSystemBusAvailable()) {
+        return false;
+    }
+
+    if (!isManagerInterfaceAvailable()) {
+        return false;
+    }
+
+    QDBusMessage query = m_systemdManagerInterface->call(
+        QStringLiteral("StopUnit"),
+        unitName,
+        QStringLiteral("replace"));
+    if (query.type() != QDBusMessage::ReplyMessage) {
+        return false;
+    }
+
+    return true;
+}
+
 bool SystemdService::isUnitActive(const QString &unitName)
 {
     if (!isSystemBusAvailable()) {

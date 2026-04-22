@@ -5,6 +5,7 @@
 #ifndef EVEREST_CONFIG_HPP
 #define EVEREST_CONFIG_HPP
 
+#include "EverestServiceControl.hpp"
 #include "RequestResponseTypes.hpp"
 #include "YamlUtils.hpp"
 
@@ -25,12 +26,6 @@ struct ConfigPathResult {
     QString error;
 };
 
-struct EverestStateAllowedResult {
-    bool success = false;
-    QString state;
-    QString error;
-};
-
 class RpcApiClient;
 
 namespace EverestConfig {
@@ -44,10 +39,6 @@ ModuleResponse ensureEverestBaseConfig(ModuleResponse response);
 ModuleResponse ensureEverestConfigOverlay(const ModuleRequest &request, ModuleResponse response);
 ModuleResponse ensureEverestConfigSymlink(ModuleResponse response);
 ModuleResponse restartEverestStack(ModuleResponse response);
-ModuleResponse executeEverestRestart(ModuleResponse response);
-ModuleResponse waitForEverestServiceActive(ModuleResponse response);
-ModuleResponse waitForRpcApiReady(ModuleResponse response);
-EverestStateAllowedResult checkEverestStateAllowed(int evseIndex);
 
 ConfigPathResult loadEverestConfigPath(const QString &configKey);
 QString loadBackendConfigValue(const QString &configKey);

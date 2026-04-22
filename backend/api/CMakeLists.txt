@@ -15,6 +15,7 @@ add_executable(api
     libs/BackendConfig.cpp
     libs/ResponseBuilder.cpp
     libs/SystemdService.cpp
+    libs/EverestServiceControl.cpp
     libs/YamlUtils.cpp
 )
 
