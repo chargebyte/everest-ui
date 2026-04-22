@@ -6,7 +6,9 @@
 
 #include "BackendConfig.hpp"
 #include "ConsoleConnector.hpp"
+#include "EverestServiceControl.hpp"
 #include "ProtocolSchema.hpp"
+#include "RpcApiClient.hpp"
 #include "YamlUtils.hpp"
 
 #include <QFile>
@@ -17,6 +19,8 @@
 
 namespace SafetyController {
 namespace {
+RpcApiClient *g_rpcApiClient = nullptr;
+
 SafetyControllerAction toSafetyControllerAction(const QString &action) {
     if (action == QLatin1String(kActionReadSettings)) {
         return SafetyControllerAction::ReadSettings;
@@ -33,6 +37,10 @@ QString stripUnitSuffix(const QJsonValue &value) {
     return text.section(QLatin1Char(' '), 0, 0);
 }
 } // namespace
+
+void setRpcApiClient(RpcApiClient *rpcApiClient) {
+    g_rpcApiClient = rpcApiClient;
+}
 
 ModuleResponse handleRequest(const ModuleRequest &request) {
     switch (toSafetyControllerAction(request.action)) {
@@ -163,6 +171,31 @@ ModuleResponse readSafetyControllerSettingsAsYaml(const QString &binPath,
 }
 
 ModuleResponse readSafetyControllerSettingsAsBin(const QString &binPath, ModuleResponse response) {
+    const EverestStateAllowedResult stateAllowedResult =
+        EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
+    if (!stateAllowedResult.success) {
+        QString error = stateAllowedResult.error;
+        if (stateAllowedResult.error == QStringLiteral("everest_state_not_allowed")) {
+            error =
+                QStringLiteral("settings can't be read because ra-update command cannot be run while EVerest is in state \"%1\" and needs to be stopped first")
+                    .arg(stateAllowedResult.state);
+        }
+
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), error},
+        };
+        return response;
+    }
+
+    const EverestServiceControlResult stopResult =
+        EverestServiceControl::executeEverestStop();
+    if (!stopResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), stopResult.error},
+        };
+        return response;
+    }
+
     ConsoleConnector console;
     ConsoleConnector::ExecOptions options;
     const ConsoleConnector::RunResult result = console.executeTemplate(
@@ -170,6 +203,15 @@ ModuleResponse readSafetyControllerSettingsAsBin(const QString &binPath, ModuleR
         {{QStringLiteral("{bin_path}"), binPath}},
         options,
         ConsoleConnector::ExecMode::Sync);
+
+    const EverestServiceControlResult restartResult =
+        EverestServiceControl::executeEverestRestart(g_rpcApiClient);
+    if (!restartResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), restartResult.error},
+        };
+        return response;
+    }
 
     if (result.exitCode == 0) {
         return response;
@@ -247,6 +289,31 @@ ModuleResponse convertSafetyControllerYamlToBin(const QString &yamlPath,
 }
 
 ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse response) {
+    const EverestStateAllowedResult stateAllowedResult =
+        EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
+    if (!stateAllowedResult.success) {
+        QString error = stateAllowedResult.error;
+        if (stateAllowedResult.error == QStringLiteral("everest_state_not_allowed")) {
+            error =
+                QStringLiteral("settings can't be applied because ra-update command cannot be run while EVerest is in state \"%1\" and needs to be stopped first")
+                    .arg(stateAllowedResult.state);
+        }
+
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), error},
+        };
+        return response;
+    }
+
+    const EverestServiceControlResult stopResult =
+        EverestServiceControl::executeEverestStop();
+    if (!stopResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), stopResult.error},
+        };
+        return response;
+    }
+
     ConsoleConnector console;
     ConsoleConnector::ExecOptions options;
     const ConsoleConnector::RunResult result = console.executeTemplate(
@@ -254,6 +321,15 @@ ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse r
         {{QStringLiteral("{bin_path}"), binPath}},
         options,
         ConsoleConnector::ExecMode::Sync);
+
+    const EverestServiceControlResult restartResult =
+        EverestServiceControl::executeEverestRestart(g_rpcApiClient);
+    if (!restartResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), restartResult.error},
+        };
+        return response;
+    }
 
     if (result.exitCode == 0) {
         return response;

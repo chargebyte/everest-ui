@@ -19,6 +19,7 @@
 SystemControl::SystemControl(RpcApiClient *rpcApiClient, QObject *parent)
     : QObject(parent) {
     EverestConfig::setRpcApiClient(rpcApiClient);
+    SafetyController::setRpcApiClient(rpcApiClient);
 }
 
 void SystemControl::enqueueRequest(const QJsonObject &request) {

@@ -23,7 +23,10 @@ struct SafetyControllerConfigPathResult {
     QString error;
 };
 
+class RpcApiClient;
+
 namespace SafetyController {
+void setRpcApiClient(RpcApiClient *rpcApiClient);
 ModuleResponse handleRequest(const ModuleRequest &request);
 ModuleResponse handleReadRequest(const ModuleRequest &request);
 ModuleResponse handleWriteRequest(const ModuleRequest &request);
