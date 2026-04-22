@@ -66,8 +66,7 @@
               "enum_values": [
                 "disabled",
                 "without-feedback",
-                "with-feedback",
-                "without-feedback-normally-open",
+                "with-feedback-normally-closed",
                 "with-feedback-normally-open"
               ],
               "backend_path": "contactors_{instance}.type"
@@ -106,8 +105,7 @@
               "value_type": "enum",
               "enum_values": [
                 "disabled",
-                "active-low",
-                "active-high"
+                "active-low"
               ],
               "backend_path": "estops_{instance}.enabled"
             }

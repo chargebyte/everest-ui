@@ -554,6 +554,7 @@ bool writeSafetyControllerYamlFile(const QString &yamlPath, const QJsonObject &y
     }
 
     QTextStream stream(&yamlFile);
+    stream.setCodec("UTF-8");
     stream << "version: "
            << formatYamlScalar(yamlRoot.value(QStringLiteral("version"))) << "\n\n";
 
