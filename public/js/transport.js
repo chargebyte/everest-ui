@@ -12,7 +12,6 @@ export function createTransport({
   let ws = null;
   let retryTimer = null;
   const kPendingRequestTimeoutMs = 10000;
-  const kMaxPendingAttempts = 2;
   const pendingRequests = new Map();
 
   function isOpen() {
@@ -77,23 +76,11 @@ export function createTransport({
       return;
     }
 
-    if (pendingRequest.attempts >= kMaxPendingAttempts) {
-      onRequestTimeout({
-        requestId: requestIdKey,
-        moduleAction: pendingRequest.moduleAction
-      });
-      clearPendingRequest(requestIdKey);
-      return;
-    }
-
-    if (!send(pendingRequest.payload)) {
-      pendingRequest.timeoutId = schedulePendingTimeout(requestIdKey);
-      return;
-    }
-
-    pendingRequest.attempts += 1;
-    pendingRequest.sentAtMs = Date.now();
-    pendingRequest.timeoutId = schedulePendingTimeout(requestIdKey);
+    onRequestTimeout({
+      requestId: requestIdKey,
+      moduleAction: pendingRequest.moduleAction
+    });
+    clearPendingRequest(requestIdKey);
   }
 
   function scheduleReconnect() {
