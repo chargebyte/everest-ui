@@ -71,11 +71,11 @@ bool RpcApiClient::isReady() const {
            m_handshakeComplete;
 }
 
-RpcApiEvseStateResult RpcApiClient::getEvseState(int evseIndex) {
+RpcApiEvseStatusResult RpcApiClient::getEvseStatus(int evseIndex) {
     if (!m_rpcApiConfigured) {
-        return RpcApiEvseStateResult{
+        return RpcApiEvseStatusResult{
             .success = false,
-            .state = QString(),
+            .status = QJsonObject{},
             .error = m_configurationError.isEmpty()
                          ? QStringLiteral("rpc_api_not_configured")
                          : m_configurationError,
@@ -83,17 +83,17 @@ RpcApiEvseStateResult RpcApiClient::getEvseState(int evseIndex) {
     }
 
     if (!m_handshakeComplete) {
-        return RpcApiEvseStateResult{
+        return RpcApiEvseStatusResult{
             .success = false,
-            .state = QString(),
+            .status = QJsonObject{},
             .error = QStringLiteral("rpc_api_not_connected"),
         };
     }
 
     if (!m_pendingRequests.isEmpty()) {
-        return RpcApiEvseStateResult{
+        return RpcApiEvseStatusResult{
             .success = false,
-            .state = QString(),
+            .status = QJsonObject{},
             .error = QStringLiteral("rpc_api_request_pending"),
         };
     }
@@ -109,9 +109,9 @@ RpcApiEvseStateResult RpcApiClient::getEvseState(int evseIndex) {
 
     const SendRpcRequestResult sendResult = sendRpcRequest(request);
     if (!sendResult.success) {
-        return RpcApiEvseStateResult{
+        return RpcApiEvseStatusResult{
             .success = false,
-            .state = QString(),
+            .status = QJsonObject{},
             .error = sendResult.error,
         };
     }
@@ -133,9 +133,9 @@ RpcApiEvseStateResult RpcApiClient::getEvseState(int evseIndex) {
     waitPollTimer.stop();
 
     if (!m_hasLastRpcResponse) {
-        return RpcApiEvseStateResult{
+        return RpcApiEvseStatusResult{
             .success = false,
-            .state = QString(),
+            .status = QJsonObject{},
             .error = QStringLiteral("rpc_api_no_response"),
         };
     }
@@ -150,9 +150,9 @@ RpcApiEvseStateResult RpcApiClient::getEvseState(int evseIndex) {
         const QString message = errorObject.value(QStringLiteral("message")).toString();
         const QString data = errorObject.value(QStringLiteral("data")).toString();
 
-        return RpcApiEvseStateResult{
+        return RpcApiEvseStatusResult{
             .success = false,
-            .state = QString(),
+            .status = QJsonObject{},
             .error = !message.isEmpty() ? message
                    : !data.isEmpty()    ? data
                                         : QStringLiteral("rpc_api_request_failed"),
@@ -161,8 +161,33 @@ RpcApiEvseStateResult RpcApiClient::getEvseState(int evseIndex) {
 
     const QJsonObject resultObject = response.value(QStringLiteral("result")).toObject();
     const QJsonObject statusObject = resultObject.value(QStringLiteral("status")).toObject();
-    const QJsonValue stateValue = statusObject.value(QStringLiteral("state"));
-    if (resultObject.isEmpty() || statusObject.isEmpty() || !stateValue.isString()) {
+    if (resultObject.isEmpty() || statusObject.isEmpty()) {
+        return RpcApiEvseStatusResult{
+            .success = false,
+            .status = QJsonObject{},
+            .error = QStringLiteral("rpc_api_status_missing"),
+        };
+    }
+
+    return RpcApiEvseStatusResult{
+        .success = true,
+        .status = statusObject,
+        .error = QString(),
+    };
+}
+
+RpcApiEvseStateResult RpcApiClient::getEvseState(int evseIndex) {
+    const RpcApiEvseStatusResult statusResult = getEvseStatus(evseIndex);
+    if (!statusResult.success) {
+        return RpcApiEvseStateResult{
+            .success = false,
+            .state = QString(),
+            .error = statusResult.error,
+        };
+    }
+
+    const QJsonValue stateValue = statusResult.status.value(QStringLiteral("state"));
+    if (!stateValue.isString()) {
         return RpcApiEvseStateResult{
             .success = false,
             .state = QString(),
@@ -173,6 +198,32 @@ RpcApiEvseStateResult RpcApiClient::getEvseState(int evseIndex) {
     return RpcApiEvseStateResult{
         .success = true,
         .state = stateValue.toString(),
+        .error = QString(),
+    };
+}
+
+RpcApiEvseErrorPresentResult RpcApiClient::getEvseErrorPresent(int evseIndex) {
+    const RpcApiEvseStatusResult statusResult = getEvseStatus(evseIndex);
+    if (!statusResult.success) {
+        return RpcApiEvseErrorPresentResult{
+            .success = false,
+            .errorPresent = false,
+            .error = statusResult.error,
+        };
+    }
+
+    const QJsonValue errorPresentValue = statusResult.status.value(QStringLiteral("error_present"));
+    if (!errorPresentValue.isBool()) {
+        return RpcApiEvseErrorPresentResult{
+            .success = false,
+            .errorPresent = false,
+            .error = QStringLiteral("rpc_api_error_present_missing"),
+        };
+    }
+
+    return RpcApiEvseErrorPresentResult{
+        .success = true,
+        .errorPresent = errorPresentValue.toBool(),
         .error = QString(),
     };
 }

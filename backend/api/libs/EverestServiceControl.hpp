@@ -20,16 +20,15 @@ struct EverestStateAllowedResult {
     QString error;
 };
 
-struct EverestStateFResult {
+struct EverestErrorPresentResult {
     bool success = false;
-    QString state;
+    bool errorPresent = false;
     QString error;
 };
 
 namespace EverestServiceControl {
 EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient *rpcApiClient, int evseIndex);
-EverestStateFResult checkEverestStateF(RpcApiClient *rpcApiClient, int evseIndex);
-EverestStateFResult monitorEverestStateF(RpcApiClient *rpcApiClient, int evseIndex);
+EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient *rpcApiClient, int evseIndex);
 EverestServiceControlResult executeEverestRestart(RpcApiClient *rpcApiClient);
 EverestServiceControlResult executeEverestStop();
 EverestServiceControlResult waitForEverestServiceState(bool shouldBeActive);

@@ -14,8 +14,8 @@
 namespace {
 constexpr int kEverestRestartWaitTimeoutMs = 10000;
 constexpr int kEverestRestartPollIntervalMs = 200;
-constexpr int kEverestStateFMonitorTimeoutMs = 10000;
-constexpr int kEverestStateFMonitorPollIntervalMs = 200;
+constexpr int kEverestErrorPresentMonitorTimeoutMs = 10000;
+constexpr int kEverestErrorPresentMonitorPollIntervalMs = 200;
 }
 
 namespace EverestServiceControl {
@@ -67,75 +67,41 @@ EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient *rpcApiClient, i
     };
 }
 
-EverestStateFResult checkEverestStateF(RpcApiClient *rpcApiClient, int evseIndex) {
+EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient *rpcApiClient, int evseIndex) {
     if (!rpcApiClient) {
-        return EverestStateFResult{
+        return EverestErrorPresentResult{
             .success = false,
-            .state = QString(),
+            .errorPresent = false,
             .error = QStringLiteral("rpc_api_client_unavailable"),
         };
     }
 
-    const RpcApiEvseStateResult evseStateResult = rpcApiClient->getEvseState(evseIndex);
-    if (!evseStateResult.success) {
-        return EverestStateFResult{
-            .success = false,
-            .state = QString(),
-            .error = evseStateResult.error,
-        };
-    }
-
-    if (evseStateResult.state == QStringLiteral("F")) {
-        return EverestStateFResult{
-            .success = true,
-            .state = evseStateResult.state,
-            .error = QString(),
-        };
-    }
-
-    return EverestStateFResult{
-        .success = false,
-        .state = evseStateResult.state,
-        .error = QStringLiteral("everest_state_f_not_detected"),
-    };
-}
-
-EverestStateFResult monitorEverestStateF(RpcApiClient *rpcApiClient, int evseIndex) {
-    if (!rpcApiClient) {
-        return EverestStateFResult{
-            .success = false,
-            .state = QString(),
-            .error = QStringLiteral("rpc_api_client_unavailable"),
-        };
-    }
-
-    bool stateFDetected = false;
+    bool errorPresentDetected = false;
     bool waitTimedOut = false;
-    QString lastState;
     QString rpcError;
     QEventLoop waitLoop;
     QTimer pollTimer;
     QTimer timeoutTimer;
 
-    pollTimer.setInterval(kEverestStateFMonitorPollIntervalMs);
+    pollTimer.setInterval(kEverestErrorPresentMonitorPollIntervalMs);
     pollTimer.setSingleShot(false);
-    timeoutTimer.setInterval(kEverestStateFMonitorTimeoutMs);
+    timeoutTimer.setInterval(kEverestErrorPresentMonitorTimeoutMs);
     timeoutTimer.setSingleShot(true);
 
     QObject::connect(&pollTimer, &QTimer::timeout, &waitLoop, [&]() {
-        const RpcApiEvseStateResult evseStateResult = rpcApiClient->getEvseState(evseIndex);
-        if (!evseStateResult.success) {
-            rpcError = evseStateResult.error;
+        const RpcApiEvseErrorPresentResult errorPresentResult =
+            rpcApiClient->getEvseErrorPresent(evseIndex);
+        if (!errorPresentResult.success) {
+            rpcError = errorPresentResult.error;
             waitLoop.quit();
             return;
         }
 
-        lastState = evseStateResult.state;
-        if (lastState != QStringLiteral("F")) {
+        if (!errorPresentResult.errorPresent) {
             return;
         }
 
-        stateFDetected = true;
+        errorPresentDetected = true;
         waitLoop.quit();
     });
     QObject::connect(&timeoutTimer, &QTimer::timeout, &waitLoop, [&]() {
@@ -151,27 +117,27 @@ EverestStateFResult monitorEverestStateF(RpcApiClient *rpcApiClient, int evseInd
     timeoutTimer.stop();
 
     if (!rpcError.isEmpty()) {
-        return EverestStateFResult{
+        return EverestErrorPresentResult{
             .success = false,
-            .state = lastState,
+            .errorPresent = false,
             .error = rpcError,
         };
     }
 
-    if (stateFDetected) {
-        return EverestStateFResult{
+    if (errorPresentDetected) {
+        return EverestErrorPresentResult{
             .success = true,
-            .state = QStringLiteral("F"),
+            .errorPresent = true,
             .error = QString(),
         };
     }
 
     Q_UNUSED(waitTimedOut);
 
-    return EverestStateFResult{
+    return EverestErrorPresentResult{
         .success = false,
-        .state = lastState,
-        .error = QStringLiteral("everest_state_f_not_detected"),
+        .errorPresent = false,
+        .error = QStringLiteral("everest_error_present_not_detected"),
     };
 }
 

@@ -43,6 +43,18 @@ struct RpcApiEvseStateResult {
     QString error;
 };
 
+struct RpcApiEvseErrorPresentResult {
+    bool success = false;
+    bool errorPresent = false;
+    QString error;
+};
+
+struct RpcApiEvseStatusResult {
+    bool success = false;
+    QJsonObject status;
+    QString error;
+};
+
 class RpcApiClient : public QObject {
     Q_OBJECT
 
@@ -51,6 +63,7 @@ public:
     void start();
     bool isReady() const;
     RpcApiEvseStateResult getEvseState(int evseIndex);
+    RpcApiEvseErrorPresentResult getEvseErrorPresent(int evseIndex);
 
 private slots:
     void onConnected();
@@ -63,6 +76,7 @@ private:
     int nextRequestId();
     SendRpcRequestResult sendRpcRequest(QJsonObject request);
     bool resendPendingRequest(int requestId);
+    RpcApiEvseStatusResult getEvseStatus(int evseIndex);
     void onHelloResponse(const QJsonObject &response);
     void sendApiHello();
     RpcApiModuleConfigResult findRpcApiModuleConfig() const;
