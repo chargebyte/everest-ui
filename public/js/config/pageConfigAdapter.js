@@ -160,6 +160,10 @@ function normalizeSettingsMatrixField(field) {
     normalizedField.enum_values = [...field.enum_values];
   }
 
+  if (Object.hasOwn(field, 'default_value')) {
+    normalizedField.default_value = field.default_value;
+  }
+
   return normalizedField;
 }
 

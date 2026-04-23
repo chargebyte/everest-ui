@@ -30,6 +30,7 @@
               "display_name": "Abort Temperature",
               "description": "Shutdown threshold for this PT1000 channel.",
               "value_type": "float",
+              "default_value": 0,
               "unit": "degC",
               "backend_path": "pt1000_{instance}.abort-temperature"
             },
@@ -38,6 +39,7 @@
               "display_name": "Resistance Offset",
               "description": "Calibration offset/resistance for this PT1000 channel.",
               "value_type": "float",
+              "default_value": 0,
               "unit": "ohm",
               "backend_path": "pt1000_{instance}.resistance-offset"
             },

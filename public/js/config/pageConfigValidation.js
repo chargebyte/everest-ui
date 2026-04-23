@@ -298,7 +298,7 @@ function validateSettingsMatrixSections(block) {
       }
 
       const requiredFieldKeys = ['id', 'display_name', 'description', 'value_type', 'backend_path'];
-      const optionalFieldKeys = ['unit', 'enum_values'];
+      const optionalFieldKeys = ['unit', 'enum_values', 'default_value'];
       const allowedFieldKeys = new Set([...requiredFieldKeys, ...optionalFieldKeys]);
 
       requiredFieldKeys.forEach((requiredKey) => {
@@ -365,6 +365,35 @@ function validateSettingsMatrixSections(block) {
         throw new Error(
           `settings_matrix section '${section.id}' field '${field.id}' requires 'enum_values'`
         );
+      }
+
+      if (Object.hasOwn(field, 'default_value')) {
+        if (field.value_type === 'boolean' && typeof field.default_value !== 'boolean') {
+          throw new Error(
+            `settings_matrix section '${section.id}' field '${field.id}' has invalid 'default_value'`
+          );
+        }
+
+        if (field.value_type === 'integer' && !Number.isInteger(field.default_value)) {
+          throw new Error(
+            `settings_matrix section '${section.id}' field '${field.id}' has invalid 'default_value'`
+          );
+        }
+
+        if (field.value_type === 'float' && typeof field.default_value !== 'number') {
+          throw new Error(
+            `settings_matrix section '${section.id}' field '${field.id}' has invalid 'default_value'`
+          );
+        }
+
+        if (
+          (field.value_type === 'string' || field.value_type === 'enum') &&
+          typeof field.default_value !== 'string'
+        ) {
+          throw new Error(
+            `settings_matrix section '${section.id}' field '${field.id}' has invalid 'default_value'`
+          );
+        }
       }
     });
   });

@@ -50,8 +50,13 @@ function createRequestResponseObject(sections) {
         const parameterId = buildSettingsMatrixParameterId(section.id, instance.id, field.id);
         requestResponseObject[parameterId] = {
           backend_path: resolveSettingsMatrixBackendPath(field, instance.id),
+          value_type: field.value_type,
           value: null
         };
+
+        if (Object.hasOwn(field, 'default_value')) {
+          requestResponseObject[parameterId].default_value = field.default_value;
+        }
       });
     });
   });
@@ -275,8 +280,40 @@ function getSettingsMatrixValues(requestResponseObject, fieldMap) {
       return;
     }
 
-    parameterEntry.value = fieldElement.value;
+    parameterEntry.value = coerceSettingsMatrixValue(
+      fieldElement.value,
+      parameterEntry.value_type,
+      parameterEntry.default_value
+    );
   });
 
   return updatedRequestResponseObject;
+}
+
+function coerceSettingsMatrixValue(value, valueType, defaultValue) {
+  const trimmedValue = String(value).trim();
+  const effectiveValue =
+    trimmedValue === '' && defaultValue !== undefined ? defaultValue : value;
+
+  if (valueType === 'integer') {
+    const normalizedValue = String(effectiveValue).trim();
+    if (normalizedValue === '') {
+      return '';
+    }
+
+    const integerValue = Number.parseInt(normalizedValue, 10);
+    return Number.isNaN(integerValue) ? effectiveValue : integerValue;
+  }
+
+  if (valueType === 'float') {
+    const normalizedValue = String(effectiveValue).trim();
+    if (normalizedValue === '') {
+      return '';
+    }
+
+    const floatValue = Number.parseFloat(normalizedValue);
+    return Number.isNaN(floatValue) ? effectiveValue : floatValue;
+  }
+
+  return effectiveValue;
 }
