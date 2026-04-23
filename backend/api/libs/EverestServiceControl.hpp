@@ -29,6 +29,7 @@ struct EverestStateFResult {
 namespace EverestServiceControl {
 EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient *rpcApiClient, int evseIndex);
 EverestStateFResult checkEverestStateF(RpcApiClient *rpcApiClient, int evseIndex);
+EverestStateFResult monitorEverestStateF(RpcApiClient *rpcApiClient, int evseIndex);
 EverestServiceControlResult executeEverestRestart(RpcApiClient *rpcApiClient);
 EverestServiceControlResult executeEverestStop();
 EverestServiceControlResult waitForEverestServiceState(bool shouldBeActive);

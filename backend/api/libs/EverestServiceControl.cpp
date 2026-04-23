@@ -14,6 +14,8 @@
 namespace {
 constexpr int kEverestRestartWaitTimeoutMs = 10000;
 constexpr int kEverestRestartPollIntervalMs = 200;
+constexpr int kEverestStateFMonitorTimeoutMs = 10000;
+constexpr int kEverestStateFMonitorPollIntervalMs = 200;
 }
 
 namespace EverestServiceControl {
@@ -94,6 +96,81 @@ EverestStateFResult checkEverestStateF(RpcApiClient *rpcApiClient, int evseIndex
     return EverestStateFResult{
         .success = false,
         .state = evseStateResult.state,
+        .error = QStringLiteral("everest_state_f_not_detected"),
+    };
+}
+
+EverestStateFResult monitorEverestStateF(RpcApiClient *rpcApiClient, int evseIndex) {
+    if (!rpcApiClient) {
+        return EverestStateFResult{
+            .success = false,
+            .state = QString(),
+            .error = QStringLiteral("rpc_api_client_unavailable"),
+        };
+    }
+
+    bool stateFDetected = false;
+    bool waitTimedOut = false;
+    QString lastState;
+    QString rpcError;
+    QEventLoop waitLoop;
+    QTimer pollTimer;
+    QTimer timeoutTimer;
+
+    pollTimer.setInterval(kEverestStateFMonitorPollIntervalMs);
+    pollTimer.setSingleShot(false);
+    timeoutTimer.setInterval(kEverestStateFMonitorTimeoutMs);
+    timeoutTimer.setSingleShot(true);
+
+    QObject::connect(&pollTimer, &QTimer::timeout, &waitLoop, [&]() {
+        const RpcApiEvseStateResult evseStateResult = rpcApiClient->getEvseState(evseIndex);
+        if (!evseStateResult.success) {
+            rpcError = evseStateResult.error;
+            waitLoop.quit();
+            return;
+        }
+
+        lastState = evseStateResult.state;
+        if (lastState != QStringLiteral("F")) {
+            return;
+        }
+
+        stateFDetected = true;
+        waitLoop.quit();
+    });
+    QObject::connect(&timeoutTimer, &QTimer::timeout, &waitLoop, [&]() {
+        waitTimedOut = true;
+        waitLoop.quit();
+    });
+
+    pollTimer.start();
+    timeoutTimer.start();
+    waitLoop.exec();
+
+    pollTimer.stop();
+    timeoutTimer.stop();
+
+    if (!rpcError.isEmpty()) {
+        return EverestStateFResult{
+            .success = false,
+            .state = lastState,
+            .error = rpcError,
+        };
+    }
+
+    if (stateFDetected) {
+        return EverestStateFResult{
+            .success = true,
+            .state = QStringLiteral("F"),
+            .error = QString(),
+        };
+    }
+
+    Q_UNUSED(waitTimedOut);
+
+    return EverestStateFResult{
+        .success = false,
+        .state = lastState,
         .error = QStringLiteral("everest_state_f_not_detected"),
     };
 }

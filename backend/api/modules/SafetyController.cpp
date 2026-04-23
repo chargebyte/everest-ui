@@ -333,7 +333,7 @@ ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse r
 
     if (result.exitCode == 0) {
         const EverestStateFResult stateFResult =
-            EverestServiceControl::checkEverestStateF(g_rpcApiClient, 1);
+            EverestServiceControl::monitorEverestStateF(g_rpcApiClient, 1);
         if (stateFResult.success) {
             response.parameters = QJsonObject{
                 {QStringLiteral("error"),
