@@ -207,7 +207,7 @@
             "display_name": "Debug Mode",
             "description": "fill in later",
             "value_type": "boolean",
-            "default_value": false,
+            "overwrite_value": false,
             "backend_path": "Profinet.debug_mode"
           }
         ]

@@ -90,8 +90,8 @@ function normalizeSettingsTableParameter(row) {
     backend_path: row.backend_path
   };
 
-  if (Object.hasOwn(row, 'default_value')) {
-    parameter.default_value = row.default_value;
+  if (Object.hasOwn(row, 'overwrite_value')) {
+    parameter.overwrite_value = row.overwrite_value;
   }
 
   if (Object.hasOwn(row, 'unit')) {

@@ -51,8 +51,8 @@ function createRequestResponseObject(sections) {
         value: null
       };
 
-      if (Object.hasOwn(parameter, 'default_value')) {
-        requestResponseObject[parameter.id].default_value = parameter.default_value;
+      if (Object.hasOwn(parameter, 'overwrite_value')) {
+        requestResponseObject[parameter.id].overwrite_value = parameter.overwrite_value;
       }
     });
   });

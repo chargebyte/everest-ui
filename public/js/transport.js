@@ -11,7 +11,7 @@ export function createTransport({
 }) {
   let ws = null;
   let retryTimer = null;
-  const kPendingRequestTimeoutMs = 10000;
+  const kPendingRequestTimeoutMs = 20000;
   const pendingRequests = new Map();
 
   function isOpen() {

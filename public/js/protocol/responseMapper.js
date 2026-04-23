@@ -22,8 +22,8 @@ function mapSettingsTableResponse(requestResponseObject, message) {
 
   Object.values(mappedObject).forEach((entry) => {
     const backendValue = readBackendValue(backendParameters, entry.backend_path);
-    entry.value = Object.hasOwn(entry, 'default_value')
-      ? entry.default_value
+    entry.value = Object.hasOwn(entry, 'overwrite_value')
+      ? entry.overwrite_value
       : backendValue;
   });
 
