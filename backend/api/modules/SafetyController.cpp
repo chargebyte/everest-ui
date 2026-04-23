@@ -332,6 +332,17 @@ ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse r
     }
 
     if (result.exitCode == 0) {
+        const EverestStateFResult stateFResult =
+            EverestServiceControl::checkEverestStateF(g_rpcApiClient, 1);
+        if (stateFResult.success) {
+            response.parameters = QJsonObject{
+                {QStringLiteral("error"),
+                 QStringLiteral("settings can't be applied because the safety controller configuration put EVerest into state \"%1\"")
+                     .arg(stateFResult.state)},
+            };
+            return response;
+        }
+
         return response;
     }
 

@@ -65,6 +65,39 @@ EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient *rpcApiClient, i
     };
 }
 
+EverestStateFResult checkEverestStateF(RpcApiClient *rpcApiClient, int evseIndex) {
+    if (!rpcApiClient) {
+        return EverestStateFResult{
+            .success = false,
+            .state = QString(),
+            .error = QStringLiteral("rpc_api_client_unavailable"),
+        };
+    }
+
+    const RpcApiEvseStateResult evseStateResult = rpcApiClient->getEvseState(evseIndex);
+    if (!evseStateResult.success) {
+        return EverestStateFResult{
+            .success = false,
+            .state = QString(),
+            .error = evseStateResult.error,
+        };
+    }
+
+    if (evseStateResult.state == QStringLiteral("F")) {
+        return EverestStateFResult{
+            .success = true,
+            .state = evseStateResult.state,
+            .error = QString(),
+        };
+    }
+
+    return EverestStateFResult{
+        .success = false,
+        .state = evseStateResult.state,
+        .error = QStringLiteral("everest_state_f_not_detected"),
+    };
+}
+
 EverestServiceControlResult executeEverestRestart(RpcApiClient *rpcApiClient) {
     SystemdService systemdService;
     if (!systemdService.restartUnit(QStringLiteral("everest.service"))) {
