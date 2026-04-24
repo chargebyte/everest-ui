@@ -36,6 +36,22 @@ QString stripUnitSuffix(const QJsonValue &value) {
     const QString text = value.toString().trimmed();
     return text.section(QLatin1Char(' '), 0, 0);
 }
+
+QString jsonValueToText(const QJsonValue &value) {
+    if (value.isString()) {
+        return value.toString().trimmed();
+    }
+
+    if (value.isDouble()) {
+        return QString::number(value.toDouble(), 'f', -1);
+    }
+
+    if (value.isBool()) {
+        return value.toBool() ? QStringLiteral("true") : QStringLiteral("false");
+    }
+
+    return QString();
+}
 } // namespace
 
 void setRpcApiClient(RpcApiClient *rpcApiClient) {
@@ -535,10 +551,10 @@ QJsonValue updatePt1000ParametersInYaml(const QJsonObject &requestBlock) {
 
     return QJsonObject{
         {QStringLiteral("abort-temperature"),
-         requestBlock.value(QStringLiteral("abort-temperature")).toString().trimmed() +
+         jsonValueToText(requestBlock.value(QStringLiteral("abort-temperature"))) +
              QStringLiteral(" \u00b0C")},
         {QStringLiteral("resistance-offset"),
-         requestBlock.value(QStringLiteral("resistance-offset")).toString().trimmed() +
+         jsonValueToText(requestBlock.value(QStringLiteral("resistance-offset"))) +
              QStringLiteral(" \u03a9")},
     };
 }
@@ -552,10 +568,10 @@ QJsonValue updateContactorParametersInYaml(const QJsonObject &requestBlock) {
     return QJsonObject{
         {QStringLiteral("type"), type},
         {QStringLiteral("close-time"),
-         requestBlock.value(QStringLiteral("close-time")).toString().trimmed() +
+         jsonValueToText(requestBlock.value(QStringLiteral("close-time"))) +
              QStringLiteral(" ms")},
         {QStringLiteral("open-time"),
-         requestBlock.value(QStringLiteral("open-time")).toString().trimmed() +
+         jsonValueToText(requestBlock.value(QStringLiteral("open-time"))) +
              QStringLiteral(" ms")},
     };
 }
