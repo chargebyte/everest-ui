@@ -2,101 +2,71 @@
 
 // Copyright 2026 chargebyte GmbH
 
-import { kNoopPageLifecycle } from '../ui/pageLifecycle.js';
+import { loadPageConfig } from '../config/pageConfigAdapter.js';
+import { MODULE_IDS } from '../protocol/constants.js';
+import { buildRequest } from '../protocol/requestBuilder.js';
+import { renderFilesDownloadBlock } from '../ui/filesDownload.js';
 
-export function renderErrorLogsPage(container, { addLog }) {
-  container.innerHTML = `
-    <div class="page">
-      <h1>Error Logs</h1>
+const kDevelopmentLogFiles = [
+  { name: 'error_2026_02_18.log', size: '1.2 MB', lastModified: '18.02.2026 14:22' },
+  { name: 'error_2026_02_19.log', size: '980 KB', lastModified: '19.02.2026 09:15' },
+  { name: 'system_2026_02_19.log', size: '2.4 MB', lastModified: '19.02.2026 17:41' },
+  { name: 'safety_2026_02_20.log', size: '640 KB', lastModified: '20.02.2026 08:03' },
+  { name: 'ocpp_2026_02_20.log', size: '1.1 MB', lastModified: '20.02.2026 11:37' }
+];
 
-      <section class="section">
-        <h2>Available Log Files</h2>
+export function renderErrorLogsPage(container, {
+  parameterCatalog,
+  sendPayload,
+  addLog
+}) {
+  const pageConfig = loadPageConfig(MODULE_IDS.LOGS, parameterCatalog);
+  const filesDownloadBlock = pageConfig.blocks.find((block) => block.kind === 'files_download');
 
-        <div class="logs-table-wrap">
-          <table class="logs-table">
-            <thead>
-              <tr>
-                <th><input id="logs-select-all" type="checkbox" /></th>
-                <th>File Name</th>
-                <th>Size</th>
-                <th>Last Modified</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><input class="log-row-check" type="checkbox" /></td>
-                <td>error_2026_02_18.log</td>
-                <td>1.2 MB</td>
-                <td>18.02.2026 14:22</td>
-              </tr>
-              <tr>
-                <td><input class="log-row-check" type="checkbox" /></td>
-                <td>error_2026_02_19.log</td>
-                <td>980 KB</td>
-                <td>19.02.2026 09:15</td>
-              </tr>
-              <tr>
-                <td><input class="log-row-check" type="checkbox" /></td>
-                <td>system_2026_02_19.log</td>
-                <td>2.4 MB</td>
-                <td>19.02.2026 17:41</td>
-              </tr>
-              <tr>
-                <td><input class="log-row-check" type="checkbox" /></td>
-                <td>safety_2026_02_20.log</td>
-                <td>640 KB</td>
-                <td>20.02.2026 08:03</td>
-              </tr>
-              <tr>
-                <td><input class="log-row-check" type="checkbox" /></td>
-                <td>ocpp_2026_02_20.log</td>
-                <td>1.1 MB</td>
-                <td>20.02.2026 11:37</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+  container.innerHTML = '';
 
-      <div class="controls settings-action-controls">
-        <button id="download-logs" class="btn btn-start">Download Selected</button>
-      </div>
-    </div>
-  `;
+  const pageElement = document.createElement('div');
+  pageElement.className = 'page';
+  pageElement.innerHTML = `<h1>${pageConfig.title}</h1>`;
 
-  const selectAll = container.querySelector('#logs-select-all');
-  const rowChecks = Array.from(container.querySelectorAll('.log-row-check'));
-  const downloadBtn = container.querySelector('#download-logs');
-
-  function selectedCount() {
-    return rowChecks.filter((c) => c.checked).length;
-  }
-
-  function syncDownloadEnabled() {
-    downloadBtn.disabled = selectedCount() === 0;
-  }
-
-  selectAll.addEventListener('change', () => {
-    rowChecks.forEach((checkbox) => {
-      checkbox.checked = selectAll.checked;
-    });
-    syncDownloadEnabled();
+  const filesDownload = renderFilesDownloadBlock(filesDownloadBlock, {
+    buttonLabel: 'Download Selected'
   });
 
-  rowChecks.forEach((checkbox) => {
-    checkbox.addEventListener('change', () => {
-      const allChecked = rowChecks.every((c) => c.checked);
-      selectAll.checked = allChecked;
-      syncDownloadEnabled();
-    });
+  filesDownload.setFiles(kDevelopmentLogFiles);
+  filesDownload.bindDownload((selectedFiles) => {
+    addLog(`Error logs download triggered (${selectedFiles.length} file(s), placeholder)`);
   });
 
-  downloadBtn.addEventListener('click', () => {
-    const count = selectedCount();
-    addLog(`Error logs download triggered (${count} file(s), placeholder)`);
-  });
+  pageElement.appendChild(filesDownload.element);
+  container.appendChild(pageElement);
 
-  syncDownloadEnabled();
+  return {
+    onMessage() {},
+    onConnectionChange(connected) {
+      // request current Error Logs after page is loaded and WS is connected
+      if (connected === true) {
+        const readLogsRequest = buildRequest(
+          pageConfig.actions.read.group,
+          pageConfig.actions.read.action,
+          {}
+        );
+        console.log(readLogsRequest);
+        sendLogsRequest(
+          sendPayload,
+          addLog,
+          readLogsRequest,
+          pageConfig.actions.read.group,
+          pageConfig.actions.read.action
+        );
+      }
+    },
+    destroy() {}
+  };
+}
 
-  return kNoopPageLifecycle;
+function sendLogsRequest(sendPayload, addLog, request, group, action) {
+  const ok = sendPayload(request);
+  addLog(`${group}.${action} ${ok ? 'sent' : 'rejected'}`);
+  return ok;
 }

@@ -8,6 +8,7 @@ import { appendLog, state } from './state.js';
 import { setSystemLog, bindSystemLogResize } from './ui/systemLog.js';
 import { renderEverestPage } from './pages/everest.js';
 import { renderSafetyPage } from './pages/safety.js';
+import { renderErrorLogsPage } from './pages/errorLogs.js';
 
 async function init() {
   const appContext = await initializeApp();
@@ -69,7 +70,8 @@ async function readParameterCatalog() {
 function createRoutes() {
   return {
     everest: renderEverestPage,
-    safety: renderSafetyPage
+    safety: renderSafetyPage,
+    logs: renderErrorLogsPage
   };
 }
 

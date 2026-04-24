@@ -351,10 +351,10 @@
         }
       },
       "files_download": {
-        "errors": [
+        "available_files": [
           {
             "id": "error_logs",
-            "display_name": "Error Logs"
+            "display_name": "Available Log Files"
           }
         ]
       }

@@ -5,7 +5,8 @@
 const kUiElementValidators = {
   settings_table: validateSettingsTableParameters,
   config_loader: validateConfigLoaderParameters,
-  settings_matrix: validateSettingsMatrixParameters
+  settings_matrix: validateSettingsMatrixParameters,
+  files_download: validateFilesDownloadParameters
 };
 
 export function validateCatalog(moduleConfig) {
@@ -133,6 +134,13 @@ function validateConfigLoaderParameters(block) {
   validateConfigLoaderRow(block);
 }
 
+function validateFilesDownloadParameters(block) {
+  validateUiElementObject(block, 'files_download');
+  validateUiElementSections(block, 'files_download');
+  validateUiElementSectionEntries(block, 'files_download');
+  validateFilesDownloadRows(block);
+}
+
 function validateSettingsMatrixParameters(block) {
   validateUiElementArray(block, 'settings_matrix');
   validateSettingsMatrixSectionEntries(block);
@@ -228,6 +236,15 @@ function validateConfigLoaderRow(block) {
 
   validateRequiredKeys(block, requiredKeys, 'config_loader');
   validateKeyStringValues(block, 'config_loader');
+}
+
+function validateFilesDownloadRows(block) {
+  const requiredKeys = ['id', 'display_name'];
+  const allowedKeys = new Set(requiredKeys);
+
+  validateRequiredKeys(block, requiredKeys, 'files_download');
+  validateAllowedKeys(block, allowedKeys, 'files_download');
+  validateKeyStringValues(block, 'files_download');
 }
 
 function validateSettingsMatrixSections(block) {

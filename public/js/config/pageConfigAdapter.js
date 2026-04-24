@@ -7,7 +7,8 @@ import { validateCatalog } from './pageConfigValidation.js';
 const kUiBlocks = {
   settings_table: normalizeSettingsTable,
   config_loader: normalizeConfigLoader,
-  settings_matrix: normalizeSettingsMatrix
+  settings_matrix: normalizeSettingsMatrix,
+  files_download: normalizeFilesDownload
 };
 
 export function loadPageConfig(moduleId, parameterCatalog) {
@@ -175,6 +176,22 @@ function normalizeConfigLoader(block) {
     id: loaderConfig.id,
     title: toTitleCase(loaderConfig.display_name)
   };
+}
+
+function normalizeFilesDownload(block) {
+  return {
+    kind: 'files_download',
+    sections: normalizeFilesDownloadSections(block)
+  };
+}
+
+function normalizeFilesDownloadSections(block) {
+  return Object.entries(block).flatMap(([sectionId, sectionEntries]) => {
+    return sectionEntries.map((entry) => ({
+      id: entry.id || sectionId,
+      title: entry.display_name
+    }));
+  });
 }
 
 function toTitleCase(value) {
