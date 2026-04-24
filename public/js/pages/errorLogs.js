@@ -7,14 +7,6 @@ import { MODULE_IDS } from '../protocol/constants.js';
 import { buildRequest } from '../protocol/requestBuilder.js';
 import { renderFilesDownloadBlock } from '../ui/filesDownload.js';
 
-const kDevelopmentLogFiles = [
-  { name: 'error_2026_02_18.log', size: '1.2 MB', lastModified: '18.02.2026 14:22' },
-  { name: 'error_2026_02_19.log', size: '980 KB', lastModified: '19.02.2026 09:15' },
-  { name: 'system_2026_02_19.log', size: '2.4 MB', lastModified: '19.02.2026 17:41' },
-  { name: 'safety_2026_02_20.log', size: '640 KB', lastModified: '20.02.2026 08:03' },
-  { name: 'ocpp_2026_02_20.log', size: '1.1 MB', lastModified: '20.02.2026 11:37' }
-];
-
 export function renderErrorLogsPage(container, {
   parameterCatalog,
   sendPayload,
@@ -33,16 +25,48 @@ export function renderErrorLogsPage(container, {
     buttonLabel: 'Download Selected'
   });
 
-  filesDownload.setFiles(kDevelopmentLogFiles);
-  filesDownload.bindDownload((selectedFiles) => {
-    addLog(`Error logs download triggered (${selectedFiles.length} file(s), placeholder)`);
+  filesDownload.bindDownload(() => {
+    const downloadLogsRequest = buildRequest(
+      pageConfig.actions.download.group,
+      pageConfig.actions.download.action,
+      filesDownload.getDownloadRequestResponseObject()
+    );
+    sendLogsRequest(
+      sendPayload,
+      addLog,
+      downloadLogsRequest,
+      pageConfig.actions.download.group,
+      pageConfig.actions.download.action
+    );
   });
 
   pageElement.appendChild(filesDownload.element);
   container.appendChild(pageElement);
 
   return {
-    onMessage() {},
+    onMessage(message) {
+      if (message.type === 'logs.read.result') {
+        addLog('logs.read.result received');
+        filesDownload.setFiles(message.parameters?.files || {});
+        return;
+      }
+
+      if (message.type === 'logs.download.result') {
+        addLog('logs.download.result received');
+        filesDownload.downloadFile(message.parameters || {});
+        return;
+      }
+
+      if (message.type === 'logs.read.error') {
+        const error = message.parameters?.error;
+        addLog(`logs.read.error: ${error}`);
+      }
+
+      if (message.type === 'logs.download.error') {
+        const error = message.parameters?.error;
+        addLog(`logs.download.error: ${error}`);
+      }
+    },
     onConnectionChange(connected) {
       // request current Error Logs after page is loaded and WS is connected
       if (connected === true) {
@@ -51,7 +75,6 @@ export function renderErrorLogsPage(container, {
           pageConfig.actions.read.action,
           {}
         );
-        console.log(readLogsRequest);
         sendLogsRequest(
           sendPayload,
           addLog,

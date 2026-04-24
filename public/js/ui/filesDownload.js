@@ -27,6 +27,10 @@ export function renderFilesDownloadBlock(blockConfig, options = {}) {
     return tableContexts.flatMap((context) => context.getSelectedFiles());
   }
 
+  function downloadRequestResponseObject() {
+    return buildDownloadRequestResponseObject(selectedFiles());
+  }
+
   function syncDownloadEnabled() {
     downloadButton.disabled = selectedFiles().length === 0;
   }
@@ -44,6 +48,8 @@ export function renderFilesDownloadBlock(blockConfig, options = {}) {
       });
     },
     getSelectedFiles: selectedFiles,
+    getDownloadRequestResponseObject: downloadRequestResponseObject,
+    downloadFile: downloadBase64File,
     setFiles(filesBySection) {
       tableContexts.forEach((context) => {
         context.setFiles(resolveSectionFiles(filesBySection, context.sectionId));
@@ -141,7 +147,7 @@ function createFilesDownloadSection(section) {
         .filter(Boolean);
     },
     setFiles(nextFiles) {
-      files = Array.isArray(nextFiles) ? nextFiles.map(normalizeFileEntry) : [];
+      files = normalizeFiles(nextFiles);
       renderRows();
     }
   };
@@ -179,14 +185,130 @@ function resolveSectionFiles(filesBySection, sectionId) {
     return filesBySection;
   }
 
+  if (isFileMap(filesBySection)) {
+    return filesBySection;
+  }
+
   return filesBySection?.[sectionId] || [];
 }
 
-function normalizeFileEntry(file) {
+function normalizeFiles(files) {
+  if (Array.isArray(files)) {
+    return files.map((file) => normalizeFileEntry(file));
+  }
+
+  if (isFileMap(files)) {
+    return Object.entries(files).map(([fileId, file]) => normalizeFileEntry(file, fileId));
+  }
+
+  return [];
+}
+
+function normalizeFileEntry(file, fallbackId = '') {
+  const fileObject = isPlainObject(file) ? file : {};
+  const normalizedId = String(fallbackId !== '' ? fallbackId : fileObject.id ?? '');
+
   return {
-    ...file,
-    name: file.name || file.fileName || file.file || '',
-    size: file.size || '',
-    lastModified: file.lastModified || file.last_modified || ''
+    ...fileObject,
+    id: normalizedId,
+    name: fileObject.name || fileObject.fileName || fileObject.file || '',
+    size: fileObject.size || formatSizeBytes(fileObject.size_bytes),
+    lastModified: fileObject.lastModified || formatDateTime(fileObject.last_modified)
   };
+}
+
+function buildDownloadRequestResponseObject(selectedFiles) {
+  const requestResponseObject = {};
+
+  selectedFiles.forEach((file) => {
+    const fileId = String(file.id ?? '');
+    if (!fileId || !file.name) {
+      return;
+    }
+
+    requestResponseObject[`file-${fileId}`] = {
+      backend_path: `files.${fileId}`,
+      value_type: 'string',
+      value: file.name
+    };
+  });
+
+  return requestResponseObject;
+}
+
+function downloadBase64File(parameters = {}) {
+  const fileName = parameters.file || 'logs_bundle.zip';
+  const dataB64 = parameters.dataB64 || '';
+  if (!dataB64) {
+    return;
+  }
+
+  const bytes = base64ToBytes(dataB64);
+  const blob = new Blob([bytes], { type: 'application/zip' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 0);
+}
+
+function base64ToBytes(base64Data) {
+  const binary = atob(base64Data);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes;
+}
+
+function formatSizeBytes(sizeBytes) {
+  if (!Number.isFinite(sizeBytes)) {
+    return '';
+  }
+
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = sizeBytes;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const fractionDigits = value >= 10 || unitIndex === 0 ? 0 : 1;
+  return `${value.toFixed(fractionDigits)} ${units[unitIndex]}`;
+}
+
+function formatDateTime(timestamp) {
+  if (!timestamp) {
+    return '';
+  }
+
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return timestamp;
+  }
+
+  return date.toLocaleString();
+}
+
+function isFileMap(files) {
+  return isPlainObject(files) &&
+    Object.values(files).every((file) => isPlainObject(file) && hasFileIdentity(file));
+}
+
+function hasFileIdentity(file) {
+  return Object.hasOwn(file, 'name') ||
+    Object.hasOwn(file, 'fileName') ||
+    Object.hasOwn(file, 'file');
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
