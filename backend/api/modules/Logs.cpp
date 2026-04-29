@@ -53,7 +53,15 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
         return response;
     }
 
-    response.parameters = readLogFilesInformation(logsPathResult.path);
+    const LogsReadResult readResult = readLogFilesInformation(logsPathResult.path);
+    if (!readResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), readResult.error},
+        };
+        return response;
+    }
+
+    response.parameters = readResult.parameters;
     response.success = true;
 
     return response;
@@ -84,14 +92,41 @@ QString loadBackendConfigValue(const QString &configKey) {
     return ::readBackendConfigValue(configKey);
 }
 
-QJsonObject readLogFilesInformation(const QString &logPaths) {
+LogsReadResult readLogFilesInformation(const QString &logPaths) {
     QJsonObject parameters = {};
     QJsonObject files = {};
     
-    const QList logPathsList = logPaths.split(',');
+    QList<QString> logPathsList;
+    for (const QString &entry : logPaths.split(',', Qt::SkipEmptyParts)) {
+        logPathsList.append(entry.trimmed());
+    }
 
     int16_t idCounter = 0;
     for (const QString& path: logPathsList) {
+        if (!QFileInfo(path).exists()) {
+            return LogsReadResult{
+                .success = false,
+                .parameters = QJsonObject{},
+                .error = QString("logs_path_not_found")
+            };
+        }
+
+        if (!QFileInfo(path).isDir()) {
+            return LogsReadResult{
+                .success = false,
+                .parameters = QJsonObject{},
+                .error = QString("logs_path_not_a_directory")
+            };
+        }
+
+        if (!QFileInfo(path).isReadable()) {
+            return LogsReadResult{
+                .success = false,
+                .parameters = QJsonObject{},
+                .error = QString("logs_path_not_readable")
+            };
+        }
+
         QDirIterator it(path,
                         QDir::Files | QDir::NoSymLinks,
                         QDirIterator::Subdirectories);
@@ -115,6 +150,11 @@ QJsonObject readLogFilesInformation(const QString &logPaths) {
     }
 
     parameters.insert(QStringLiteral("files"), files);
-    return parameters;
+    return LogsReadResult{
+        .success = true,
+        .parameters = parameters,
+        .error = QString()
+    };
+
 }
 } // namespace Logs

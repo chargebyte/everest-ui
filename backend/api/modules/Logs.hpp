@@ -19,13 +19,19 @@ struct LogsConfigPathResult {
     QString error;
 };
 
+struct LogsReadResult {
+    bool success = false;
+    QJsonObject parameters;
+    QString error;
+};
+
 namespace Logs {
 ModuleResponse handleRequest(const ModuleRequest &request);
 ModuleResponse handleReadRequest(const ModuleRequest &request);
 ModuleResponse handleDownloadRequest(const ModuleRequest &request);
 LogsConfigPathResult loadLogsSettingsPath(const QString &configKey);
 QString loadBackendConfigValue(const QString &configKey);
-QJsonObject readLogFilesInformation(const QString &logPaths);
+LogsReadResult readLogFilesInformation(const QString &logPaths);
 }
 
 #endif // LOGS_HPP
