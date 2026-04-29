@@ -7,9 +7,14 @@
 #include "ProtocolSchema.hpp"
 #include "BackendConfig.hpp"
 
+#include <QDebug>
 #include <QDirIterator>
-#include <QFileInfo>
 #include <QDateTime>
+#include <QFile>
+#include <QFileInfo>
+#include <QProcess>
+#include <QSet>
+#include <QTemporaryDir>
 
 LogsAction toLogsAction(const QString &action) {
     if (action == QLatin1String(kActionRead)) {
@@ -68,7 +73,25 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
 }
 
 ModuleResponse handleDownloadRequest(const ModuleRequest &request) {
+    ModuleResponse response{
+        .requestId = request.requestId,
+        .group = QStringLiteral("logs"),
+        .action = request.action,
+        .parameters = QJsonObject{},
+        .success = false,
+    };
 
+    const LogsDownloadResult downloadResult = createLogsArchive(request.parameters);
+    if (!downloadResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), downloadResult.error},
+        };
+        return response;
+    }
+
+    response.parameters = downloadResult.parameters;
+    response.success = true;
+    return response;
 }
 
 LogsConfigPathResult loadLogsSettingsPath(const QString &configKey) {
@@ -156,5 +179,123 @@ LogsReadResult readLogFilesInformation(const QString &logPaths) {
         .error = QString()
     };
 
+}
+
+LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
+    const QJsonObject selectedFiles = requestParameters.value(QStringLiteral("files")).toObject();
+    if (selectedFiles.isEmpty()) {
+        return LogsDownloadResult{
+            .success = false,
+            .parameters = QJsonObject{},
+            .error = QLatin1String(kErrorNoFilesSelected),
+        };
+    }
+
+    QList<QFileInfo> selectedFileInfos;
+    const auto selectedFileIds = selectedFiles.keys();
+    for (const QString &selectedFileId : selectedFileIds) {
+        const QString filePath = selectedFiles.value(selectedFileId).toString().trimmed();
+        if (filePath.isEmpty()) {
+            return LogsDownloadResult{
+                .success = false,
+                .parameters = QJsonObject{},
+                .error = QLatin1String(kErrorInvalidParams),
+            };
+        }
+
+        const QFileInfo fileInfo(filePath);
+        if (!fileInfo.exists() || !fileInfo.isFile()) {
+            return LogsDownloadResult{
+                .success = false,
+                .parameters = QJsonObject{},
+                .error = QLatin1String(kErrorFileNotFound),
+            };
+        }
+
+        if (!fileInfo.isReadable()) {
+            return LogsDownloadResult{
+                .success = false,
+                .parameters = QJsonObject{},
+                .error = QLatin1String(kErrorReadFailed),
+            };
+        }
+
+        selectedFileInfos.append(fileInfo);
+    }
+
+    QTemporaryDir archiveDir;
+    if (!archiveDir.isValid()) {
+        return LogsDownloadResult{
+            .success = false,
+            .parameters = QJsonObject{},
+            .error = QLatin1String(kErrorFileIoFailed),
+        };
+    }
+
+    QStringList files;
+    QSet<QString> usedStagedFileNames;
+    for (const QFileInfo &fileInfo : selectedFileInfos) {
+        QString stagedFileName = fileInfo.fileName();
+        const QString completeBaseName = fileInfo.completeBaseName();
+        const QString suffix = fileInfo.suffix();
+        int duplicateIndex = 2;
+        while (usedStagedFileNames.contains(stagedFileName)) {
+            stagedFileName = suffix.isEmpty()
+                ? QStringLiteral("%1_%2").arg(completeBaseName).arg(duplicateIndex)
+                : QStringLiteral("%1_%2.%3").arg(completeBaseName).arg(duplicateIndex).arg(suffix);
+            duplicateIndex += 1;
+        }
+        usedStagedFileNames.insert(stagedFileName);
+
+        const QString stagedFilePath = archiveDir.filePath(stagedFileName);
+        if (!QFile::copy(fileInfo.absoluteFilePath(), stagedFilePath)) {
+            return LogsDownloadResult{
+                .success = false,
+                .parameters = QJsonObject{},
+                .error = QLatin1String(kErrorFileIoFailed),
+            };
+        }
+
+        files.append(stagedFilePath);
+    }
+
+    const QString archiveFileName = QStringLiteral("logs_bundle.zip");
+    const QString zipPath = archiveDir.filePath(archiveFileName);
+
+    QStringList args;
+    args << QStringLiteral("-q");
+    args << QStringLiteral("-j");
+    args << zipPath;
+    args << files;
+
+    const int exitCode = QProcess::execute(QStringLiteral("zip"), args);
+    if (exitCode != 0) {
+        return LogsDownloadResult{
+            .success = false,
+            .parameters = QJsonObject{},
+            .error = QStringLiteral("zip_failed"),
+        };
+    }
+
+    QFile zipFile(zipPath);
+    if (!zipFile.open(QIODevice::ReadOnly)) {
+        return LogsDownloadResult{
+            .success = false,
+            .parameters = QJsonObject{},
+            .error = QLatin1String(kErrorFileIoFailed),
+        };
+    }
+
+    const QByteArray zipData = zipFile.readAll();
+    const QByteArray zipDataB64 = zipData.toBase64();
+
+    return LogsDownloadResult{
+        .success = true,
+        .parameters = QJsonObject{
+            {QLatin1String(kKeyFile), archiveFileName},
+            {QLatin1String(kKeyDataB64), QString::fromLatin1(zipDataB64)},
+        },
+        .error = QString(),
+    };
 }
 } // namespace Logs

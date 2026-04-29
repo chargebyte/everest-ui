@@ -25,6 +25,12 @@ struct LogsReadResult {
     QString error;
 };
 
+struct LogsDownloadResult {
+    bool success = false;
+    QJsonObject parameters;
+    QString error;
+};
+
 namespace Logs {
 ModuleResponse handleRequest(const ModuleRequest &request);
 ModuleResponse handleReadRequest(const ModuleRequest &request);
@@ -32,6 +38,7 @@ ModuleResponse handleDownloadRequest(const ModuleRequest &request);
 LogsConfigPathResult loadLogsSettingsPath(const QString &configKey);
 QString loadBackendConfigValue(const QString &configKey);
 LogsReadResult readLogFilesInformation(const QString &logPaths);
+LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters);
 }
 
 #endif // LOGS_HPP
