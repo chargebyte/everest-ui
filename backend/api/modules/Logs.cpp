@@ -191,7 +191,7 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
         };
     }
 
-    QList<QFileInfo> selectedFileInfos;
+    QStringList files;
     const auto selectedFileIds = selectedFiles.keys();
     for (const QString &selectedFileId : selectedFileIds) {
         const QString filePath = selectedFiles.value(selectedFileId).toString().trimmed();
@@ -219,8 +219,7 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
                 .error = QLatin1String(kErrorReadFailed),
             };
         }
-
-        selectedFileInfos.append(fileInfo);
+        files.append(filePath);
     }
 
     QTemporaryDir archiveDir;
@@ -232,43 +231,22 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
         };
     }
 
-    QStringList files;
-    QSet<QString> usedStagedFileNames;
-    for (const QFileInfo &fileInfo : selectedFileInfos) {
-        QString stagedFileName = fileInfo.fileName();
-        const QString completeBaseName = fileInfo.completeBaseName();
-        const QString suffix = fileInfo.suffix();
-        int duplicateIndex = 2;
-        while (usedStagedFileNames.contains(stagedFileName)) {
-            stagedFileName = suffix.isEmpty()
-                ? QStringLiteral("%1_%2").arg(completeBaseName).arg(duplicateIndex)
-                : QStringLiteral("%1_%2.%3").arg(completeBaseName).arg(duplicateIndex).arg(suffix);
-            duplicateIndex += 1;
-        }
-        usedStagedFileNames.insert(stagedFileName);
-
-        const QString stagedFilePath = archiveDir.filePath(stagedFileName);
-        if (!QFile::copy(fileInfo.absoluteFilePath(), stagedFilePath)) {
-            return LogsDownloadResult{
-                .success = false,
-                .parameters = QJsonObject{},
-                .error = QLatin1String(kErrorFileIoFailed),
-            };
-        }
-
-        files.append(stagedFilePath);
-    }
-
-    const QString archiveFileName = QStringLiteral("logs_bundle.zip");
-    const QString zipPath = archiveDir.filePath(archiveFileName);
+    const QString archiveFileName = QStringLiteral("logs_bundle.tar.gz");
+    const QString tarPath = archiveDir.filePath(archiveFileName);
 
     QStringList args;
-    args << QStringLiteral("-q");
-    args << QStringLiteral("-j");
-    args << zipPath;
-    args << files;
+    args << QStringLiteral("-czf");
+    args << tarPath;
 
-    const int exitCode = QProcess::execute(QStringLiteral("zip"), args);
+    for (const QString &file : files) {
+        QFileInfo info(file);
+
+        args << "-C"
+             << info.absolutePath()
+             << info.fileName();
+    }
+
+    const int exitCode = QProcess::execute(QStringLiteral("tar"), args);
     if (exitCode != 0) {
         return LogsDownloadResult{
             .success = false,
@@ -277,8 +255,8 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
         };
     }
 
-    QFile zipFile(zipPath);
-    if (!zipFile.open(QIODevice::ReadOnly)) {
+    QFile tarFile(tarPath);
+    if (!tarFile.open(QIODevice::ReadOnly)) {
         return LogsDownloadResult{
             .success = false,
             .parameters = QJsonObject{},
@@ -286,14 +264,14 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
         };
     }
 
-    const QByteArray zipData = zipFile.readAll();
-    const QByteArray zipDataB64 = zipData.toBase64();
+    const QByteArray tarData = tarFile.readAll();
+    const QByteArray tarDataB64 = tarData.toBase64();
 
     return LogsDownloadResult{
         .success = true,
         .parameters = QJsonObject{
             {QLatin1String(kKeyFile), archiveFileName},
-            {QLatin1String(kKeyDataB64), QString::fromLatin1(zipDataB64)},
+            {QLatin1String(kKeyDataB64), QString::fromLatin1(tarDataB64)},
         },
         .error = QString(),
     };
