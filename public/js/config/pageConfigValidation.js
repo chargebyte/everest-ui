@@ -6,7 +6,8 @@ const kUiElementValidators = {
   settings_table: validateSettingsTableParameters,
   config_loader: validateConfigLoaderParameters,
   settings_matrix: validateSettingsMatrixParameters,
-  files_download: validateFilesDownloadParameters
+  files_download: validateFilesDownloadParameters,
+  capture: validateCaptureParameters
 };
 
 export function validateCatalog(moduleConfig) {
@@ -141,6 +142,13 @@ function validateFilesDownloadParameters(block) {
   validateFilesDownloadRows(block);
 }
 
+function validateCaptureParameters(block) {
+  validateUiElementObject(block, 'capture');
+  validateUiElementSections(block, 'capture');
+  validateUiElementSectionEntries(block, 'capture');
+  validateCaptureRows(block);
+}
+
 function validateSettingsMatrixParameters(block) {
   validateUiElementArray(block, 'settings_matrix');
   validateSettingsMatrixSectionEntries(block);
@@ -245,6 +253,41 @@ function validateFilesDownloadRows(block) {
   validateRequiredKeys(block, requiredKeys, 'files_download');
   validateAllowedKeys(block, allowedKeys, 'files_download');
   validateKeyStringValues(block, 'files_download');
+}
+
+function validateCaptureRows(block) {
+  const requiredKeys = ['id', 'display_name', 'description', 'value_type', 'backend_path'];
+  const optionalKeys = ['default_value'];
+  const allowedKeys = new Set([...requiredKeys, ...optionalKeys]);
+  const allowedFieldTypes = new Set(['string', 'integer', 'float']);
+
+  validateRequiredKeys(block, requiredKeys, 'capture');
+  validateAllowedKeys(block, allowedKeys, 'capture');
+
+  Object.entries(block).forEach(([sectionKey, sectionEntries]) => {
+    sectionEntries.forEach((row, index) => {
+      ['id', 'display_name', 'value_type', 'backend_path'].forEach((rowKey) => {
+        if (!hasNonEmptyStringField(row, rowKey)) {
+          throw new Error(
+            `capture section '${sectionKey}' row at index ${index} ` +
+            `has invalid '${rowKey}'`
+          );
+        }
+      });
+
+      if (typeof row.description !== 'string') {
+        throw new Error(
+          `capture section '${sectionKey}' row at index ${index} has invalid 'description'`
+        );
+      }
+
+      if (!allowedFieldTypes.has(row.value_type)) {
+        throw new Error(
+          `capture section '${sectionKey}' row '${row.id}' has invalid 'value_type'`
+        );
+      }
+    });
+  });
 }
 
 function validateSettingsMatrixSections(block) {

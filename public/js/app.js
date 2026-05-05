@@ -8,6 +8,7 @@ import { appendLog, state } from './state.js';
 import { setSystemLog, bindSystemLogResize } from './ui/systemLog.js';
 import { renderEverestPage } from './pages/everest.js';
 import { renderSafetyPage } from './pages/safety.js';
+import { renderPcapPage } from './pages/pcap.js';
 import { renderErrorLogsPage } from './pages/errorLogs.js';
 
 async function init() {
@@ -71,6 +72,7 @@ function createRoutes() {
   return {
     everest: renderEverestPage,
     safety: renderSafetyPage,
+    pcap: renderPcapPage,
     logs: renderErrorLogsPage
   };
 }

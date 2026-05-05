@@ -8,7 +8,8 @@ const kUiBlocks = {
   settings_table: normalizeSettingsTable,
   config_loader: normalizeConfigLoader,
   settings_matrix: normalizeSettingsMatrix,
-  files_download: normalizeFilesDownload
+  files_download: normalizeFilesDownload,
+  capture: normalizeCapture
 };
 
 export function loadPageConfig(moduleId, parameterCatalog) {
@@ -191,6 +192,41 @@ function normalizeFilesDownloadSections(block) {
       id: entry.id || sectionId,
       title: entry.display_name
     }));
+  });
+}
+
+function normalizeCapture(block) {
+  return {
+    kind: 'capture',
+    sections: normalizeCaptureSections(block)
+  };
+}
+
+function normalizeCaptureSections(block) {
+  return Object.entries(block).map(([sectionId, sectionRows]) => {
+    return {
+      id: sectionId,
+      title: toTitleCase(sectionId.replace(/_/g, ' ')),
+      parameters: normalizeCaptureParameters(sectionRows)
+    };
+  });
+}
+
+function normalizeCaptureParameters(sectionRows) {
+  return sectionRows.map((row) => {
+    const parameter = {
+      id: row.id,
+      display_name: row.display_name,
+      description: row.description,
+      value_type: row.value_type,
+      backend_path: row.backend_path
+    };
+
+    if (Object.hasOwn(row, 'default_value')) {
+      parameter.default_value = row.default_value;
+    }
+
+    return parameter;
   });
 }
 

@@ -106,7 +106,6 @@ RpcApiEvseStatusResult RpcApiClient::getEvseStatus(int evseIndex) {
              {QStringLiteral("evse_index"), evseIndex},
          }},
     };
-    qInfo() << request;
 
     const SendRpcRequestResult sendResult = sendRpcRequest(request);
     if (!sendResult.success) {
@@ -212,7 +211,6 @@ RpcApiEvseErrorPresentResult RpcApiClient::getEvseErrorPresent(int evseIndex) {
             .error = statusResult.error,
         };
     }
-    qInfo() << statusResult.status;
 
     const QJsonValue errorPresentValue = statusResult.status.value(QStringLiteral("error_present"));
     if (!errorPresentValue.isBool()) {

@@ -2,238 +2,113 @@
 
 // Copyright 2026 chargebyte GmbH
 
-import { state } from '../state.js';
-import { renderSettingsSection } from '../ui/settingsTable.js';
+import { loadPageConfig } from '../config/pageConfigAdapter.js';
 import { MODULE_IDS } from '../protocol/constants.js';
+import { buildRequest } from '../protocol/requestBuilder.js';
+import { renderCaptureBlock } from '../ui/capture.js';
 
-function formatElapsedMs(ms) {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const h = String(Math.floor(total / 3600)).padStart(2, '0');
-  const m = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
-  const s = String(total % 60).padStart(2, '0');
-  return `${h}:${m}:${s}`;
-}
+export function renderPcapPage(container, {
+  parameterCatalog,
+  sendPayload,
+  addLog
+}) {
+  const pageConfig = loadPageConfig(MODULE_IDS.PCAP, parameterCatalog);
+  const captureBlock = pageConfig.blocks.find((block) => block.kind === 'capture');
 
-function toBlobUrl(base64Data) {
-  const bytes = atob(base64Data || '');
-  const out = new Uint8Array(bytes.length);
-  for (let i = 0; i < bytes.length; i += 1) {
-    out[i] = bytes.charCodeAt(i);
-  }
-  const blob = new Blob([out], { type: 'application/octet-stream' });
-  return URL.createObjectURL(blob);
-}
+  container.innerHTML = '';
 
-export function renderPcapPage(container, { sendPayload, buildCatalogRequest, addLog }) {
-  const pcapState = state.pcap;
-  const connectionState = state.connection;
-  const captureConfiguration = renderSettingsSection({
-    title: 'Capture Configuration',
-    rows: [
-      { type: 'text', id: 'iface', label: 'Interface:', value: 'lo' }
-    ]
+  const pageElement = document.createElement('div');
+  pageElement.className = 'page';
+  pageElement.innerHTML = `<h1>${pageConfig.title}</h1>`;
+
+  const capture = renderCaptureBlock(captureBlock);
+
+  capture.bindSubmit(() => {
+    const values = capture.getValues(capture.requestResponseObject);
+    const writePcapRequest = buildRequest(
+      pageConfig.actions.write.group,
+      pageConfig.actions.write.action,
+      values
+    );
+    sendPcapRequest(
+      sendPayload,
+      addLog,
+      writePcapRequest,
+      pageConfig.actions.write.group,
+      pageConfig.actions.write.action
+    );
   });
 
-  container.innerHTML = `
-    <div class="page">
-      <h1>PCAP Trace Recording</h1>
+  capture.bindStop(() => {
+    capture.setRecordingState('processing');
 
-      ${captureConfiguration}
+    const readPcapRequest = buildRequest(
+      pageConfig.actions.read.group,
+      pageConfig.actions.read.action,
+      {}
+    );
+    const ok = sendPcapRequest(
+      sendPayload,
+      addLog,
+      readPcapRequest,
+      pageConfig.actions.read.group,
+      pageConfig.actions.read.action
+    );
 
-      <section class="section">
-        <h2>Capture Control</h2>
-        <div class="status-row">
-          <span class="label">Status:</span>
-          <span id="capture-status" class="status-value"></span>
-          <span class="label">Elapsed Time:</span>
-          <span id="elapsed-time">00:00:00</span>
-        </div>
-
-        <div class="controls">
-          <button id="start-btn" class="btn btn-start">Start Recording</button>
-          <button id="stop-btn" class="btn btn-stop">Stop Recording</button>
-          <button id="download-btn" class="btn btn-download">Download PCAP</button>
-        </div>
-      </section>
-    </div>
-  `;
-
-  const ifaceInput = container.querySelector('#iface');
-  const startBtn = container.querySelector('#start-btn');
-  const stopBtn = container.querySelector('#stop-btn');
-  const downloadBtn = container.querySelector('#download-btn');
-  const statusEl = container.querySelector('#capture-status');
-  const elapsedEl = container.querySelector('#elapsed-time');
-
-  let elapsedTimer = null;
-
-  function stopElapsed() {
-    if (elapsedTimer) {
-      clearInterval(elapsedTimer);
-      elapsedTimer = null;
+    if (!ok) {
+      capture.setRecordingState('running');
     }
-  }
+  });
 
-  function startElapsed() {
-    stopElapsed();
-    elapsedTimer = setInterval(() => {
-      if (!pcapState.captureStartTs) {
-        elapsedEl.textContent = '00:00:00';
+  pageElement.appendChild(capture.element);
+  container.appendChild(pageElement);
+
+  return {
+    onMessage(message) {
+      if (message.type === 'pcap.write.ack' && message.ok === true) {
+        addLog('pcap.write.ack received');
+        capture.setRecordingState('running');
         return;
       }
-      elapsedEl.textContent = formatElapsedMs(Date.now() - pcapState.captureStartTs);
-    }, 500);
-  }
 
-  function updateStateView() {
-    const s = pcapState.recordingState;
-    let dotClass = 'idle';
-    let text = 'Idle';
-
-    if (s === 'running') {
-      dotClass = 'running';
-      text = 'Capturing...';
-    } else if (s === 'processing') {
-      dotClass = 'processing';
-      text = 'Processing...';
-    }
-
-    statusEl.innerHTML = `<span class="dot ${dotClass}"></span>${text}`;
-    startBtn.disabled = !connectionState.connected || s !== 'idle';
-    stopBtn.disabled = !connectionState.connected || s !== 'running';
-    downloadBtn.disabled = !pcapState.lastPcapUrl || s === 'running' || s === 'processing';
-
-    if (s === 'running') {
-      startElapsed();
-    } else {
-      stopElapsed();
-      if (s === 'idle') {
-        elapsedEl.textContent = '00:00:00';
+      if (message.type === 'pcap.read.result' && message.ok === true) {
+        addLog('pcap.read.result received');
+        capture.setCaptureResult(message.parameters || message);
+        return;
       }
-    }
-  }
 
-  function clearDownload() {
-    if (pcapState.lastPcapUrl) {
-      URL.revokeObjectURL(pcapState.lastPcapUrl);
-      pcapState.lastPcapUrl = null;
-      pcapState.lastPcapName = '';
-    }
-  }
-
-  startBtn.addEventListener('click', () => {
-    const iface = ifaceInput.value.trim();
-    if (!iface) {
-      addLog('pcap.write rejected: interface is required');
-      return;
-    }
-
-    clearDownload();
-    let payload = null;
-    try {
-      payload = buildCatalogRequest(MODULE_IDS.PCAP, 'write', {
-        interface: iface
-      });
-    } catch (err) {
-      addLog(`pcap.write failed to build: ${err instanceof Error ? err.message : String(err)}`);
-      return;
-    }
-
-    const ok = sendPayload(payload);
-
-    if (!ok) {
-      addLog('pcap.write rejected: backend not connected');
-      return;
-    }
-    addLog('pcap.write sent');
-    updateStateView();
-  });
-
-  stopBtn.addEventListener('click', () => {
-    pcapState.recordingState = 'processing';
-    updateStateView();
-
-    let payload = null;
-    try {
-      payload = buildCatalogRequest(MODULE_IDS.PCAP, 'read', {});
-    } catch (err) {
-      pcapState.recordingState = 'idle';
-      updateStateView();
-      addLog(`pcap.read failed to build: ${err instanceof Error ? err.message : String(err)}`);
-      return;
-    }
-
-    const ok = sendPayload(payload);
-
-    if (!ok) {
-      pcapState.recordingState = 'idle';
-      updateStateView();
-      addLog('pcap.read rejected: backend not connected');
-      return;
-    }
-
-    addLog('pcap.read sent');
-  });
-
-  downloadBtn.addEventListener('click', () => {
-    if (!pcapState.lastPcapUrl) {
-      return;
-    }
-
-    const link = document.createElement('a');
-    link.href = pcapState.lastPcapUrl;
-    link.download = pcapState.lastPcapName || `pcap_${Date.now()}.pcap`;
-    link.click();
-  });
-
-  function onMessage(msg) {
-    if (msg.type === 'pcap.write.ack' && msg.ok === true) {
-      pcapState.recordingState = 'running';
-      pcapState.captureStartTs = Date.now();
-      addLog('pcap.write acknowledged: capture started');
-      updateStateView();
-      return;
-    }
-
-    if (msg.type === 'pcap.read.result' && msg.ok === true) {
-      if (pcapState.lastPcapUrl) {
-        URL.revokeObjectURL(pcapState.lastPcapUrl);
+      if (message.type === 'pcap.write.error') {
+        const error = message.parameters?.error;
+        addLog(`pcap.write.error: ${error}`);
+        capture.reset();
+        return;
       }
-      pcapState.lastPcapUrl = toBlobUrl(msg.dataB64 || '');
-      pcapState.lastPcapName = `pcap_${Date.now()}.pcap`;
-      pcapState.captureStartTs = null;
-      pcapState.recordingState = 'idle';
-      addLog('pcap.read completed: capture ready for download');
-      updateStateView();
-      return;
-    }
 
-    if (msg.ok === false) {
-      pcapState.captureStartTs = null;
-      pcapState.recordingState = 'idle';
-      const err = msg.error || 'unknown_error';
-      addLog(`pcap backend error: ${err}`);
-      updateStateView();
-    }
-  }
-
-  function onConnectionChange(connected) {
-    if (!connected) {
-      pcapState.captureStartTs = null;
-      if (pcapState.recordingState === 'processing') {
-        pcapState.recordingState = 'idle';
+      if (message.type === 'pcap.read.error') {
+        const error = message.parameters?.error;
+        addLog(`pcap.read.error: ${error}`);
+        capture.reset();
+        return;
       }
-    }
-    updateStateView();
-  }
 
-  updateStateView();
-  return {
-    onMessage,
-    onConnectionChange,
+      if (message.ok === false) {
+        const error = message.parameters?.error || message.error || 'unknown_error';
+        addLog(`pcap backend error: ${error}`);
+        capture.reset();
+      }
+    },
+    onConnectionChange(connected) {
+      capture.setConnectionState(connected);
+    },
     destroy() {
-      stopElapsed();
-      clearDownload();
+      capture.destroy();
     }
   };
+}
+
+function sendPcapRequest(sendPayload, addLog, request, group, action) {
+  const ok = sendPayload(request);
+  console.log(request);
+  addLog(`${group}.${action} ${ok ? 'sent' : 'rejected'}`);
+  return ok;
 }
