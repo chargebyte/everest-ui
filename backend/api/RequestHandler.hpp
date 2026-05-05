@@ -5,6 +5,7 @@
 #ifndef REQUEST_HANDLER_HPP
 #define REQUEST_HANDLER_HPP
 
+#include "RequestResponseTypes.hpp"
 #include <QObject>
 #include <QJsonObject>
 #include <QQueue>
@@ -13,17 +14,10 @@
 
 class QWebSocket;
 
-#include "ProtocolSchema.hpp"
-
 class RequestHandler final : public QObject {
     Q_OBJECT
 
 public:
-    enum class QueueTarget {
-        Pcap,
-        SystemControl,
-    };
-
     explicit RequestHandler(QObject *parent = nullptr);
     void setSocket(QWebSocket *socket);
 
@@ -32,13 +26,16 @@ public slots:
     void enqueueResponse(const QJsonObject &response);
 
 signals:
-    void pcapEnqueueRequested(const QJsonObject &request);
-    void systemControlEnqueueRequested(const QJsonObject &request);
+    void pcapEnqueueRequested(const ModuleRequest &request);
+    void systemControlEnqueueRequested(const ModuleRequest &request);
 
 private:
     void trySendNextResponse();
     void handleAck(const QJsonObject &responseObj);
     void resendInFlight();
+    static bool isValidTemplate(const QJsonObject &obj);
+    static ModuleRequest toModuleRequest(const QJsonObject &obj);
+    static ModuleGroup toModuleGroup(const QString &group);
 
     QWebSocket *m_socket = nullptr;
     QQueue<QJsonObject> m_responseQueue;

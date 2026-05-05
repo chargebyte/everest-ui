@@ -22,15 +22,8 @@ SystemControl::SystemControl(RpcApiClient *rpcApiClient, QObject *parent)
     SafetyController::setRpcApiClient(rpcApiClient);
 }
 
-void SystemControl::enqueueRequest(const QJsonObject &request) {
-    ModuleRequest internalRequest{
-        .requestId = static_cast<qint64>(request.value(QStringLiteral("requestId")).toDouble()),
-        .group = toModuleGroup(request.value(QStringLiteral("group")).toString()),
-        .action = request.value(QStringLiteral("action")).toString(),
-        .parameters = request.value(QStringLiteral("parameters")).toObject(),
-    };
-
-    m_queue.enqueue(internalRequest);
+void SystemControl::enqueueRequest(const ModuleRequest &request) {
+    m_queue.enqueue(request);
     processQueue();
 }
 

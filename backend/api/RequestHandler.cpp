@@ -4,7 +4,7 @@
 
 #include "RequestHandler.hpp"
 
-#include "RequestResponseTypes.hpp"
+#include "ProtocolSchema.hpp"
 #include "ResponseBuilder.hpp"
 
 #include <QFile>
@@ -12,34 +12,11 @@
 #include <QWebSocket>
 
 namespace {
-
-bool isValidTemplate(const QJsonObject &obj) {
-    const QJsonValue requestId = obj.value(FieldNameKey(FieldName::RequestId));
-    const QJsonValue groupValue = obj.value(FieldNameKey(FieldName::Group));
-    const QJsonValue actionValue = obj.value(FieldNameKey(FieldName::Action));
-    const QJsonValue parametersValue = obj.value(FieldNameKey(FieldName::Parameters));
-
-    if (!requestId.isDouble() || !groupValue.isString() || !actionValue.isString() ||
-        !parametersValue.isObject()) {
-        return false;
-    }
-
-    return true;
-}
-
 bool isAck(const QJsonObject &obj) {
     const QString type = obj.value(QLatin1String(kKeyType)).toString();
     return type == QLatin1String(kTypeAck);
 }
 } // namespace
-
-RequestHandler::QueueTarget decideQueueTarget(const QJsonObject &obj) {
-    if (obj.value(FieldNameKey(FieldName::Group)).toString() != QLatin1String(kGroupPcap)) {
-        return RequestHandler::QueueTarget::SystemControl;
-    }
-
-    return RequestHandler::QueueTarget::Pcap;
-}
 
 RequestHandler::RequestHandler(QObject *parent)
     : QObject(parent) {
@@ -101,14 +78,18 @@ void RequestHandler::handleTextMessage(const QString &message) {
         return;
     }
 
-    QJsonObject normalized = obj;
-
-    switch (decideQueueTarget(normalized)) {
-    case RequestHandler::QueueTarget::Pcap:
-        emit pcapEnqueueRequested(normalized);
+    const ModuleRequest request = toModuleRequest(obj);
+    switch (request.group) {
+    case ModuleGroup::PCAP:
+        emit pcapEnqueueRequested(request);
         return;
-    case RequestHandler::QueueTarget::SystemControl:
-        emit systemControlEnqueueRequested(normalized);
+    case ModuleGroup::EverestConfig:
+    case ModuleGroup::SafetyController:
+    case ModuleGroup::OCPPConfig:
+    case ModuleGroup::FirmwareUpdate:
+    case ModuleGroup::Logs:
+    case ModuleGroup::Unknown:
+        emit systemControlEnqueueRequested(request);
         return;
     }
 }
@@ -155,4 +136,47 @@ void RequestHandler::resendInFlight() {
     const QByteArray payload = QJsonDocument(m_inFlightResponse).toJson(QJsonDocument::Compact);
     m_socket->sendTextMessage(QString::fromUtf8(payload));
     m_ackTimer.start(2000);
+}
+
+bool RequestHandler::isValidTemplate(const QJsonObject &obj) {
+    const QJsonValue requestId = obj.value(FieldNameKey(FieldName::RequestId));
+    const QJsonValue groupValue = obj.value(FieldNameKey(FieldName::Group));
+    const QJsonValue actionValue = obj.value(FieldNameKey(FieldName::Action));
+    const QJsonValue parametersValue = obj.value(FieldNameKey(FieldName::Parameters));
+
+    return requestId.isDouble() && groupValue.isString() && actionValue.isString() &&
+        parametersValue.isObject();
+}
+
+ModuleRequest RequestHandler::toModuleRequest(const QJsonObject &obj) {
+    return ModuleRequest{
+        .requestId = static_cast<qint64>(obj.value(FieldNameKey(FieldName::RequestId)).toDouble()),
+        .group = toModuleGroup(obj.value(FieldNameKey(FieldName::Group)).toString()),
+        .action = obj.value(FieldNameKey(FieldName::Action)).toString(),
+        .parameters = obj.value(FieldNameKey(FieldName::Parameters)).toObject(),
+    };
+}
+
+ModuleGroup RequestHandler::toModuleGroup(const QString &group) {
+    if (group == QLatin1String(kGroupPcap)) {
+        return ModuleGroup::PCAP;
+    }
+
+    if (group == QLatin1String(kGroupEverest)) {
+        return ModuleGroup::EverestConfig;
+    }
+    if (group == QLatin1String(kGroupSafety)) {
+        return ModuleGroup::SafetyController;
+    }
+    if (group == QLatin1String(kGroupOcpp)) {
+        return ModuleGroup::OCPPConfig;
+    }
+    if (group == QLatin1String(kGroupFirmware)) {
+        return ModuleGroup::FirmwareUpdate;
+    }
+    if (group == QLatin1String(kGroupLogs)) {
+        return ModuleGroup::Logs;
+    }
+
+    return ModuleGroup::Unknown;
 }

@@ -11,6 +11,7 @@
 #include "SystemControlHandler.hpp"
 
 #include <QCoreApplication>
+#include <QMetaType>
 #include <QThread>
 #include <QWebSocket>
 #include <QWebSocketServer>
@@ -50,6 +51,8 @@ MinimalWebSocketServer::MinimalWebSocketServer(QObject *parent)
       m_systemControl(new SystemControl(m_rpcApiClient, this)),
       m_pcapThread(new QThread(this)),
       m_pcap(new PCAP()) {
+    qRegisterMetaType<ModuleRequest>("ModuleRequest");
+
     m_rpcApiClient->start();
 
     // move PCAP-object into its own thread

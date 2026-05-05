@@ -21,7 +21,7 @@ public:
     explicit SystemControl(class RpcApiClient *rpcApiClient, QObject *parent = nullptr);
 
 public slots:
-    void enqueueRequest(const QJsonObject &request);
+    void enqueueRequest(const ModuleRequest &request);
 
 signals:
     void responseReady(const QJsonObject &response);

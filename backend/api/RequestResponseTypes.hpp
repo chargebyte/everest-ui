@@ -10,6 +10,7 @@
 #include <QtGlobal>
 
 enum class ModuleGroup {
+    PCAP,
     EverestConfig,
     SafetyController,
     OCPPConfig,
@@ -32,5 +33,8 @@ struct ModuleResponse {
     QJsonObject parameters;
     bool success = false;
 };
+
+Q_DECLARE_METATYPE(ModuleRequest)
+Q_DECLARE_METATYPE(ModuleResponse)
 
 #endif // REQUEST_RESPONSE_TYPES_HPP

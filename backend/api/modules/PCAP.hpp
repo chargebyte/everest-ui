@@ -5,6 +5,8 @@
 #ifndef PCAP_HPP
 #define PCAP_HPP
 
+#include "RequestResponseTypes.hpp"
+
 #include <QObject>
 #include <QJsonObject>
 #include <QQueue>
@@ -12,28 +14,40 @@
 
 class ConsoleConnector;
 
+enum class PCAPAction {
+    Read,
+    Write,
+    Unknown
+};
+
 class PCAP final : public QObject {
     Q_OBJECT
 
 public:
     explicit PCAP(QObject *parent = nullptr);
+    ModuleResponse handleRequest(const ModuleRequest &request);
+    ModuleResponse handleReadRequest(const ModuleRequest &request);
+    ModuleResponse handleWriteRequest(const ModuleRequest &request);
 
 public slots:
-    void enqueueRequest(const QJsonObject &request);
+    void enqueueRequest(const ModuleRequest &request);
 
 signals:
     void responseReady(const QJsonObject &response);
 
 private:
     void processQueue();
-    void startCapture(const QJsonObject &request);
-    void readCapture(const QJsonObject &request);
+    static PCAPAction toPcapAction(const QString &action);
+    static QString extractInterface(const ModuleRequest &request);
+    static QString fileNameFromPath(const QString &filePath);
+    ModuleResponse startCapture(const ModuleRequest &request);
+    ModuleResponse readCapture(const ModuleRequest &request);
 
     ConsoleConnector *m_console = nullptr;
     bool m_busy = false;
     bool m_recording = false;
     QString m_lastFile;
-    QQueue<QJsonObject> m_queue;
+    QQueue<ModuleRequest> m_queue;
 };
 
 #endif // PCAP_HPP
