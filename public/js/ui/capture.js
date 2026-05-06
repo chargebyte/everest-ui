@@ -21,12 +21,14 @@ export function renderCaptureBlock(blockConfig, options = {}) {
   element.appendChild(controls.element);
 
   const requestResponseObject = createRequestResponseObject(blockConfig.sections);
-  let connected = false;
-  let recordingState = 'idle';
-  let captureStartTs = null;
+  let currentViewState = {
+    connected: false,
+    recordingState: 'idle',
+    captureStartTs: null,
+    lastPcapUrl: null,
+    lastPcapName: ''
+  };
   let elapsedTimer = null;
-  let lastCaptureUrl = null;
-  let lastCaptureName = '';
 
   function stopElapsed() {
     if (elapsedTimer) {
@@ -38,22 +40,31 @@ export function renderCaptureBlock(blockConfig, options = {}) {
   function startElapsed() {
     stopElapsed();
     elapsedTimer = setInterval(() => {
-      if (!captureStartTs) {
+      if (!currentViewState.captureStartTs) {
         controls.elapsedEl.textContent = '00:00:00';
         return;
       }
-      controls.elapsedEl.textContent = formatElapsedMs(Date.now() - captureStartTs);
+      controls.elapsedEl.textContent =
+        formatElapsedMs(Date.now() - currentViewState.captureStartTs);
     }, 500);
   }
 
-  function updateStateView() {
+  function updateStateView(viewState = currentViewState) {
+    currentViewState = {
+      connected: viewState.connected === true,
+      recordingState: viewState.recordingState || 'idle',
+      captureStartTs: viewState.captureStartTs || null,
+      lastPcapUrl: viewState.lastPcapUrl || null,
+      lastPcapName: viewState.lastPcapName || ''
+    };
+
     let dotClass = 'idle';
     let statusText = 'Idle';
 
-    if (recordingState === 'running') {
+    if (currentViewState.recordingState === 'running') {
       dotClass = 'running';
       statusText = 'Capturing...';
-    } else if (recordingState === 'processing') {
+    } else if (currentViewState.recordingState === 'processing') {
       dotClass = 'processing';
       statusText = 'Processing...';
     }
@@ -61,55 +72,44 @@ export function renderCaptureBlock(blockConfig, options = {}) {
     const statusDotElement = document.createElement('span');
     statusDotElement.className = `dot ${dotClass}`;
     controls.statusEl.replaceChildren(statusDotElement, document.createTextNode(statusText));
-    controls.startBtn.disabled = !connected || recordingState !== 'idle' || !hasStartParameters(fieldMap);
-    controls.stopBtn.disabled = !connected || recordingState !== 'running';
-    controls.downloadBtn.disabled = !lastCaptureUrl ||
-      recordingState === 'running' ||
-      recordingState === 'processing';
+    controls.startBtn.disabled =
+      !currentViewState.connected ||
+      currentViewState.recordingState !== 'idle' ||
+      !hasStartParameters(fieldMap);
+    controls.stopBtn.disabled =
+      !currentViewState.connected || currentViewState.recordingState !== 'running';
+    controls.downloadBtn.disabled =
+      !currentViewState.lastPcapUrl ||
+      currentViewState.recordingState === 'running' ||
+      currentViewState.recordingState === 'processing';
 
-    if (recordingState === 'running') {
+    if (currentViewState.recordingState === 'running') {
       startElapsed();
       return;
     }
 
     stopElapsed();
-    if (recordingState === 'idle') {
+    if (currentViewState.recordingState === 'idle') {
       controls.elapsedEl.textContent = '00:00:00';
+    } else if (currentViewState.captureStartTs) {
+      controls.elapsedEl.textContent = formatElapsedMs(Date.now() - currentViewState.captureStartTs);
     }
   }
-
-  function clearDownload() {
-    if (lastCaptureUrl) {
-      URL.revokeObjectURL(lastCaptureUrl);
-      lastCaptureUrl = null;
-      lastCaptureName = '';
-    }
-  }
-
-  controls.startBtn.addEventListener('click', () => {
-    clearDownload();
-  });
-
-  controls.downloadBtn.addEventListener('click', () => {
-    if (!lastCaptureUrl) {
-      return;
-    }
-
-    const link = document.createElement('a');
-    link.href = lastCaptureUrl;
-    link.download = lastCaptureName || `pcap_${Date.now()}.pcap`;
-    link.click();
-  });
 
   fieldMap.forEach((fieldElement) => {
-    fieldElement.addEventListener('input', updateStateView);
+    fieldElement.addEventListener('input', () => {
+      updateStateView();
+    });
   });
 
-  updateStateView();
+  updateStateView(currentViewState);
 
   return {
     element,
     requestResponseObject,
+    bindDownload(handler) {
+      controls.downloadBtn.addEventListener('click', handler);
+    },
     bindSubmit(handler) {
       controls.startBtn.addEventListener('click', handler);
     },
@@ -121,44 +121,13 @@ export function renderCaptureBlock(blockConfig, options = {}) {
     },
     setValues(sourceRequestResponseObject) {
       setCaptureValues(sourceRequestResponseObject, fieldMap);
-      updateStateView();
+      updateStateView(currentViewState);
     },
-    setConnectionState(nextConnected) {
-      connected = nextConnected === true;
-      if (!connected && recordingState === 'processing') {
-        recordingState = 'idle';
-      }
-      updateStateView();
-    },
-    setRecordingState(nextRecordingState) {
-      recordingState = nextRecordingState;
-      if (recordingState === 'running') {
-        captureStartTs = Date.now();
-      }
-      if (recordingState === 'idle') {
-        captureStartTs = null;
-      }
-      updateStateView();
-    },
-    setCaptureResult(parameters = {}) {
-      clearDownload();
-      const dataB64 = parameters.dataB64 || '';
-      if (dataB64) {
-        lastCaptureUrl = toBlobUrl(dataB64);
-        lastCaptureName = fileNameFromPath(parameters.file) || `pcap_${Date.now()}.pcap`;
-      }
-      recordingState = 'idle';
-      captureStartTs = null;
-      updateStateView();
-    },
-    reset() {
-      recordingState = 'idle';
-      captureStartTs = null;
-      updateStateView();
+    setViewState(viewState) {
+      updateStateView(viewState);
     },
     destroy() {
       stopElapsed();
-      clearDownload();
     }
   };
 }
@@ -381,22 +350,4 @@ function formatElapsedMs(ms) {
   const m = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
   const s = String(total % 60).padStart(2, '0');
   return `${h}:${m}:${s}`;
-}
-
-function toBlobUrl(base64Data) {
-  const bytes = atob(base64Data || '');
-  const out = new Uint8Array(bytes.length);
-  for (let index = 0; index < bytes.length; index += 1) {
-    out[index] = bytes.charCodeAt(index);
-  }
-  const blob = new Blob([out], { type: 'application/octet-stream' });
-  return URL.createObjectURL(blob);
-}
-
-function fileNameFromPath(filePath) {
-  if (!filePath) {
-    return '';
-  }
-
-  return String(filePath).split(/[\\/]/).filter(Boolean).pop() || '';
 }

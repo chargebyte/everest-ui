@@ -46,9 +46,11 @@ function createAppTransport(appContext) {
   return createTransport({
     wsPath: '/ws',
     onOpen() {
+      state.connection.connected = true;
       appContext.state.page?.onConnectionChange?.(true);
     },
     onClose() {
+      state.connection.connected = false;
       appContext.state.page?.onConnectionChange?.(false);
     },
     onMessage(message) {

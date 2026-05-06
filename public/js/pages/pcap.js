@@ -5,6 +5,7 @@
 import { loadPageConfig } from '../config/pageConfigAdapter.js';
 import { MODULE_IDS } from '../protocol/constants.js';
 import { buildRequest } from '../protocol/requestBuilder.js';
+import { state } from '../state.js';
 import { renderCaptureBlock } from '../ui/capture.js';
 
 export function renderPcapPage(container, {
@@ -14,6 +15,7 @@ export function renderPcapPage(container, {
 }) {
   const pageConfig = loadPageConfig(MODULE_IDS.PCAP, parameterCatalog);
   const captureBlock = pageConfig.blocks.find((block) => block.kind === 'capture');
+  const pcapState = state.pcap;
 
   container.innerHTML = '';
 
@@ -23,8 +25,56 @@ export function renderPcapPage(container, {
 
   const capture = renderCaptureBlock(captureBlock);
 
+  function syncCaptureView() {
+    capture.setViewState(pcapState);
+  }
+
+  function buildInterfaceValues(interfaceName) {
+    const values = structuredClone(capture.requestResponseObject);
+
+    Object.values(values).forEach((entry) => {
+      if (entry.backend_path === 'general.interface') {
+        entry.value = interfaceName;
+      }
+    });
+
+    return values;
+  }
+
+  function clearLastCaptureResult() {
+    if (pcapState.lastPcapUrl) {
+      URL.revokeObjectURL(pcapState.lastPcapUrl);
+      pcapState.lastPcapUrl = null;
+      pcapState.lastPcapName = '';
+    }
+  }
+
+  function setCaptureResult(parameters) {
+    clearLastCaptureResult();
+
+    const dataB64 = parameters.dataB64 || '';
+    if (dataB64) {
+      pcapState.lastPcapUrl = toBlobUrl(dataB64);
+      pcapState.lastPcapName = fileNameFromPath(parameters.file) || `pcap_${Date.now()}.pcap`;
+    }
+
+    pcapState.recordingState = 'idle';
+    pcapState.captureStartTs = null;
+    pcapState.interfaceName = '';
+  }
+
+  function resetCaptureState() {
+    pcapState.recordingState = 'idle';
+    pcapState.captureStartTs = null;
+    pcapState.interfaceName = '';
+  }
+
   capture.bindSubmit(() => {
+    clearLastCaptureResult();
     const values = capture.getValues(capture.requestResponseObject);
+    pcapState.interfaceName = values.interface?.value || '';
+    syncCaptureView();
+
     const writePcapRequest = buildRequest(
       pageConfig.actions.write.group,
       pageConfig.actions.write.action,
@@ -39,8 +89,20 @@ export function renderPcapPage(container, {
     );
   });
 
+  capture.bindDownload(() => {
+    if (!pcapState.lastPcapUrl) {
+      return;
+    }
+
+    const link = document.createElement('a');
+    link.href = pcapState.lastPcapUrl;
+    link.download = pcapState.lastPcapName || `pcap_${Date.now()}.pcap`;
+    link.click();
+  });
+
   capture.bindStop(() => {
-    capture.setRecordingState('processing');
+    pcapState.recordingState = 'processing';
+    syncCaptureView();
 
     const readPcapRequest = buildRequest(
       pageConfig.actions.read.group,
@@ -56,49 +118,70 @@ export function renderPcapPage(container, {
     );
 
     if (!ok) {
-      capture.setRecordingState('running');
+      pcapState.recordingState = 'running';
+      syncCaptureView();
     }
   });
 
   pageElement.appendChild(capture.element);
   container.appendChild(pageElement);
 
+  pcapState.connected = state.connection.connected === true;
+  if (isCaptureActiveState(pcapState) && pcapState.interfaceName) {
+    capture.setValues(buildInterfaceValues(pcapState.interfaceName));
+  } else {
+    pcapState.interfaceName = '';
+  }
+  syncCaptureView();
+
   return {
     onMessage(message) {
       if (message.type === 'pcap.write.ack' && message.ok === true) {
         addLog('pcap.write.ack received');
-        capture.setRecordingState('running');
+        pcapState.recordingState = 'running';
+        pcapState.captureStartTs = Date.now();
+        syncCaptureView();
         return;
       }
 
       if (message.type === 'pcap.read.result' && message.ok === true) {
         addLog('pcap.read.result received');
-        capture.setCaptureResult(message.parameters || message);
+        setCaptureResult(message.parameters || {});
+        syncCaptureView();
         return;
       }
 
       if (message.type === 'pcap.write.error') {
         const error = message.parameters?.error;
         addLog(`pcap.write.error: ${error}`);
-        capture.reset();
+        resetCaptureState();
+        syncCaptureView();
         return;
       }
 
       if (message.type === 'pcap.read.error') {
         const error = message.parameters?.error;
         addLog(`pcap.read.error: ${error}`);
-        capture.reset();
+        resetCaptureState();
+        syncCaptureView();
         return;
       }
 
       if (message.ok === false) {
         const error = message.parameters?.error || message.error || 'unknown_error';
         addLog(`pcap backend error: ${error}`);
-        capture.reset();
+        resetCaptureState();
+        syncCaptureView();
       }
     },
     onConnectionChange(connected) {
-      capture.setConnectionState(connected);
+      pcapState.connected = connected === true;
+      if (!pcapState.connected && pcapState.recordingState === 'processing') {
+        pcapState.recordingState = 'idle';
+        pcapState.captureStartTs = null;
+        pcapState.interfaceName = '';
+      }
+      syncCaptureView();
     },
     destroy() {
       capture.destroy();
@@ -108,7 +191,28 @@ export function renderPcapPage(container, {
 
 function sendPcapRequest(sendPayload, addLog, request, group, action) {
   const ok = sendPayload(request);
-  console.log(request);
   addLog(`${group}.${action} ${ok ? 'sent' : 'rejected'}`);
   return ok;
+}
+
+function isCaptureActiveState(pcapState) {
+  return pcapState.recordingState === 'running' || pcapState.recordingState === 'processing';
+}
+
+function toBlobUrl(base64Data) {
+  const bytes = atob(base64Data || '');
+  const out = new Uint8Array(bytes.length);
+  for (let index = 0; index < bytes.length; index += 1) {
+    out[index] = bytes.charCodeAt(index);
+  }
+  const blob = new Blob([out], { type: 'application/octet-stream' });
+  return URL.createObjectURL(blob);
+}
+
+function fileNameFromPath(filePath) {
+  if (!filePath) {
+    return '';
+  }
+
+  return String(filePath).split(/[\\/]/).filter(Boolean).pop() || '';
 }
