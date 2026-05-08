@@ -9,6 +9,7 @@ const kUiBlocks = {
   config_loader: normalizeConfigLoader,
   settings_matrix: normalizeSettingsMatrix,
   files_download: normalizeFilesDownload,
+  updater: normalizeUpdater,
   capture: normalizeCapture
 };
 
@@ -193,6 +194,30 @@ function normalizeFilesDownloadSections(block) {
       title: entry.display_name
     }));
   });
+}
+
+function normalizeUpdater(block) {
+  return {
+    kind: 'updater',
+    sections: normalizeUpdaterSections(block)
+  };
+}
+
+function normalizeUpdaterSections(block) {
+  return Object.entries(block).flatMap(([sectionId, sectionEntries]) => {
+    return sectionEntries.map((entry) => normalizeUpdaterEntry(sectionId, entry));
+  });
+}
+
+function normalizeUpdaterEntry(sectionId, entry) {
+  return {
+    id: entry.id || sectionId,
+    title: entry.display_name,
+    display_name: entry.display_name,
+    description: entry.description,
+    value_type: entry.value_type,
+    backend_path: entry.backend_path
+  };
 }
 
 function normalizeCapture(block) {

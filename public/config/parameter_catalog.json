@@ -26,6 +26,13 @@
           ],
           "fields": [
             {
+              "id": "overtemperature-protection",
+              "display_name": "Overtemperature Protection",
+              "description": "Enable or disable PT1000 channel protection.",
+              "value_type": "boolean",
+              "backend_path": "pt1000_{instance}.overtemperature-protection"
+            },
+            {
               "id": "abort-temperature",
               "display_name": "Abort Temperature",
               "description": "Shutdown threshold for this PT1000 channel.",
@@ -42,13 +49,6 @@
               "default_value": 0,
               "unit": "ohm",
               "backend_path": "pt1000_{instance}.resistance-offset"
-            },
-            {
-              "id": "overtemperature-protection",
-              "display_name": "Overtemperature Protection",
-              "description": "Enable or disable PT1000 channel protection.",
-              "value_type": "boolean",
-              "backend_path": "pt1000_{instance}.overtemperature-protection"
             }
           ]
         },
@@ -200,7 +200,7 @@
           {
             "id": "device",
             "display_name": "eth2 (Profinet)",
-            "description": "fill in later",
+            "description": "Profinet Linux network interface",
             "value_type": "string",
             "backend_path": "Profinet.device"
           },
@@ -331,7 +331,10 @@
         "firmware": [
           {
             "id": "controller_firmware",
-            "display_name": "Controller Firmware"
+            "display_name": "Controller Firmware",
+            "description": "",
+	          "value_type": "image",
+	          "backend_path": "image"
           }
         ]
       }

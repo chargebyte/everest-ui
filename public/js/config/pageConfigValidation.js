@@ -7,6 +7,7 @@ const kUiElementValidators = {
   config_loader: validateConfigLoaderParameters,
   settings_matrix: validateSettingsMatrixParameters,
   files_download: validateFilesDownloadParameters,
+  updater: validateUpdaterParameters,
   capture: validateCaptureParameters
 };
 
@@ -142,6 +143,13 @@ function validateFilesDownloadParameters(block) {
   validateFilesDownloadRows(block);
 }
 
+function validateUpdaterParameters(block) {
+  validateUiElementObject(block, 'updater');
+  validateUiElementSections(block, 'updater');
+  validateUiElementSectionEntries(block, 'updater');
+  validateUpdaterRows(block);
+}
+
 function validateCaptureParameters(block) {
   validateUiElementObject(block, 'capture');
   validateUiElementSections(block, 'capture');
@@ -255,11 +263,53 @@ function validateFilesDownloadRows(block) {
   validateKeyStringValues(block, 'files_download');
 }
 
+function validateUpdaterRows(block) {
+  const requiredKeys = ['id', 'display_name', 'description', 'value_type', 'backend_path'];
+  const allowedKeys = new Set(requiredKeys);
+  const allowedFieldTypes = new Set(['image']);
+
+  validateRequiredKeys(block, requiredKeys, 'updater');
+  validateAllowedKeys(block, allowedKeys, 'updater');
+
+  let updaterEntryCount = 0;
+
+  Object.entries(block).forEach(([sectionKey, sectionEntries]) => {
+    sectionEntries.forEach((row, index) => {
+      updaterEntryCount += 1;
+
+      ['id', 'display_name', 'value_type', 'backend_path'].forEach((rowKey) => {
+        if (!hasNonEmptyStringField(row, rowKey)) {
+          throw new Error(
+            `updater section '${sectionKey}' row at index ${index} ` +
+            `has invalid '${rowKey}'`
+          );
+        }
+      });
+
+      if (typeof row.description !== 'string') {
+        throw new Error(
+          `updater section '${sectionKey}' row at index ${index} has invalid 'description'`
+        );
+      }
+
+      if (!allowedFieldTypes.has(row.value_type)) {
+        throw new Error(
+          `updater section '${sectionKey}' row '${row.id}' has invalid 'value_type'`
+        );
+      }
+    });
+  });
+
+  if (updaterEntryCount !== 1) {
+    throw new Error('updater configuration must define exactly one updater entry');
+  }
+}
+
 function validateCaptureRows(block) {
   const requiredKeys = ['id', 'display_name', 'description', 'value_type', 'backend_path'];
   const optionalKeys = ['default_value'];
   const allowedKeys = new Set([...requiredKeys, ...optionalKeys]);
-  const allowedFieldTypes = new Set(['string', 'integer', 'float']);
+  const allowedFieldTypes = new Set(['string']);
 
   validateRequiredKeys(block, requiredKeys, 'capture');
   validateAllowedKeys(block, allowedKeys, 'capture');

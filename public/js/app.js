@@ -9,6 +9,7 @@ import { setSystemLog, bindSystemLogResize } from './ui/systemLog.js';
 import { renderEverestPage } from './pages/everest.js';
 import { renderSafetyPage } from './pages/safety.js';
 import { renderPcapPage } from './pages/pcap.js';
+import { renderFirmwarePage } from './pages/firmware.js';
 import { renderErrorLogsPage } from './pages/errorLogs.js';
 
 async function init() {
@@ -75,6 +76,7 @@ function createRoutes() {
     everest: renderEverestPage,
     safety: renderSafetyPage,
     pcap: renderPcapPage,
+    firmware: renderFirmwarePage,
     logs: renderErrorLogsPage
   };
 }

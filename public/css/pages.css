@@ -200,6 +200,24 @@
   gap: 8px;
 }
 
+.firmware-update-grid {
+  margin-bottom: 12px;
+}
+
+.firmware-upload-slot {
+  margin-bottom: 12px;
+}
+
+.firmware-upload-name {
+  min-width: 260px;
+}
+
+.firmware-upload-status {
+  color: #5a647d;
+  font-size: 13px;
+  min-height: 1em;
+}
+
 .everest-direct-grid {
   grid-template-columns: 180px minmax(420px, 1fr);
 }

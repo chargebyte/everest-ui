@@ -3,9 +3,7 @@
 // Copyright 2026 chargebyte GmbH
 
 const kCaptureFields = {
-  string: createCaptureTextInput,
-  integer: createCaptureTextInput,
-  float: createCaptureTextInput
+  string: createCaptureTextInput
 };
 
 export function renderCaptureBlock(blockConfig, options = {}) {
@@ -307,7 +305,7 @@ function getCaptureValues(requestResponseObject, fieldMap) {
       return;
     }
 
-    parameterEntry.value = coerceCaptureValue(fieldElement.value, parameterEntry.value_type);
+    parameterEntry.value = fieldElement.value;
   });
 
   return updatedRequestResponseObject;
@@ -322,20 +320,6 @@ function setCaptureValues(requestResponseObject, fieldMap) {
 
     fieldElement.value = parameterEntry?.value ?? '';
   });
-}
-
-function coerceCaptureValue(value, valueType) {
-  if (valueType === 'integer') {
-    const integerValue = Number.parseInt(String(value).trim(), 10);
-    return Number.isNaN(integerValue) ? value : integerValue;
-  }
-
-  if (valueType === 'float') {
-    const floatValue = Number.parseFloat(String(value).trim());
-    return Number.isNaN(floatValue) ? value : floatValue;
-  }
-
-  return value;
 }
 
 function hasStartParameters(fieldMap) {
