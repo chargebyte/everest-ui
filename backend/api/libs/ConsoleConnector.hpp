@@ -45,7 +45,8 @@ public:
 
     enum class ExecMode {
         Sync,
-        Async
+        Async,
+        StreamingAsync
     };
 
     inline static constexpr const char kErrorUnknownCommand[] = "unknown_command";
@@ -58,15 +59,25 @@ public:
                               const ExecOptions &options,
                               ExecMode mode);
 
+signals:
+    void streamingStdoutReceived(const QByteArray &chunk);
+    void streamingStderrReceived(const QByteArray &chunk);
+    void streamingFinished(const RunResult &result);
+
 private:
     CommandSpec renderTemplate(const QString &templateStr,
                                const QHash<QString, QString> &values) const;
+    void ensureLongProcess();
     RunResult runPrompt(const CommandSpec &spec, const ExecOptions &options) const;
     RunResult runPromptAsync(const CommandSpec &spec, const ExecOptions &options);
     RunResult startPromptAsync(const CommandSpec &spec, const ExecOptions &options);
+    RunResult startPromptStreaming(const CommandSpec &spec, const ExecOptions &options);
     RunResult stopPromptAsync(const ExecOptions &options);
 
     QProcess *m_longProcess = nullptr;
+    QByteArray m_streamingStdoutBuffer;
+    QByteArray m_streamingStderrBuffer;
+    bool m_streamingActive = false;
 };
 
 #endif // CONSOLE_CONNECTOR_HPP
