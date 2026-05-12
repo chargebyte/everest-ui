@@ -9,6 +9,8 @@
 
 #include <QByteArray>
 
+class FirmwareUpdateRuntime;
+
 enum class FirmwareUpdateAction {
     ReadVersion,
     UpdateImage,
@@ -57,6 +59,7 @@ FirmwareImageWriteResult saveFirmwareImageToDisk(const QString &imageDirPath,
                                                  const QString &fileName,
                                                  const QByteArray &imageData);
 FirmwareImageCleanupResult cleanOldFirmwareImages(const QString &keepFilePath = QString());
+FirmwareUpdateRuntime &runtime();
 }
 
 #endif // FIRMWARE_UPDATE_HPP

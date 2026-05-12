@@ -10,6 +10,7 @@ add_executable(api
     modules/SafetyController.cpp
     modules/OCPPConfig.cpp
     modules/FirmwareUpdate.cpp
+    modules/FirmwareUpdateRuntime.cpp
     modules/Logs.cpp
     libs/ConsoleConnector.cpp
     libs/BackendConfig.cpp

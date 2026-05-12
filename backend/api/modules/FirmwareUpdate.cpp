@@ -3,9 +3,9 @@
 // Copyright 2026 chargebyte GmbH
 
 #include "FirmwareUpdate.hpp"
+#include "FirmwareUpdateRuntime.hpp"
 
 #include "BackendConfig.hpp"
-#include "ConsoleConnector.hpp"
 #include "ProtocolSchema.hpp"
 
 #include <QDir>
@@ -32,7 +32,8 @@ constexpr char kFirmwareImageInvalidParams[] = "invalid_params";
 constexpr char kFirmwareImageBase64Invalid[] = "invalid_image";
 constexpr char kFirmwareImageWriteFailed[] = "firmware_image_write_failed";
 constexpr char kFirmwareImageCleanupFailed[] = "firmware_image_cleanup_failed";
-
+} // namespace
+namespace {
 FirmwareUpdateAction toFirmwareUpdateAction(const QString &action) {
     if (action == QLatin1String(kActionReadVersion)) {
         return FirmwareUpdateAction::ReadVersion;
@@ -47,6 +48,11 @@ FirmwareUpdateAction toFirmwareUpdateAction(const QString &action) {
 } // namespace
 
 namespace FirmwareUpdate {
+FirmwareUpdateRuntime &runtime() {
+    static FirmwareUpdateRuntime instance;
+    return instance;
+}
+
 ModuleResponse handleRequest(const ModuleRequest &request) {
     switch (toFirmwareUpdateAction(request.action)) {
     case FirmwareUpdateAction::ReadVersion:
@@ -88,52 +94,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
 }
 
 ModuleResponse handleUpdateRequest(const ModuleRequest &request) {
-    ModuleResponse response{
-        .requestId = request.requestId,
-        .group = QStringLiteral("firmware"),
-        .action = request.action,
-        .parameters = QJsonObject{},
-        .success = false,
-    };
-
-    const FirmwareImagePayloadResult payloadResult = parseFirmwareImagePayload(request.parameters);
-    if (!payloadResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), payloadResult.error},
-        };
-        return response;
-    }
-
-    const FirmwareImageDirResult imageDirResult =
-        loadFirmwareImageDir(QString::fromLatin1(kFirmwareImageDirConfigKey));
-    if (!imageDirResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), imageDirResult.error},
-        };
-        return response;
-    }
-
-    const FirmwareImageCleanupResult cleanupResult = cleanOldFirmwareImages();
-    if (!cleanupResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), cleanupResult.error},
-        };
-        return response;
-    }
-
-    const FirmwareImageWriteResult writeResult = saveFirmwareImageToDisk(
-        imageDirResult.path,
-        payloadResult.fileName,
-        payloadResult.imageData);
-    if (!writeResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), writeResult.error},
-        };
-        return response;
-    }
-
-    response.success = true;
-    return response;
+    return runtime().handleUpdateRequest(request);
 }
 
 FirmwareVersionReadResult readFirmwareVersion() {
