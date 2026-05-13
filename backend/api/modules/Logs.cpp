@@ -48,6 +48,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
+        .final = true,
     };
 
     const LogsConfigPathResult logsPathResult = loadLogsSettingsPath(QStringLiteral("logs_paths"));
@@ -79,6 +80,7 @@ ModuleResponse handleDownloadRequest(const ModuleRequest &request) {
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
+        .final = true,
     };
 
     const LogsDownloadResult downloadResult = createLogsArchive(request.parameters);

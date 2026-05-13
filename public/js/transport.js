@@ -70,6 +70,19 @@ export function createTransport({
     pendingRequests.delete(requestIdKey);
   }
 
+  function refreshPendingRequestTimeout(requestIdKey) {
+    const pendingRequest = pendingRequests.get(requestIdKey);
+    if (!pendingRequest) {
+      return;
+    }
+
+    if (pendingRequest.timeoutId) {
+      clearTimeout(pendingRequest.timeoutId);
+    }
+
+    pendingRequest.timeoutId = schedulePendingTimeout(requestIdKey);
+  }
+
   function handlePendingTimeout(requestIdKey) {
     const pendingRequest = pendingRequests.get(requestIdKey);
     if (!pendingRequest) {
@@ -126,7 +139,9 @@ export function createTransport({
         return;
       }
 
-      if (typeof msg.type === 'string' && msg.type.endsWith('.error')) {
+      // Only accept responses that correlate to a pending request.
+      const responseRequestId = msg.requestId;
+      if (responseRequestId === undefined || responseRequestId === null) {
         if (msg.responseId) {
           send({ type: 'ack', responseId: msg.responseId });
         }
@@ -134,21 +149,29 @@ export function createTransport({
         return;
       }
 
-      // Only accept responses that correlate to a pending request.
-      const responseRequestId = msg.requestId;
-      if (responseRequestId === undefined || responseRequestId === null) {
-        return;
-      }
       const requestIdKey = String(responseRequestId);
       if (!pendingRequests.has(requestIdKey)) {
+        if (typeof msg.type === 'string' && msg.type.endsWith('.error')) {
+          if (msg.responseId) {
+            send({ type: 'ack', responseId: msg.responseId });
+          }
+          onMessage(msg);
+        }
         return;
       }
-      clearPendingRequest(requestIdKey);
 
       // ACK only valid, correlated responses.
       if (msg.responseId) {
         send({ type: 'ack', responseId: msg.responseId });
       }
+
+      const isFinal = msg.final !== false;
+      if (isFinal) {
+        clearPendingRequest(requestIdKey);
+      } else {
+        refreshPendingRequestTimeout(requestIdKey);
+      }
+
       onMessage(msg);
     };
   }

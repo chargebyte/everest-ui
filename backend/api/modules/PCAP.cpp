@@ -97,6 +97,7 @@ ModuleResponse PCAP::startCapture(const ModuleRequest &request) {
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
+        .final = true,
     };
 
     if (m_busy || m_recording) {
@@ -155,6 +156,7 @@ ModuleResponse PCAP::readCapture(const ModuleRequest &request) {
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
+        .final = true,
     };
 
     if (m_busy) {

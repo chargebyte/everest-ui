@@ -11,6 +11,7 @@
 QJsonObject ResponseBuilder::buildResponse(const ModuleResponse &response) {
     return QJsonObject{
         {QStringLiteral("ok"), response.success},
+        {QStringLiteral("final"), response.final},
         {QStringLiteral("requestId"), response.requestId},
         {QStringLiteral("type"), buildType(response)},
         {QStringLiteral("parameters"), response.parameters},

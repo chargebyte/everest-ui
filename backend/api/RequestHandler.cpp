@@ -54,6 +54,7 @@ void RequestHandler::handleTextMessage(const QString &message) {
                 {QStringLiteral("error"), QStringLiteral("invalid_json")},
             },
             .success = false,
+            .final = true,
         }));
         return;
     }
@@ -74,6 +75,7 @@ void RequestHandler::handleTextMessage(const QString &message) {
                 {QStringLiteral("error"), QStringLiteral("invalid_template")},
             },
             .success = false,
+            .final = true,
         }));
         return;
     }

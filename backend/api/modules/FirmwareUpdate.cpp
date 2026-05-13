@@ -73,6 +73,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
+        .final = true,
     };
 
     const FirmwareVersionReadResult versionResult = readFirmwareVersion();

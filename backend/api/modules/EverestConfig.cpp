@@ -83,6 +83,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
+        .final = true,
     };
 
     const ConfigPathResult configPathResult =
@@ -115,6 +116,7 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
+        .final = true,
     };
 
     response = ensureEverestBaseConfig(response);

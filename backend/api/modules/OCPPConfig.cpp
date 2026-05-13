@@ -12,6 +12,7 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
         .action = request.action,
         .parameters = request.parameters,
         .success = false,
+        .final = true,
     };
 }
 } // namespace OCPPConfig

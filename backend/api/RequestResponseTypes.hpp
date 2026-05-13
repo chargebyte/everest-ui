@@ -32,6 +32,7 @@ struct ModuleResponse {
     QString action;
     QJsonObject parameters;
     bool success = false;
+    bool final = true;
 };
 
 Q_DECLARE_METATYPE(ModuleRequest)

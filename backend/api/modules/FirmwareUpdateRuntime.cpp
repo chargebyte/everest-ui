@@ -32,6 +32,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUpdateRequest(const ModuleRequest &r
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
+        .final = true,
     };
     if (m_updateRunning) {
         response.parameters = QJsonObject{
@@ -161,6 +162,7 @@ void FirmwareUpdateRuntime::handleStdoutLine(const QString &line) {
                     {QStringLiteral("stage"), stage},
                 },
                 .success = true,
+                .final = false,
             });
 
             if (!m_ackSent &&
@@ -173,6 +175,7 @@ void FirmwareUpdateRuntime::handleStdoutLine(const QString &line) {
                     .action = m_currentAction,
                     .parameters = QJsonObject{},
                     .success = true,
+                    .final = false,
                 });
             }
         }
@@ -203,6 +206,7 @@ void FirmwareUpdateRuntime::handleStreamingFinished(const ConsoleConnector::RunR
                 {QStringLiteral("restart_required"), true},
             },
             .success = true,
+            .final = true,
         });
     } else {
         emit responseReady(ModuleResponse{
@@ -213,6 +217,7 @@ void FirmwareUpdateRuntime::handleStreamingFinished(const ConsoleConnector::RunR
                 {QStringLiteral("error"), QString::fromLatin1(kErrorFlashFailed)},
             },
             .success = false,
+            .final = true,
         });
     }
 

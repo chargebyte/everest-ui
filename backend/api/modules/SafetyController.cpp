@@ -78,6 +78,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
+        .final = true,
     };
 
     const SafetyControllerConfigPathResult binPathResult =
@@ -124,6 +125,7 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
+        .final = true,
     };
 
     const SafetyControllerConfigPathResult binPathResult =
