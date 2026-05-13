@@ -4,6 +4,7 @@
 
 #include "modules/EverestConfig.hpp"
 #include "modules/FirmwareUpdate.hpp"
+#include "modules/FirmwareUpdateRuntime.hpp"
 #include "modules/Logs.hpp"
 #include "modules/OCPPConfig.hpp"
 #include "modules/SafetyController.hpp"
@@ -20,6 +21,8 @@ SystemControl::SystemControl(RpcApiClient *rpcApiClient, QObject *parent)
     : QObject(parent) {
     EverestConfig::setRpcApiClient(rpcApiClient);
     SafetyController::setRpcApiClient(rpcApiClient);
+    connect(&FirmwareUpdate::runtime(), &FirmwareUpdateRuntime::responseReady, this,
+            &SystemControl::handleAsyncFirmwareResponse);
 }
 
 void SystemControl::enqueueRequest(const ModuleRequest &request) {
@@ -59,6 +62,9 @@ void SystemControl::startRequest(const ModuleRequest &request) {
     }
     case ModuleGroup::FirmwareUpdate: {
         const ModuleResponse response = FirmwareUpdate::handleRequest(request);
+        if (isFirmwareUpdateStartAccepted(response)) {
+            return;
+        }
         handleModuleResponse(response);
         return;
     }
@@ -94,6 +100,25 @@ void SystemControl::handleModuleResponse(const ModuleResponse &response) {
     processQueue();
 }
 
+void SystemControl::handleAsyncFirmwareResponse(const ModuleResponse &response) {
+    if (!m_pendingRequest.has_value()) {
+        throw std::runtime_error("SystemControl::handleAsyncFirmwareResponse got response without pending request");
+    }
+
+    const ModuleRequest &pendingRequest = *m_pendingRequest;
+    if (!isMatchingAsyncFirmwareResponse(response, pendingRequest)) {
+        throw std::runtime_error("SystemControl::handleAsyncFirmwareResponse got mismatching response");
+    }
+
+    emitResponse(response);
+    if (!isFinalAsyncFirmwareResponse(response, pendingRequest)) {
+        return;
+    }
+
+    m_pendingRequest.reset();
+    processQueue();
+}
+
 void SystemControl::emitResponse(const ModuleResponse &response) {
     emit responseReady(ResponseBuilder::buildResponse(response));
 }
@@ -116,4 +141,39 @@ ModuleGroup SystemControl::toModuleGroup(const QString &group) const {
     }
 
     return ModuleGroup::Unknown;
+}
+
+bool SystemControl::isFirmwareUpdateStartAccepted(const ModuleResponse &response) const {
+    return response.group == QStringLiteral("firmware") &&
+           response.action == QStringLiteral("update_image") &&
+           response.success &&
+           response.parameters.isEmpty();
+}
+
+bool SystemControl::isMatchingAsyncFirmwareResponse(const ModuleResponse &response,
+                                                    const ModuleRequest &pendingRequest) const {
+    if (pendingRequest.group != ModuleGroup::FirmwareUpdate) {
+        return false;
+    }
+
+    if (response.requestId != pendingRequest.requestId ||
+        toModuleGroup(response.group) != pendingRequest.group) {
+        return false;
+    }
+
+    return response.action == pendingRequest.action ||
+           response.action == pendingRequest.action + QStringLiteral(".progress");
+}
+
+bool SystemControl::isFinalAsyncFirmwareResponse(const ModuleResponse &response,
+                                                 const ModuleRequest &pendingRequest) const {
+    if (response.action != pendingRequest.action) {
+        return false;
+    }
+
+    if (!response.success) {
+        return true;
+    }
+
+    return !response.parameters.isEmpty();
 }

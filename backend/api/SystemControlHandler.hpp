@@ -27,6 +27,12 @@ signals:
     void responseReady(const QJsonObject &response);
 
 private:
+    void handleAsyncFirmwareResponse(const ModuleResponse &response);
+    bool isFirmwareUpdateStartAccepted(const ModuleResponse &response) const;
+    bool isMatchingAsyncFirmwareResponse(const ModuleResponse &response,
+                                        const ModuleRequest &pendingRequest) const;
+    bool isFinalAsyncFirmwareResponse(const ModuleResponse &response,
+                                      const ModuleRequest &pendingRequest) const;
     void processQueue();
     void startRequest(const ModuleRequest &request);
     void handleModuleResponse(const ModuleResponse &response);
