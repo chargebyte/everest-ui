@@ -63,6 +63,7 @@ export function renderUpdateBlock(blockConfig, options = {}) {
 
   const fileUpload = renderFileUploadBlock({
     namePrefix: `${scopeName}-file-upload`,
+    chunkSizeBytes: updaterDefinition.chunkSizeBytes,
     buttonLabel: options.browseButtonLabel || 'Browse...',
     placeholder: options.filePlaceholder || 'No file selected',
     onError(errorMessage) {
@@ -86,7 +87,14 @@ export function renderUpdateBlock(blockConfig, options = {}) {
     const imageValue = getImageValue(requestResponseObject, updaterDefinition.id);
 
     imageValue.file_name = fileInfo?.file_name || '';
-    imageValue.dataB64 = fileInfo?.dataB64 || '';
+    imageValue.size_bytes = normalizeInteger(fileInfo?.size_bytes, 0);
+    imageValue.chunk_size_bytes = normalizeInteger(
+      fileInfo?.chunk_size_bytes,
+      updaterDefinition.chunkSizeBytes
+    );
+    imageValue.chunk_count = normalizeInteger(fileInfo?.chunk_count, 0);
+    imageValue.chunk_index = normalizeInteger(fileInfo?.chunk_index, 0);
+    imageValue.dataB64 = normalizeText(fileInfo?.dataB64, '');
 
     if (!state.rebootRequired) {
       state.progressText = options.progressPlaceholder || 'Idle';
@@ -114,6 +122,30 @@ export function renderUpdateBlock(blockConfig, options = {}) {
     bindReboot(handler) {
       rebootHandler = typeof handler === 'function' ? handler : () => {};
     },
+    hasSelectedFile() {
+      return hasSelectedFile(requestResponseObject, updaterDefinition.id);
+    },
+    getSelectedFileInfo() {
+      if (!fileUpload.hasSelection()) {
+        return null;
+      }
+
+      return buildSelectedFileInfo(
+        getImageValue(requestResponseObject, updaterDefinition.id)
+      );
+    },
+    async readSelectedFileChunk(chunkIndex) {
+      const chunk = await fileUpload.readChunk(chunkIndex);
+      const imageValue = getImageValue(requestResponseObject, updaterDefinition.id);
+
+      imageValue.chunk_index = normalizeInteger(chunk.chunk_index, 0);
+      imageValue.dataB64 = normalizeText(chunk.dataB64, '');
+
+      return {
+        chunk_index: imageValue.chunk_index,
+        dataB64: imageValue.dataB64
+      };
+    },
     getValues(sourceRequestResponseObject) {
       return getUpdateValues(sourceRequestResponseObject, state);
     },
@@ -129,6 +161,13 @@ export function renderUpdateBlock(blockConfig, options = {}) {
     setSelectedFile(fileInfo) {
       const imageValue = getImageValue(requestResponseObject, updaterDefinition.id);
       imageValue.file_name = fileInfo?.file_name || '';
+      imageValue.size_bytes = normalizeInteger(fileInfo?.size_bytes, 0);
+      imageValue.chunk_size_bytes = normalizeInteger(
+        fileInfo?.chunk_size_bytes,
+        updaterDefinition.chunkSizeBytes
+      );
+      imageValue.chunk_count = normalizeInteger(fileInfo?.chunk_count, 0);
+      imageValue.chunk_index = normalizeInteger(fileInfo?.chunk_index, 0);
       imageValue.dataB64 = fileInfo?.dataB64 || '';
 
       if (!fileInfo) {
@@ -222,7 +261,8 @@ function readUpdaterDefinition(blockConfig) {
     title: definition.title || definition.display_name || '',
     displayName: definition.display_name || definition.title || 'Firmware Image',
     backendPath: definition.backend_path || 'image',
-    valueType: definition.value_type || 'image'
+    valueType: definition.value_type || 'image',
+    chunkSizeBytes: normalizeInteger(definition.chunk_size_bytes, 0)
   };
 }
 
@@ -234,6 +274,10 @@ function createRequestResponseObject(updaterDefinition) {
       value: {
         version: '',
         file_name: '',
+        size_bytes: 0,
+        chunk_size_bytes: updaterDefinition.chunkSizeBytes,
+        chunk_count: 0,
+        chunk_index: 0,
         dataB64: ''
       }
     }
@@ -253,6 +297,7 @@ function setUpdateValues(
 ) {
   void state;
   const sourceEntries = Object.entries(sourceRequestResponseObject || {});
+  let hasExplicitFileSelection = false;
 
   sourceEntries.forEach(([parameterId, parameterEntry]) => {
     if (!Object.hasOwn(requestResponseObject, parameterId)) {
@@ -262,13 +307,32 @@ function setUpdateValues(
     const imageValue = requestResponseObject[parameterId].value;
     const nextValue = parameterEntry?.value || {};
 
-    imageValue.version = normalizeText(nextValue.version, '');
-    imageValue.file_name = normalizeText(nextValue.file_name, '');
-    imageValue.dataB64 = normalizeText(nextValue.dataB64, '');
+    if (Object.hasOwn(nextValue, 'version')) {
+      imageValue.version = normalizeText(nextValue.version, '');
+    }
+    if (Object.hasOwn(nextValue, 'file_name')) {
+      imageValue.file_name = normalizeText(nextValue.file_name, '');
+      hasExplicitFileSelection = true;
+    }
+    if (Object.hasOwn(nextValue, 'size_bytes')) {
+      imageValue.size_bytes = normalizeInteger(nextValue.size_bytes, 0);
+    }
+    if (Object.hasOwn(nextValue, 'chunk_size_bytes')) {
+      imageValue.chunk_size_bytes = normalizeInteger(nextValue.chunk_size_bytes, 0);
+    }
+    if (Object.hasOwn(nextValue, 'chunk_count')) {
+      imageValue.chunk_count = normalizeInteger(nextValue.chunk_count, 0);
+    }
+    if (Object.hasOwn(nextValue, 'chunk_index')) {
+      imageValue.chunk_index = normalizeInteger(nextValue.chunk_index, 0);
+    }
+    if (Object.hasOwn(nextValue, 'dataB64')) {
+      imageValue.dataB64 = normalizeText(nextValue.dataB64, '');
+    }
   });
 
   const activeEntry = Object.values(requestResponseObject)[0];
-  if (!activeEntry?.value?.file_name) {
+  if (hasExplicitFileSelection && !activeEntry?.value?.file_name) {
     fileUpload.clear();
   }
 }
@@ -283,6 +347,10 @@ function getImageValue(requestResponseObject, parameterId) {
     entry.value = {
       version: '',
       file_name: '',
+      size_bytes: 0,
+      chunk_size_bytes: 0,
+      chunk_count: 0,
+      chunk_index: 0,
       dataB64: ''
     };
   }
@@ -292,7 +360,21 @@ function getImageValue(requestResponseObject, parameterId) {
 
 function hasSelectedFile(requestResponseObject, parameterId) {
   const imageValue = getImageValue(requestResponseObject, parameterId);
-  return imageValue.file_name.trim() !== '' && imageValue.dataB64.trim() !== '';
+  return imageValue.file_name.trim() !== '' &&
+    imageValue.size_bytes > 0 &&
+    imageValue.chunk_size_bytes > 0 &&
+    imageValue.chunk_count > 0;
+}
+
+function buildSelectedFileInfo(imageValue) {
+  return {
+    file_name: imageValue.file_name,
+    size_bytes: imageValue.size_bytes,
+    chunk_size_bytes: imageValue.chunk_size_bytes,
+    chunk_count: imageValue.chunk_count,
+    chunk_index: imageValue.chunk_index,
+    dataB64: imageValue.dataB64
+  };
 }
 
 function createLabel(text) {
@@ -321,6 +403,21 @@ function normalizeText(value, fallback) {
 
   if (Number.isFinite(value)) {
     return String(value);
+  }
+
+  return fallback;
+}
+
+function normalizeInteger(value, fallback) {
+  if (Number.isInteger(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isInteger(parsed)) {
+      return parsed;
+    }
   }
 
   return fallback;

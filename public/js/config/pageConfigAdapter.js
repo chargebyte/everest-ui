@@ -210,7 +210,7 @@ function normalizeUpdaterSections(block) {
 }
 
 function normalizeUpdaterEntry(sectionId, entry) {
-  return {
+  const normalizedEntry = {
     id: entry.id || sectionId,
     title: entry.display_name,
     display_name: entry.display_name,
@@ -218,6 +218,12 @@ function normalizeUpdaterEntry(sectionId, entry) {
     value_type: entry.value_type,
     backend_path: entry.backend_path
   };
+
+  if (Object.hasOwn(entry, 'chunk_size_bytes')) {
+    normalizedEntry.chunk_size_bytes = entry.chunk_size_bytes;
+  }
+
+  return normalizedEntry;
 }
 
 function normalizeCapture(block) {

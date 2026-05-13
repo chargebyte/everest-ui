@@ -320,11 +320,25 @@
           "action": "read_version",
           "parameters_mode": "empty"
         },
+        "upload_image.start": {
+          "group": "firmware",
+          "action": "upload_image.start",
+          "parameters_mode": "from_catalog"
+        },
+        "upload_image.chunk": {
+          "group": "firmware",
+          "action": "upload_image.chunk",
+          "parameters_mode": "from_catalog"
+        },
+        "upload_image.finish": {
+          "group": "firmware",
+          "action": "upload_image.finish",
+          "parameters_mode": "empty"
+        },
         "update_image": {
           "group": "firmware",
           "action": "update_image",
-          "parameters_mode": "raw_field",
-          "payload_field": "image_file"
+          "parameters_mode": "empty"
         }
       },
       "updater": {
@@ -333,8 +347,9 @@
             "id": "controller_firmware",
             "display_name": "Controller Firmware",
             "description": "",
-	          "value_type": "image",
-	          "backend_path": "image"
+            "value_type": "image",
+            "backend_path": "image",
+            "chunk_size_bytes": 1048576
           }
         ]
       }

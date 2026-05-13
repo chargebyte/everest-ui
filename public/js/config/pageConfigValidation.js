@@ -265,7 +265,8 @@ function validateFilesDownloadRows(block) {
 
 function validateUpdaterRows(block) {
   const requiredKeys = ['id', 'display_name', 'description', 'value_type', 'backend_path'];
-  const allowedKeys = new Set(requiredKeys);
+  const optionalKeys = ['chunk_size_bytes'];
+  const allowedKeys = new Set([...requiredKeys, ...optionalKeys]);
   const allowedFieldTypes = new Set(['image']);
 
   validateRequiredKeys(block, requiredKeys, 'updater');
@@ -296,6 +297,14 @@ function validateUpdaterRows(block) {
         throw new Error(
           `updater section '${sectionKey}' row '${row.id}' has invalid 'value_type'`
         );
+      }
+
+      if (Object.hasOwn(row, 'chunk_size_bytes')) {
+        if (!Number.isInteger(row.chunk_size_bytes) || row.chunk_size_bytes <= 0) {
+          throw new Error(
+            `updater section '${sectionKey}' row '${row.id}' has invalid 'chunk_size_bytes'`
+          );
+        }
       }
     });
   });

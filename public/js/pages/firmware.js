@@ -23,7 +23,14 @@ export function renderFirmwarePage(container, {
 
   const firmwareState = {
     connected: false,
-    rebootRequired: false
+    rebootRequired: false,
+    uploadStarted: false,
+    uploadInProgress: false,
+    awaitingChunkAck: false,
+    nextChunkIndex: 0,
+    chunkCount: 0,
+    uploadFinished: false,
+    updateStarted: false
   };
 
   const updateBlock = renderUpdateBlock(updaterBlock, {
@@ -36,35 +43,46 @@ export function renderFirmwarePage(container, {
     }
   });
 
-  updateBlock.bindUpdate(() => {
+  updateBlock.bindUpdate(async () => {
     if (firmwareState.connected !== true) {
-      addLog('firmware.update_image rejected: websocket not connected');
+      addLog('firmware.upload_image.start rejected: websocket not connected');
       return;
     }
 
-    const values = updateBlock.getValues(updateBlock.requestResponseObject);
-    if (!hasSelectedImage(values)) {
-      addLog('firmware.update_image rejected: no firmware image selected');
+    if (!updateBlock.hasSelectedFile()) {
+      addLog('firmware.upload_image.start rejected: no firmware image selected');
       return;
     }
 
-    updateBlock.setProgress('Awaiting acknowledgement...');
+    const selectedFileInfo = updateBlock.getSelectedFileInfo();
+    if (!selectedFileInfo) {
+      addLog('firmware.upload_image.start rejected: file metadata missing');
+      return;
+    }
 
-    const updateImageRequest = buildRequest(
-      pageConfig.actions.update_image.group,
-      pageConfig.actions.update_image.action,
-      values
-    );
+    firmwareState.rebootRequired = false;
+    firmwareState.uploadStarted = false;
+    firmwareState.uploadInProgress = true;
+    firmwareState.awaitingChunkAck = false;
+    firmwareState.nextChunkIndex = 0;
+    firmwareState.chunkCount = selectedFileInfo.chunk_count || 0;
+    firmwareState.uploadFinished = false;
+    firmwareState.updateStarted = false;
 
+    updateBlock.setRebootRequired(false);
+    updateBlock.setProgress('Starting upload...');
+
+    const startRequest = buildRequestFromUpdateBlock(updateBlock, pageConfig.actions['upload_image.start']);
     const ok = sendFirmwareRequest(
       sendPayload,
       addLog,
-      updateImageRequest,
-      pageConfig.actions.update_image.group,
-      pageConfig.actions.update_image.action
+      startRequest,
+      pageConfig.actions['upload_image.start'].group,
+      pageConfig.actions['upload_image.start'].action
     );
 
     if (!ok) {
+      resetUploadState(firmwareState);
       updateBlock.setProgress(null);
     }
   });
@@ -101,13 +119,109 @@ export function renderFirmwarePage(container, {
   container.appendChild(pageElement);
 
   return {
-    onMessage(message) {
+    async onMessage(message) {
       if (message.type === 'firmware.read_version.result' && message.ok === true) {
         addLog('firmware.read_version.result received');
         updateBlock.setValues(buildUpdaterValues(
           updateBlock,
           extractFirmwareVersion(message.parameters)
         ));
+        return;
+      }
+
+      if (message.type === 'firmware.upload_image.start.ack' && message.ok === true) {
+        addLog('firmware.upload_image.start.ack received');
+        firmwareState.uploadStarted = true;
+        firmwareState.awaitingChunkAck = false;
+        updateBlock.setProgress('Uploading chunk 1 of ' + firmwareState.chunkCount);
+        try {
+          await sendNextUploadChunk({
+            pageConfig,
+            firmwareState,
+            updateBlock,
+            sendPayload,
+            addLog
+          });
+        } catch (error) {
+          addLog(`firmware.upload_image.chunk preparation failed: ${error instanceof Error ? error.message : String(error)}`);
+          resetUploadState(firmwareState);
+          updateBlock.setProgress(null);
+        }
+        return;
+      }
+
+      if (message.type === 'firmware.upload_image.chunk.ack' && message.ok === true) {
+        addLog('firmware.upload_image.chunk.ack received');
+        firmwareState.awaitingChunkAck = false;
+        firmwareState.nextChunkIndex += 1;
+
+        if (firmwareState.nextChunkIndex >= firmwareState.chunkCount) {
+          updateBlock.setProgress('Finishing upload...');
+          const finishAction = pageConfig.actions['upload_image.finish'];
+          const finishRequest = buildRequest(
+            finishAction.group,
+            finishAction.action,
+            {}
+          );
+
+          const ok = sendFirmwareRequest(
+            sendPayload,
+            addLog,
+            finishRequest,
+            finishAction.group,
+            finishAction.action
+          );
+
+          if (!ok) {
+            resetUploadState(firmwareState);
+            updateBlock.setProgress(null);
+          }
+          return;
+        }
+
+        updateBlock.setProgress(
+          `Uploading chunk ${firmwareState.nextChunkIndex + 1} of ${firmwareState.chunkCount}`
+        );
+        try {
+          await sendNextUploadChunk({
+            pageConfig,
+            firmwareState,
+            updateBlock,
+            sendPayload,
+            addLog
+          });
+        } catch (error) {
+          addLog(`firmware.upload_image.chunk preparation failed: ${error instanceof Error ? error.message : String(error)}`);
+          resetUploadState(firmwareState);
+          updateBlock.setProgress(null);
+        }
+        return;
+      }
+
+      if (message.type === 'firmware.upload_image.finish.ack' && message.ok === true) {
+        addLog('firmware.upload_image.finish.ack received');
+        firmwareState.uploadFinished = true;
+        firmwareState.updateStarted = true;
+        updateBlock.setProgress('Awaiting acknowledgement...');
+
+        const updateRequest = buildRequest(
+          pageConfig.actions.update_image.group,
+          pageConfig.actions.update_image.action,
+          {}
+        );
+
+        const ok = sendFirmwareRequest(
+          sendPayload,
+          addLog,
+          updateRequest,
+          pageConfig.actions.update_image.group,
+          pageConfig.actions.update_image.action
+        );
+
+        if (!ok) {
+          firmwareState.updateStarted = false;
+          updateBlock.setProgress(null);
+        }
         return;
       }
 
@@ -119,8 +233,12 @@ export function renderFirmwarePage(container, {
         return;
       }
 
-      if (message.type === 'firmware.update_image.progress') {
-        addLog('firmware.update_image.progress received');
+      if (
+        (message.type === 'firmware.update_image.progress' ||
+         message.type === 'firmware.update_image.progress.result') &&
+        message.ok === true
+      ) {
+        addLog(`${message.type} received`);
         updateBlock.setProgress({
           progress: message.parameters?.progress,
           stage: message.parameters?.stage
@@ -137,6 +255,7 @@ export function renderFirmwarePage(container, {
         }
 
         firmwareState.rebootRequired = message.parameters?.restart_required === true;
+        resetUploadState(firmwareState);
         updateBlock.setSelectedFile(null);
         updateBlock.setRebootRequired(firmwareState.rebootRequired);
 
@@ -159,9 +278,20 @@ export function renderFirmwarePage(container, {
         return;
       }
 
+      if (isFirmwareUploadError(message.type)) {
+        const error = message.parameters?.error;
+        addLog(`${message.type}: ${error}`);
+        resetUploadState(firmwareState);
+        firmwareState.rebootRequired = false;
+        updateBlock.setRebootRequired(false);
+        updateBlock.setProgress(null);
+        return;
+      }
+
       if (message.type === 'firmware.update_image.error') {
         const error = message.parameters?.error;
         addLog(`firmware.update_image.error: ${error}`);
+        resetUploadState(firmwareState);
         firmwareState.rebootRequired = false;
         updateBlock.setRebootRequired(false);
         updateBlock.setProgress(null);
@@ -179,6 +309,7 @@ export function renderFirmwarePage(container, {
       if (message.ok === false) {
         const error = message.parameters?.error || message.error || 'unknown_error';
         addLog(`firmware backend error: ${error}`);
+        resetUploadState(firmwareState);
         firmwareState.rebootRequired = false;
         updateBlock.setRebootRequired(false);
         updateBlock.setProgress(null);
@@ -200,16 +331,71 @@ export function renderFirmwarePage(container, {
           pageConfig.actions.read_version.group,
           pageConfig.actions.read_version.action
         );
+      } else {
+        resetUploadState(firmwareState);
       }
     },
     destroy() {}
   };
 }
 
+async function sendNextUploadChunk({
+  pageConfig,
+  firmwareState,
+  updateBlock,
+  sendPayload,
+  addLog
+}) {
+  if (firmwareState.connected !== true || firmwareState.uploadInProgress !== true) {
+    return;
+  }
+
+  if (firmwareState.awaitingChunkAck) {
+    return;
+  }
+
+  const chunkAction = pageConfig.actions['upload_image.chunk'];
+  const chunkValues = updateBlock.getValues(updateBlock.requestResponseObject);
+  const firmwareEntry = Object.values(chunkValues)[0];
+
+  if (!firmwareEntry?.value || typeof firmwareEntry.value !== 'object') {
+    throw new Error('Missing firmware updater entry for chunk upload');
+  }
+
+  const chunkPayload = await updateBlock.readSelectedFileChunk(firmwareState.nextChunkIndex);
+  firmwareEntry.value.chunk_index = chunkPayload.chunk_index;
+  firmwareEntry.value.dataB64 = chunkPayload.dataB64;
+
+  const chunkRequest = buildRequest(
+    chunkAction.group,
+    chunkAction.action,
+    chunkValues
+  );
+
+  firmwareState.awaitingChunkAck = true;
+  const ok = sendFirmwareRequest(
+    sendPayload,
+    addLog,
+    chunkRequest,
+    chunkAction.group,
+    chunkAction.action
+  );
+
+  if (!ok) {
+    firmwareState.awaitingChunkAck = false;
+    throw new Error('firmware.upload_image.chunk rejected');
+  }
+}
+
 function sendFirmwareRequest(sendPayload, addLog, request, group, action) {
   const ok = sendPayload(request);
   addLog(`${group}.${action} ${ok ? 'sent' : 'rejected'}`);
   return ok;
+}
+
+function buildRequestFromUpdateBlock(updateBlock, actionConfig) {
+  const values = updateBlock.getValues(updateBlock.requestResponseObject);
+  return buildRequest(actionConfig.group, actionConfig.action, values);
 }
 
 function buildUpdaterValues(updateBlock, version) {
@@ -220,6 +406,10 @@ function buildUpdaterValues(updateBlock, version) {
     firmwareEntry.value = {
       version: '',
       file_name: '',
+      size_bytes: 0,
+      chunk_size_bytes: 0,
+      chunk_count: 0,
+      chunk_index: 0,
       dataB64: ''
     };
   }
@@ -228,14 +418,20 @@ function buildUpdaterValues(updateBlock, version) {
   return values;
 }
 
-function hasSelectedImage(values) {
-  const firmwareEntry = Object.values(values || {})[0];
-  const imageValue = firmwareEntry?.value;
+function isFirmwareUploadError(messageType) {
+  return messageType === 'firmware.upload_image.start.error' ||
+    messageType === 'firmware.upload_image.chunk.error' ||
+    messageType === 'firmware.upload_image.finish.error';
+}
 
-  return typeof imageValue?.file_name === 'string' &&
-    imageValue.file_name.trim() !== '' &&
-    typeof imageValue?.dataB64 === 'string' &&
-    imageValue.dataB64.trim() !== '';
+function resetUploadState(firmwareState) {
+  firmwareState.uploadStarted = false;
+  firmwareState.uploadInProgress = false;
+  firmwareState.awaitingChunkAck = false;
+  firmwareState.nextChunkIndex = 0;
+  firmwareState.chunkCount = 0;
+  firmwareState.uploadFinished = false;
+  firmwareState.updateStarted = false;
 }
 
 function extractFirmwareVersion(parameters) {

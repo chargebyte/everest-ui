@@ -4,6 +4,7 @@
 
 export function renderFileUploadBlock(options = {}) {
   const scopeName = requireScopeName(options.namePrefix);
+  const chunkSizeBytes = resolveChunkSizeBytes(options.chunkSizeBytes);
   const element = document.createElement('div');
   element.className = `${scopeName}-file-upload-row`;
   element.style.display = 'flex';
@@ -43,6 +44,7 @@ export function renderFileUploadBlock(options = {}) {
   const selectHandler = {
     current: () => {}
   };
+  let selectedFileState = null;
 
   element.appendChild(fileInput);
   element.appendChild(fileNameInput);
@@ -62,19 +64,15 @@ export function renderFileUploadBlock(options = {}) {
     }
 
     try {
-      const dataB64 = await readFileAsBase64(file);
-      const selectedFile = {
-        file_name: file.name,
-        dataB64,
-        size_bytes: file.size,
-        mime_type: file.type || 'application/octet-stream'
-      };
+      const selectedFile = createSelectedFileState(file, chunkSizeBytes);
+      selectedFileState = selectedFile;
 
       setSelection(selectedFile);
-      selectHandler.current(selectedFile);
+      selectHandler.current(buildSelectedFileInfo(selectedFile));
     } catch (error) {
+      selectedFileState = null;
       resetSelection();
-      setStatusText('Failed to read file');
+      setStatusText('Failed to prepare file');
       selectHandler.current(null);
       if (typeof options.onError === 'function') {
         options.onError(error instanceof Error ? error.message : String(error));
@@ -86,14 +84,16 @@ export function renderFileUploadBlock(options = {}) {
 
   function setStatusText(text) {
     statusElement.textContent = text || '';
+    statusElement.style.display = text ? 'block' : 'none';
   }
 
-  function setSelection(fileInfo) {
-    fileNameInput.value = fileInfo?.file_name || (options.placeholder || 'No file selected');
-    setStatusText('');
+  function setSelection(fileState) {
+    fileNameInput.value = fileState.file_name;
+    setStatusText(`${formatFileSize(fileState.size_bytes)} in ${fileState.chunk_count} chunks`);
   }
 
   function resetSelection() {
+    selectedFileState = null;
     fileNameInput.value = options.placeholder || 'No file selected';
     setStatusText('');
   }
@@ -103,11 +103,70 @@ export function renderFileUploadBlock(options = {}) {
     bindSelect(handler) {
       selectHandler.current = typeof handler === 'function' ? handler : () => {};
     },
+    hasSelection() {
+      return selectedFileState !== null;
+    },
+    getSelectedFileInfo() {
+      return selectedFileState ? buildSelectedFileInfo(selectedFileState) : null;
+    },
+    async readChunk(chunkIndex) {
+      if (!selectedFileState) {
+        throw new Error('No file selected');
+      }
+
+      if (!Number.isInteger(chunkIndex) || chunkIndex < 0) {
+        throw new Error('Invalid chunk index');
+      }
+
+      if (chunkIndex >= selectedFileState.chunk_count) {
+        throw new Error('Chunk index out of range');
+      }
+
+      const startOffset = chunkIndex * selectedFileState.chunk_size_bytes;
+      const endOffset = Math.min(
+        startOffset + selectedFileState.chunk_size_bytes,
+        selectedFileState.size_bytes
+      );
+      const chunkBlob = selectedFileState.file.slice(startOffset, endOffset);
+      const chunkBuffer = await readBlobAsArrayBuffer(chunkBlob);
+
+      return {
+        chunk_index: chunkIndex,
+        dataB64: arrayBufferToBase64(chunkBuffer)
+      };
+    },
     clear() {
       fileInput.value = '';
       resetSelection();
       selectHandler.current(null);
     }
+  };
+}
+
+function createSelectedFileState(file, chunkSizeBytes) {
+  const chunkCount = Math.max(1, Math.ceil(file.size / chunkSizeBytes));
+
+  return {
+    file,
+    file_name: file.name,
+    size_bytes: file.size,
+    mime_type: file.type || 'application/octet-stream',
+    chunk_size_bytes: chunkSizeBytes,
+    chunk_count: chunkCount,
+    chunk_index: 0,
+    dataB64: ''
+  };
+}
+
+function buildSelectedFileInfo(fileState) {
+  return {
+    file_name: fileState.file_name,
+    size_bytes: fileState.size_bytes,
+    mime_type: fileState.mime_type,
+    chunk_size_bytes: fileState.chunk_size_bytes,
+    chunk_count: fileState.chunk_count,
+    chunk_index: fileState.chunk_index,
+    dataB64: fileState.dataB64
   };
 }
 
@@ -119,29 +178,33 @@ function requireScopeName(namePrefix) {
   return namePrefix.trim();
 }
 
-function readFileAsBase64(file) {
+function resolveChunkSizeBytes(value) {
+  if (Number.isInteger(value) && value > 0) {
+    return value;
+  }
+
+  throw new Error('renderFileUploadBlock requires a positive integer chunkSizeBytes');
+}
+
+function readBlobAsArrayBuffer(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
 
     reader.onload = () => {
-      try {
-        const buffer = reader.result;
-        if (!(buffer instanceof ArrayBuffer)) {
-          reject(new Error('Unexpected file reader result'));
-          return;
-        }
-
-        resolve(arrayBufferToBase64(buffer));
-      } catch (error) {
-        reject(error);
+      const result = reader.result;
+      if (!(result instanceof ArrayBuffer)) {
+        reject(new Error('Unexpected file reader result'));
+        return;
       }
+
+      resolve(result);
     };
 
     reader.onerror = () => {
-      reject(reader.error || new Error('Failed to read file'));
+      reject(reader.error || new Error('Failed to read file chunk'));
     };
 
-    reader.readAsArrayBuffer(file);
+    reader.readAsArrayBuffer(blob);
   });
 }
 
@@ -155,4 +218,25 @@ function arrayBufferToBase64(buffer) {
   }
 
   return btoa(binary);
+}
+
+function formatFileSize(sizeBytes) {
+  if (!Number.isFinite(sizeBytes) || sizeBytes < 0) {
+    return 'Unknown size';
+  }
+
+  if (sizeBytes < 1024) {
+    return `${sizeBytes} B`;
+  }
+
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = sizeBytes / 1024;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unitIndex]}`;
 }
