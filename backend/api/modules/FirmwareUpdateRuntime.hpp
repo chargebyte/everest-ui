@@ -31,6 +31,7 @@ private:
     void handleStdoutLine(const QString &line);
     void handleStreamingFinished(const ConsoleConnector::RunResult &result);
     void resetUploadState();
+    void abortUploadAndRemovePartialFile();
 
     ConsoleConnector *m_console = nullptr;
     bool m_updateRunning = false;

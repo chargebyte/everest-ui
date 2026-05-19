@@ -20,6 +20,11 @@ constexpr char kFirmwareUpdateStartFailed[] = "firmware_update_start_failed";
 constexpr char kFirmwareUploadInProgress[] = "upload_in_progress";
 constexpr char kFirmwareUploadStartFailed[] = "firmware_upload_start_failed";
 constexpr char kFirmwareUploadInvalidParams[] = "invalid_params";
+constexpr char kFirmwareUploadNotStarted[] = "upload_not_started";
+constexpr char kFirmwareUploadChunkOutOfOrder[] = "chunk_out_of_order";
+constexpr char kFirmwareUploadChunkInvalid[] = "invalid_chunk";
+constexpr char kFirmwareUploadChunkWriteFailed[] = "firmware_upload_chunk_write_failed";
+constexpr char kFirmwareUploadSizeExceeded[] = "upload_size_exceeded";
 }
 
 FirmwareUpdateRuntime::FirmwareUpdateRuntime(QObject *parent)
@@ -183,16 +188,78 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadStartRequest(const ModuleReque
 }
 
 ModuleResponse FirmwareUpdateRuntime::handleUploadChunkRequest(const ModuleRequest &request) {
-    return ModuleResponse{
+    ModuleResponse response{
         .requestId = request.requestId,
         .group = QStringLiteral("firmware"),
         .action = request.action,
-        .parameters = QJsonObject{
-            {QStringLiteral("error"), QStringLiteral("not_implemented")},
-        },
+        .parameters = QJsonObject{},
         .success = false,
         .final = true,
     };
+    if (!m_uploadRunning || !m_uploadFile.isOpen() || m_uploadFinished) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadNotStarted)},
+        };
+        return response;
+    }
+
+    const QJsonObject imageObject = request.parameters.value(QStringLiteral("image")).toObject();
+    const int chunkIndex = imageObject.value(QStringLiteral("chunk_index")).toInt(-1);
+    const QString dataB64 = imageObject.value(QStringLiteral("dataB64")).toString().trimmed();
+
+    if (chunkIndex < 0 || dataB64.isEmpty()) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadInvalidParams)},
+        };
+        return response;
+    }
+
+    if (chunkIndex != m_nextExpectedChunkIndex || chunkIndex >= m_expectedChunkCount) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadChunkOutOfOrder)},
+        };
+        return response;
+    }
+
+    const QByteArray chunkData = QByteArray::fromBase64(dataB64.toLatin1());
+    if (chunkData.isEmpty()) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadChunkInvalid)},
+        };
+        return response;
+    }
+
+    if (chunkData.size() > m_expectedChunkSizeBytes) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadChunkInvalid)},
+        };
+        return response;
+    }
+
+    if (m_writtenUploadSizeBytes + chunkData.size() > m_expectedUploadSizeBytes) {
+        abortUploadAndRemovePartialFile();
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadSizeExceeded)},
+        };
+        return response;
+    }
+
+    const qint64 bytesWritten = m_uploadFile.write(chunkData);
+    if (bytesWritten != chunkData.size()) {
+        abortUploadAndRemovePartialFile();
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadChunkWriteFailed)},
+        };
+        return response;
+    }
+
+    m_writtenUploadSizeBytes += bytesWritten;
+    m_nextExpectedChunkIndex += 1;
+    response.parameters = QJsonObject{
+        {QStringLiteral("chunk_index"), chunkIndex},
+    };
+    response.success = true;
+    return response;
 }
 
 ModuleResponse FirmwareUpdateRuntime::handleUploadFinishRequest(const ModuleRequest &request) {
@@ -349,4 +416,13 @@ void FirmwareUpdateRuntime::resetUploadState() {
     m_expectedChunkSizeBytes = 0;
     m_nextExpectedChunkIndex = 0;
     m_uploadFinished = false;
+}
+
+void FirmwareUpdateRuntime::abortUploadAndRemovePartialFile() {
+    const QString filePath = m_uploadFilePath;
+    resetUploadState();
+
+    if (!filePath.isEmpty()) {
+        QFile::remove(filePath);
+    }
 }
