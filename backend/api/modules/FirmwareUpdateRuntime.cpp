@@ -25,6 +25,8 @@ constexpr char kFirmwareUploadChunkOutOfOrder[] = "chunk_out_of_order";
 constexpr char kFirmwareUploadChunkInvalid[] = "invalid_chunk";
 constexpr char kFirmwareUploadChunkWriteFailed[] = "firmware_upload_chunk_write_failed";
 constexpr char kFirmwareUploadSizeExceeded[] = "upload_size_exceeded";
+constexpr char kFirmwareUploadIncomplete[] = "upload_incomplete";
+constexpr char kFirmwareUploadFinishFailed[] = "firmware_upload_finish_failed";
 }
 
 FirmwareUpdateRuntime::FirmwareUpdateRuntime(QObject *parent)
@@ -263,16 +265,43 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadChunkRequest(const ModuleReque
 }
 
 ModuleResponse FirmwareUpdateRuntime::handleUploadFinishRequest(const ModuleRequest &request) {
-    return ModuleResponse{
+    ModuleResponse response{
         .requestId = request.requestId,
         .group = QStringLiteral("firmware"),
         .action = request.action,
-        .parameters = QJsonObject{
-            {QStringLiteral("error"), QStringLiteral("not_implemented")},
-        },
+        .parameters = QJsonObject{},
         .success = false,
         .final = true,
     };
+    if (!m_uploadRunning || !m_uploadFile.isOpen() || m_uploadFinished) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadNotStarted)},
+        };
+        return response;
+    }
+
+    if (m_nextExpectedChunkIndex != m_expectedChunkCount ||
+        m_writtenUploadSizeBytes != m_expectedUploadSizeBytes) {
+        abortUploadAndRemovePartialFile();
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadIncomplete)},
+        };
+        return response;
+    }
+
+    if (!m_uploadFile.flush()) {
+        abortUploadAndRemovePartialFile();
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadFinishFailed)},
+        };
+        return response;
+    }
+
+    m_uploadFile.close();
+    m_uploadRunning = false;
+    m_uploadFinished = true;
+    response.success = true;
+    return response;
 }
 
 void FirmwareUpdateRuntime::processStdoutChunk(const QByteArray &chunk) {
