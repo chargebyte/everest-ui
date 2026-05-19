@@ -57,6 +57,10 @@ inline constexpr const char kActionReadSettings[] = "read_settings";
 inline constexpr const char kActionWriteSettings[] = "write_settings";
 inline constexpr const char kActionReadVersion[] = "read_version";
 inline constexpr const char kActionUpdateImage[] = "update_image";
+inline constexpr const char kActionUploadImage[] = "upload_image";
+inline constexpr const char kActionUploadImageStart[] = "upload_image.start";
+inline constexpr const char kActionUploadImageChunk[] = "upload_image.chunk";
+inline constexpr const char kActionUploadImageFinish[] = "upload_image.finish";
 inline constexpr const char kActionDownload[] = "download";
 
 // Parameter keys

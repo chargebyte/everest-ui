@@ -17,6 +17,9 @@ public:
     explicit FirmwareUpdateRuntime(QObject *parent = nullptr);
 
     ModuleResponse handleUpdateRequest(const ModuleRequest &request);
+    ModuleResponse handleUploadStartRequest(const ModuleRequest &request);
+    ModuleResponse handleUploadChunkRequest(const ModuleRequest &request);
+    ModuleResponse handleUploadFinishRequest(const ModuleRequest &request);
 
 signals:
     void responseReady(const ModuleResponse &response);

@@ -14,6 +14,9 @@ class FirmwareUpdateRuntime;
 enum class FirmwareUpdateAction {
     ReadVersion,
     UpdateImage,
+    UploadImageStart,
+    UploadImageChunk,
+    UploadImageFinish,
     Unknown
 };
 
@@ -51,6 +54,9 @@ namespace FirmwareUpdate {
 ModuleResponse handleRequest(const ModuleRequest &request);
 ModuleResponse handleReadRequest(const ModuleRequest &request);
 ModuleResponse handleUpdateRequest(const ModuleRequest &request);
+ModuleResponse handleUploadStartRequest(const ModuleRequest &request);
+ModuleResponse handleUploadChunkRequest(const ModuleRequest &request);
+ModuleResponse handleUploadFinishRequest(const ModuleRequest &request);
 FirmwareVersionReadResult readFirmwareVersion();
 FirmwareImageDirResult loadFirmwareImageDir(const QString &configKey);
 QString loadBackendConfigValue(const QString &configKey);

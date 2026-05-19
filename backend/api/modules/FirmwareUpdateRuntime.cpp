@@ -104,6 +104,45 @@ ModuleResponse FirmwareUpdateRuntime::handleUpdateRequest(const ModuleRequest &r
     return response;
 }
 
+ModuleResponse FirmwareUpdateRuntime::handleUploadStartRequest(const ModuleRequest &request) {
+    return ModuleResponse{
+        .requestId = request.requestId,
+        .group = QStringLiteral("firmware"),
+        .action = request.action,
+        .parameters = QJsonObject{
+            {QStringLiteral("error"), QStringLiteral("not_implemented")},
+        },
+        .success = false,
+        .final = true,
+    };
+}
+
+ModuleResponse FirmwareUpdateRuntime::handleUploadChunkRequest(const ModuleRequest &request) {
+    return ModuleResponse{
+        .requestId = request.requestId,
+        .group = QStringLiteral("firmware"),
+        .action = request.action,
+        .parameters = QJsonObject{
+            {QStringLiteral("error"), QStringLiteral("not_implemented")},
+        },
+        .success = false,
+        .final = true,
+    };
+}
+
+ModuleResponse FirmwareUpdateRuntime::handleUploadFinishRequest(const ModuleRequest &request) {
+    return ModuleResponse{
+        .requestId = request.requestId,
+        .group = QStringLiteral("firmware"),
+        .action = request.action,
+        .parameters = QJsonObject{
+            {QStringLiteral("error"), QStringLiteral("not_implemented")},
+        },
+        .success = false,
+        .final = true,
+    };
+}
+
 void FirmwareUpdateRuntime::processStdoutChunk(const QByteArray &chunk) {
     m_stdoutLineBuffer.append(chunk);
 

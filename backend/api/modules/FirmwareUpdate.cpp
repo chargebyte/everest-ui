@@ -43,6 +43,18 @@ FirmwareUpdateAction toFirmwareUpdateAction(const QString &action) {
         return FirmwareUpdateAction::UpdateImage;
     }
 
+    if (action == QLatin1String(kActionUploadImageStart)) {
+        return FirmwareUpdateAction::UploadImageStart;
+    }
+
+    if (action == QLatin1String(kActionUploadImageChunk)) {
+        return FirmwareUpdateAction::UploadImageChunk;
+    }
+
+    if (action == QLatin1String(kActionUploadImageFinish)) {
+        return FirmwareUpdateAction::UploadImageFinish;
+    }
+
     return FirmwareUpdateAction::Unknown;
 }
 } // namespace
@@ -59,6 +71,12 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
         return handleReadRequest(request);
     case FirmwareUpdateAction::UpdateImage:
         return handleUpdateRequest(request);
+    case FirmwareUpdateAction::UploadImageStart:
+        return handleUploadStartRequest(request);
+    case FirmwareUpdateAction::UploadImageChunk:
+        return handleUploadChunkRequest(request);
+    case FirmwareUpdateAction::UploadImageFinish:
+        return handleUploadFinishRequest(request);
     case FirmwareUpdateAction::Unknown:
         throw std::runtime_error("FirmwareUpdate::handleRequest got unsupported action");
     }
@@ -96,6 +114,18 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
 
 ModuleResponse handleUpdateRequest(const ModuleRequest &request) {
     return runtime().handleUpdateRequest(request);
+}
+
+ModuleResponse handleUploadStartRequest(const ModuleRequest &request) {
+    return runtime().handleUploadStartRequest(request);
+}
+
+ModuleResponse handleUploadChunkRequest(const ModuleRequest &request) {
+    return runtime().handleUploadChunkRequest(request);
+}
+
+ModuleResponse handleUploadFinishRequest(const ModuleRequest &request) {
+    return runtime().handleUploadFinishRequest(request);
 }
 
 FirmwareVersionReadResult readFirmwareVersion() {
