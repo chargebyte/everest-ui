@@ -7,6 +7,8 @@
 #include "FirmwareUpdate.hpp"
 #include "ProtocolSchema.hpp"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonObject>
 #include <QRegularExpression>
 
@@ -15,6 +17,9 @@ constexpr char kRaucInstallTemplate[] = "rauc install @image_path@";
 constexpr char kFirmwareImageDirConfigKey[] = "firmware_image_dir";
 constexpr char kFirmwareUpdateInProgress[] = "update_in_progress";
 constexpr char kFirmwareUpdateStartFailed[] = "firmware_update_start_failed";
+constexpr char kFirmwareUploadInProgress[] = "upload_in_progress";
+constexpr char kFirmwareUploadStartFailed[] = "firmware_upload_start_failed";
+constexpr char kFirmwareUploadInvalidParams[] = "invalid_params";
 }
 
 FirmwareUpdateRuntime::FirmwareUpdateRuntime(QObject *parent)
@@ -105,16 +110,76 @@ ModuleResponse FirmwareUpdateRuntime::handleUpdateRequest(const ModuleRequest &r
 }
 
 ModuleResponse FirmwareUpdateRuntime::handleUploadStartRequest(const ModuleRequest &request) {
-    return ModuleResponse{
+    ModuleResponse response{
         .requestId = request.requestId,
         .group = QStringLiteral("firmware"),
         .action = request.action,
-        .parameters = QJsonObject{
-            {QStringLiteral("error"), QStringLiteral("not_implemented")},
-        },
+        .parameters = QJsonObject{},
         .success = false,
         .final = true,
     };
+    if (m_uploadRunning) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadInProgress)},
+        };
+        return response;
+    }
+
+    resetUploadState();
+
+    const QJsonObject imageObject = request.parameters.value(QStringLiteral("image")).toObject();
+    const QString rawFileName = imageObject.value(QStringLiteral("file_name")).toString().trimmed();
+    const QString fileName = QFileInfo(rawFileName).fileName();
+    const qint64 sizeBytes =
+        imageObject.value(QStringLiteral("size_bytes")).toVariant().toLongLong();
+    const int chunkCount = imageObject.value(QStringLiteral("chunk_count")).toInt(-1);
+    const int chunkSizeBytes = imageObject.value(QStringLiteral("chunk_size_bytes")).toInt(-1);
+
+    if (fileName.isEmpty() || sizeBytes <= 0 || chunkCount <= 0 || chunkSizeBytes <= 0) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadInvalidParams)},
+        };
+        return response;
+    }
+
+    const FirmwareImageDirResult imageDirResult =
+        FirmwareUpdate::loadFirmwareImageDir(QString::fromLatin1(kFirmwareImageDirConfigKey));
+    if (!imageDirResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), imageDirResult.error},
+        };
+        return response;
+    }
+
+    const FirmwareImageCleanupResult cleanupResult = FirmwareUpdate::cleanOldFirmwareImages(QString());
+    if (!cleanupResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), cleanupResult.error},
+        };
+        return response;
+    }
+
+    const QString targetPath = QDir(imageDirResult.path).filePath(fileName);
+    m_uploadFile.setFileName(targetPath);
+    if (!m_uploadFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        resetUploadState();
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadStartFailed)},
+        };
+        return response;
+    }
+
+    m_uploadRunning = true;
+    m_uploadFilePath = targetPath;
+    m_uploadFileName = fileName;
+    m_expectedUploadSizeBytes = sizeBytes;
+    m_writtenUploadSizeBytes = 0;
+    m_expectedChunkCount = chunkCount;
+    m_expectedChunkSizeBytes = chunkSizeBytes;
+    m_nextExpectedChunkIndex = 0;
+    m_uploadFinished = false;
+    response.success = true;
+    return response;
 }
 
 ModuleResponse FirmwareUpdateRuntime::handleUploadChunkRequest(const ModuleRequest &request) {
@@ -267,4 +332,21 @@ void FirmwareUpdateRuntime::handleStreamingFinished(const ConsoleConnector::RunR
     m_ackSent = false;
     m_successSeen = false;
     m_failureSeen = false;
+}
+
+void FirmwareUpdateRuntime::resetUploadState() {
+    if (m_uploadFile.isOpen()) {
+        m_uploadFile.close();
+    }
+
+    m_uploadRunning = false;
+    m_uploadFile.setFileName(QString());
+    m_uploadFilePath.clear();
+    m_uploadFileName.clear();
+    m_expectedUploadSizeBytes = 0;
+    m_writtenUploadSizeBytes = 0;
+    m_expectedChunkCount = 0;
+    m_expectedChunkSizeBytes = 0;
+    m_nextExpectedChunkIndex = 0;
+    m_uploadFinished = false;
 }

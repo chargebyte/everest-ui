@@ -8,6 +8,7 @@
 #include "ConsoleConnector.hpp"
 #include "RequestResponseTypes.hpp"
 
+#include <QFile>
 #include <QObject>
 
 class FirmwareUpdateRuntime final : public QObject {
@@ -29,15 +30,26 @@ private:
     void flushStdoutRemainder();
     void handleStdoutLine(const QString &line);
     void handleStreamingFinished(const ConsoleConnector::RunResult &result);
+    void resetUploadState();
 
     ConsoleConnector *m_console = nullptr;
     bool m_updateRunning = false;
+    bool m_uploadRunning = false;
     qint64 m_currentRequestId = 0;
     QString m_currentAction;
     QByteArray m_stdoutLineBuffer;
     bool m_ackSent = false;
     bool m_successSeen = false;
     bool m_failureSeen = false;
+    QFile m_uploadFile;
+    QString m_uploadFilePath;
+    QString m_uploadFileName;
+    qint64 m_expectedUploadSizeBytes = 0;
+    qint64 m_writtenUploadSizeBytes = 0;
+    int m_expectedChunkCount = 0;
+    int m_expectedChunkSizeBytes = 0;
+    int m_nextExpectedChunkIndex = 0;
+    bool m_uploadFinished = false;
 };
 
 #endif // FIRMWARE_UPDATE_RUNTIME_HPP
