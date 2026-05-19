@@ -18,6 +18,7 @@ public:
     explicit FirmwareUpdateRuntime(QObject *parent = nullptr);
 
     ModuleResponse handleUpdateRequest(const ModuleRequest &request);
+    ModuleResponse handleRebootRequest(const ModuleRequest &request);
     ModuleResponse handleUploadStartRequest(const ModuleRequest &request);
     ModuleResponse handleUploadChunkRequest(const ModuleRequest &request);
     ModuleResponse handleUploadFinishRequest(const ModuleRequest &request);
@@ -30,6 +31,7 @@ private:
     void flushStdoutRemainder();
     void handleStdoutLine(const QString &line);
     void handleStreamingFinished(const ConsoleConnector::RunResult &result);
+    void runDeferredRebootCommand(const QString &command);
     bool hasFinishedUpload() const;
     void resetUploadState();
     void abortUploadAndRemovePartialFile();
@@ -52,6 +54,7 @@ private:
     int m_expectedChunkSizeBytes = 0;
     int m_nextExpectedChunkIndex = 0;
     bool m_uploadFinished = false;
+    bool m_rebootRequired = false;
 };
 
 #endif // FIRMWARE_UPDATE_RUNTIME_HPP

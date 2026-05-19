@@ -8,17 +8,22 @@
 #include "ProtocolSchema.hpp"
 
 #include <QCryptographicHash>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <QTimer>
 
 namespace {
 // constexpr char kRaucInstallTemplate[] = "rauc install @image_path@";
 constexpr char kRaucInstallTemplate[] = "/home/erik/Dokumente/github/everest-ui/test-scripts/firmware-update-copy-fail.sh";
+constexpr char kRebootTemplate[] = "reboot";
+constexpr char kFirmwareRebootCommandConfigKey[] = "firmware_reboot_command";
 constexpr char kFirmwareImageDirConfigKey[] = "firmware_image_dir";
 constexpr char kFirmwareUpdateInProgress[] = "update_in_progress";
 constexpr char kFirmwareUpdateStartFailed[] = "firmware_update_start_failed";
+constexpr char kFirmwareRebootNotAllowed[] = "not_allowed";
 constexpr char kFirmwareUploadNotReady[] = "upload_not_ready";
 constexpr char kFirmwareUploadInProgress[] = "upload_in_progress";
 constexpr char kFirmwareUploadStartFailed[] = "firmware_upload_start_failed";
@@ -87,6 +92,34 @@ ModuleResponse FirmwareUpdateRuntime::handleUpdateRequest(const ModuleRequest &r
     m_ackSent = false;
     m_successSeen = false;
     m_failureSeen = false;
+    m_rebootRequired = false;
+    response.success = true;
+    return response;
+}
+
+ModuleResponse FirmwareUpdateRuntime::handleRebootRequest(const ModuleRequest &request) {
+    ModuleResponse response{
+        .requestId = request.requestId,
+        .group = QStringLiteral("firmware"),
+        .action = request.action,
+        .parameters = QJsonObject{},
+        .success = false,
+        .final = true,
+    };
+
+    if (m_updateRunning || m_uploadRunning || !m_rebootRequired) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareRebootNotAllowed)},
+        };
+        return response;
+    }
+
+    const QString rebootCommand =
+        FirmwareUpdate::loadBackendConfigValue(QString::fromLatin1(kFirmwareRebootCommandConfigKey))
+            .trimmed();
+    m_rebootRequired = false;
+    runDeferredRebootCommand(rebootCommand.isEmpty() ? QString::fromLatin1(kRebootTemplate)
+                                                     : rebootCommand);
     response.success = true;
     return response;
 }
@@ -152,6 +185,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadStartRequest(const ModuleReque
     }
 
     m_uploadRunning = true;
+    m_rebootRequired = false;
     m_uploadFilePath = targetPath;
     m_uploadFileName = fileName;
     m_expectedUploadSizeBytes = sizeBytes;
@@ -424,6 +458,7 @@ void FirmwareUpdateRuntime::handleStreamingFinished(const ConsoleConnector::RunR
     }
 
     if (result.exitCode == 0 && m_successSeen) {
+        m_rebootRequired = true;
         emit responseReady(ModuleResponse{
             .requestId = m_currentRequestId,
             .group = QStringLiteral("firmware"),
@@ -435,6 +470,7 @@ void FirmwareUpdateRuntime::handleStreamingFinished(const ConsoleConnector::RunR
             .final = true,
         });
     } else {
+        m_rebootRequired = false;
         emit responseReady(ModuleResponse{
             .requestId = m_currentRequestId,
             .group = QStringLiteral("firmware"),
@@ -455,6 +491,21 @@ void FirmwareUpdateRuntime::handleStreamingFinished(const ConsoleConnector::RunR
     m_ackSent = false;
     m_successSeen = false;
     m_failureSeen = false;
+}
+
+void FirmwareUpdateRuntime::runDeferredRebootCommand(const QString &command) {
+    QTimer::singleShot(0, this, [command]() {
+        ConsoleConnector console;
+        ConsoleConnector::ExecOptions options;
+        options.syncTimeoutMs = 5000;
+        const ConsoleConnector::RunResult result =
+            console.executeTemplate(command, {}, options, ConsoleConnector::ExecMode::Sync);
+
+        if (result.exitCode != 0) {
+            qWarning() << "Firmware reboot command failed with exit code" << result.exitCode
+                       << "stderr:" << result.stderrData;
+        }
+    });
 }
 
 void FirmwareUpdateRuntime::resetUploadState() {

@@ -44,6 +44,10 @@ FirmwareUpdateAction toFirmwareUpdateAction(const QString &action) {
         return FirmwareUpdateAction::UpdateImage;
     }
 
+    if (action == QLatin1String(kActionReboot)) {
+        return FirmwareUpdateAction::Reboot;
+    }
+
     if (action == QLatin1String(kActionUploadImageStart)) {
         return FirmwareUpdateAction::UploadImageStart;
     }
@@ -72,6 +76,8 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
         return handleReadRequest(request);
     case FirmwareUpdateAction::UpdateImage:
         return handleUpdateRequest(request);
+    case FirmwareUpdateAction::Reboot:
+        return handleRebootRequest(request);
     case FirmwareUpdateAction::UploadImageStart:
         return handleUploadStartRequest(request);
     case FirmwareUpdateAction::UploadImageChunk:
@@ -115,6 +121,10 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
 
 ModuleResponse handleUpdateRequest(const ModuleRequest &request) {
     return runtime().handleUpdateRequest(request);
+}
+
+ModuleResponse handleRebootRequest(const ModuleRequest &request) {
+    return runtime().handleRebootRequest(request);
 }
 
 ModuleResponse handleUploadStartRequest(const ModuleRequest &request) {
