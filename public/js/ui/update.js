@@ -95,6 +95,7 @@ export function renderUpdateBlock(blockConfig, options = {}) {
     imageValue.chunk_count = normalizeInteger(fileInfo?.chunk_count, 0);
     imageValue.chunk_index = normalizeInteger(fileInfo?.chunk_index, 0);
     imageValue.dataB64 = normalizeText(fileInfo?.dataB64, '');
+    imageValue.sha256 = normalizeText(fileInfo?.sha256, '');
 
     if (!state.rebootRequired) {
       state.progressText = options.progressPlaceholder || 'Idle';
@@ -140,10 +141,12 @@ export function renderUpdateBlock(blockConfig, options = {}) {
 
       imageValue.chunk_index = normalizeInteger(chunk.chunk_index, 0);
       imageValue.dataB64 = normalizeText(chunk.dataB64, '');
+      imageValue.sha256 = normalizeText(chunk.sha256, imageValue.sha256 || '');
 
       return {
         chunk_index: imageValue.chunk_index,
-        dataB64: imageValue.dataB64
+        dataB64: imageValue.dataB64,
+        sha256: imageValue.sha256
       };
     },
     getValues(sourceRequestResponseObject) {
@@ -169,6 +172,7 @@ export function renderUpdateBlock(blockConfig, options = {}) {
       imageValue.chunk_count = normalizeInteger(fileInfo?.chunk_count, 0);
       imageValue.chunk_index = normalizeInteger(fileInfo?.chunk_index, 0);
       imageValue.dataB64 = fileInfo?.dataB64 || '';
+      imageValue.sha256 = normalizeText(fileInfo?.sha256, '');
 
       if (!fileInfo) {
         fileUpload.clear();
@@ -278,7 +282,8 @@ function createRequestResponseObject(updaterDefinition) {
         chunk_size_bytes: updaterDefinition.chunkSizeBytes,
         chunk_count: 0,
         chunk_index: 0,
-        dataB64: ''
+        dataB64: '',
+        sha256: ''
       }
     }
   };
@@ -329,6 +334,9 @@ function setUpdateValues(
     if (Object.hasOwn(nextValue, 'dataB64')) {
       imageValue.dataB64 = normalizeText(nextValue.dataB64, '');
     }
+    if (Object.hasOwn(nextValue, 'sha256')) {
+      imageValue.sha256 = normalizeText(nextValue.sha256, '');
+    }
   });
 
   const activeEntry = Object.values(requestResponseObject)[0];
@@ -351,7 +359,8 @@ function getImageValue(requestResponseObject, parameterId) {
       chunk_size_bytes: 0,
       chunk_count: 0,
       chunk_index: 0,
-      dataB64: ''
+      dataB64: '',
+      sha256: ''
     };
   }
 
@@ -373,7 +382,8 @@ function buildSelectedFileInfo(imageValue) {
     chunk_size_bytes: imageValue.chunk_size_bytes,
     chunk_count: imageValue.chunk_count,
     chunk_index: imageValue.chunk_index,
-    dataB64: imageValue.dataB64
+    dataB64: imageValue.dataB64,
+    sha256: imageValue.sha256
   };
 }
 

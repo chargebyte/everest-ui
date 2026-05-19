@@ -30,6 +30,7 @@ private:
     void flushStdoutRemainder();
     void handleStdoutLine(const QString &line);
     void handleStreamingFinished(const ConsoleConnector::RunResult &result);
+    bool hasFinishedUpload() const;
     void resetUploadState();
     void abortUploadAndRemovePartialFile();
 

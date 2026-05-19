@@ -158,11 +158,7 @@ export function renderFirmwarePage(container, {
         if (firmwareState.nextChunkIndex >= firmwareState.chunkCount) {
           updateBlock.setProgress('Finishing upload...');
           const finishAction = pageConfig.actions['upload_image.finish'];
-          const finishRequest = buildRequest(
-            finishAction.group,
-            finishAction.action,
-            {}
-          );
+          const finishRequest = buildFinishRequestFromUpdateBlock(updateBlock, finishAction);
 
           const ok = sendFirmwareRequest(
             sendPayload,
@@ -294,7 +290,6 @@ export function renderFirmwarePage(container, {
         resetUploadState(firmwareState);
         firmwareState.rebootRequired = false;
         updateBlock.setRebootRequired(false);
-        updateBlock.setProgress(null);
         return;
       }
 
@@ -398,6 +393,22 @@ function buildRequestFromUpdateBlock(updateBlock, actionConfig) {
   return buildRequest(actionConfig.group, actionConfig.action, values);
 }
 
+function buildFinishRequestFromUpdateBlock(updateBlock, actionConfig) {
+  const values = updateBlock.getValues(updateBlock.requestResponseObject);
+  const finishValues = structuredClone(values);
+  const firmwareEntry = Object.values(finishValues)[0];
+
+  if (!firmwareEntry?.value || typeof firmwareEntry.value !== 'object') {
+    throw new Error('Missing firmware updater entry for finish upload');
+  }
+
+  firmwareEntry.value = {
+    sha256: firmwareEntry.value.sha256 || ''
+  };
+
+  return buildRequest(actionConfig.group, actionConfig.action, finishValues);
+}
+
 function buildUpdaterValues(updateBlock, version) {
   const values = updateBlock.getValues(updateBlock.requestResponseObject);
   const firmwareEntry = Object.values(values)[0];
@@ -410,7 +421,8 @@ function buildUpdaterValues(updateBlock, version) {
       chunk_size_bytes: 0,
       chunk_count: 0,
       chunk_index: 0,
-      dataB64: ''
+      dataB64: '',
+      sha256: ''
     };
   }
 

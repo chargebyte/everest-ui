@@ -7,16 +7,19 @@
 #include "FirmwareUpdate.hpp"
 #include "ProtocolSchema.hpp"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonObject>
 #include <QRegularExpression>
 
 namespace {
-constexpr char kRaucInstallTemplate[] = "rauc install @image_path@";
+// constexpr char kRaucInstallTemplate[] = "rauc install @image_path@";
+constexpr char kRaucInstallTemplate[] = "/home/erik/Dokumente/github/everest-ui/test-scripts/firmware-update-copy-fail.sh";
 constexpr char kFirmwareImageDirConfigKey[] = "firmware_image_dir";
 constexpr char kFirmwareUpdateInProgress[] = "update_in_progress";
 constexpr char kFirmwareUpdateStartFailed[] = "firmware_update_start_failed";
+constexpr char kFirmwareUploadNotReady[] = "upload_not_ready";
 constexpr char kFirmwareUploadInProgress[] = "upload_in_progress";
 constexpr char kFirmwareUploadStartFailed[] = "firmware_upload_start_failed";
 constexpr char kFirmwareUploadInvalidParams[] = "invalid_params";
@@ -27,6 +30,7 @@ constexpr char kFirmwareUploadChunkWriteFailed[] = "firmware_upload_chunk_write_
 constexpr char kFirmwareUploadSizeExceeded[] = "upload_size_exceeded";
 constexpr char kFirmwareUploadIncomplete[] = "upload_incomplete";
 constexpr char kFirmwareUploadFinishFailed[] = "firmware_upload_finish_failed";
+constexpr char kFirmwareUploadChecksumMismatch[] = "checksum_mismatch";
 }
 
 FirmwareUpdateRuntime::FirmwareUpdateRuntime(QObject *parent)
@@ -54,39 +58,9 @@ ModuleResponse FirmwareUpdateRuntime::handleUpdateRequest(const ModuleRequest &r
         return response;
     }
 
-    const FirmwareImagePayloadResult payloadResult =
-        FirmwareUpdate::parseFirmwareImagePayload(request.parameters);
-    if (!payloadResult.success) {
+    if (!hasFinishedUpload()) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), payloadResult.error},
-        };
-        return response;
-    }
-
-    const FirmwareImageDirResult imageDirResult =
-        FirmwareUpdate::loadFirmwareImageDir(QString::fromLatin1(kFirmwareImageDirConfigKey));
-    if (!imageDirResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), imageDirResult.error},
-        };
-        return response;
-    }
-
-    const FirmwareImageCleanupResult cleanupResult = FirmwareUpdate::cleanOldFirmwareImages(QString());
-    if (!cleanupResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), cleanupResult.error},
-        };
-        return response;
-    }
-
-    const FirmwareImageWriteResult writeResult = FirmwareUpdate::saveFirmwareImageToDisk(
-        imageDirResult.path,
-        payloadResult.fileName,
-        payloadResult.imageData);
-    if (!writeResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), writeResult.error},
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadNotReady)},
         };
         return response;
     }
@@ -95,7 +69,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUpdateRequest(const ModuleRequest &r
     const ConsoleConnector::RunResult startResult = m_console->executeTemplate(
         QString::fromLatin1(kRaucInstallTemplate),
         {
-            {QStringLiteral("@image_path@"), writeResult.path},
+            {QStringLiteral("@image_path@"), m_uploadFilePath},
         },
         options,
         ConsoleConnector::ExecMode::StreamingAsync);
@@ -279,6 +253,20 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadFinishRequest(const ModuleRequ
         return response;
     }
 
+    const QString expectedSha256 = request.parameters
+                                       .value(QStringLiteral("image"))
+                                       .toObject()
+                                       .value(QStringLiteral("sha256"))
+                                       .toString()
+                                       .trimmed()
+                                       .toLower();
+    if (expectedSha256.isEmpty()) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadInvalidParams)},
+        };
+        return response;
+    }
+
     if (m_nextExpectedChunkIndex != m_expectedChunkCount ||
         m_writtenUploadSizeBytes != m_expectedUploadSizeBytes) {
         abortUploadAndRemovePartialFile();
@@ -297,6 +285,36 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadFinishRequest(const ModuleRequ
     }
 
     m_uploadFile.close();
+
+    QFile uploadedFile(m_uploadFilePath);
+    if (!uploadedFile.open(QIODevice::ReadOnly)) {
+        abortUploadAndRemovePartialFile();
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadFinishFailed)},
+        };
+        return response;
+    }
+
+    QCryptographicHash hasher(QCryptographicHash::Sha256);
+    if (!hasher.addData(&uploadedFile)) {
+        uploadedFile.close();
+        abortUploadAndRemovePartialFile();
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadFinishFailed)},
+        };
+        return response;
+    }
+
+    const QString actualSha256 = QString::fromLatin1(hasher.result().toHex()).toLower();
+    uploadedFile.close();
+    if (actualSha256 != expectedSha256) {
+        abortUploadAndRemovePartialFile();
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadChecksumMismatch)},
+        };
+        return response;
+    }
+
     m_uploadRunning = false;
     m_uploadFinished = true;
     response.success = true;
@@ -332,6 +350,15 @@ void FirmwareUpdateRuntime::flushStdoutRemainder() {
     }
 
     handleStdoutLine(QString::fromUtf8(line));
+}
+
+bool FirmwareUpdateRuntime::hasFinishedUpload() const {
+    if (m_uploadRunning || !m_uploadFinished || m_uploadFilePath.isEmpty()) {
+        return false;
+    }
+
+    const QFileInfo uploadedFileInfo(m_uploadFilePath);
+    return uploadedFileInfo.exists() && uploadedFileInfo.isFile() && uploadedFileInfo.isReadable();
 }
 
 void FirmwareUpdateRuntime::handleStdoutLine(const QString &line) {
@@ -421,6 +448,7 @@ void FirmwareUpdateRuntime::handleStreamingFinished(const ConsoleConnector::RunR
     }
 
     m_updateRunning = false;
+    resetUploadState();
     m_currentRequestId = 0;
     m_currentAction.clear();
     m_stdoutLineBuffer.clear();
