@@ -62,5 +62,6 @@ Thumbs.db
 # VS Code
 .vscode/
 
-# Test scripts
+# Testing
 test-scripts/
+test-images/

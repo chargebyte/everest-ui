@@ -46,6 +46,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUpdateRequest(const ModuleRequest &r
         .success = false,
         .final = true,
     };
+
     if (m_updateRunning) {
         response.parameters = QJsonObject{
             {QStringLiteral("error"), QString::fromLatin1(kFirmwareUpdateInProgress)},
@@ -257,9 +258,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadChunkRequest(const ModuleReque
 
     m_writtenUploadSizeBytes += bytesWritten;
     m_nextExpectedChunkIndex += 1;
-    response.parameters = QJsonObject{
-        {QStringLiteral("chunk_index"), chunkIndex},
-    };
+
     response.success = true;
     return response;
 }
