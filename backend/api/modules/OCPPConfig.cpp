@@ -336,7 +336,8 @@ OcppReadValueResult extractValueFromDocument(const QJsonObject &controllerRoot,
 
 OcppReadValueResult readConfigValue(const QStringList &backendPathSegments,
                                     const QString &baseDirectoryPath,
-                                    const QString &customDirectoryPath) {
+                                    const QString &customDirectoryPath,
+                                    bool customPathExists) {
     if (backendPathSegments.size() < 2) {
         return OcppReadValueResult{
             .success = false,
@@ -353,25 +354,47 @@ OcppReadValueResult readConfigValue(const QStringList &backendPathSegments,
     const QString baseFilePath =
         buildControllerFilePath(baseDirectoryPath, controllerName);
 
-    if (!customFilePath.isEmpty() && QFileInfo::exists(customFilePath)) {
-        const OcppJsonLoadResult customLoadResult = loadJsonObjectFile(customFilePath);
-        if (!customLoadResult.success) {
+    const auto readValueFromFilePath = [&valuePathSegments](const QString &filePath) {
+        const OcppJsonLoadResult loadResult = loadJsonObjectFile(filePath);
+        if (!loadResult.success) {
             return OcppReadValueResult{
                 .success = false,
                 .found = false,
                 .value = QJsonValue(),
-                .error = customLoadResult.error,
+                .error = loadResult.error,
             };
         }
 
-        const OcppReadValueResult customValueResult =
-            extractValueFromDocument(customLoadResult.rootObject, valuePathSegments);
-        if (!customValueResult.success) {
-            return customValueResult;
+        return extractValueFromDocument(loadResult.rootObject, valuePathSegments);
+    };
+
+    const QString preferredFilePath =
+        customPathExists && !customFilePath.isEmpty() ? customFilePath : baseFilePath;
+
+    if (!QFileInfo::exists(preferredFilePath)) {
+        return OcppReadValueResult{
+            .success = false,
+            .found = false,
+            .value = QJsonValue(),
+            .error = QString::fromLatin1(kOcppFileNotFound),
+        };
+    }
+
+    const OcppReadValueResult preferredValueResult = readValueFromFilePath(preferredFilePath);
+    if (!preferredValueResult.success) {
+        return preferredValueResult;
+    }
+    if (preferredValueResult.found || preferredFilePath == baseFilePath) {
+        if (preferredValueResult.found) {
+            return preferredValueResult;
         }
-        if (customValueResult.found) {
-            return customValueResult;
-        }
+
+        return OcppReadValueResult{
+            .success = false,
+            .found = false,
+            .value = QJsonValue(),
+            .error = QString::fromLatin1(kOcppValueNotFound),
+        };
     }
 
     if (!QFileInfo::exists(baseFilePath)) {
@@ -383,18 +406,7 @@ OcppReadValueResult readConfigValue(const QStringList &backendPathSegments,
         };
     }
 
-    const OcppJsonLoadResult baseLoadResult = loadJsonObjectFile(baseFilePath);
-    if (!baseLoadResult.success) {
-        return OcppReadValueResult{
-            .success = false,
-            .found = false,
-            .value = QJsonValue(),
-            .error = baseLoadResult.error,
-        };
-    }
-
-    const OcppReadValueResult baseValueResult =
-        extractValueFromDocument(baseLoadResult.rootObject, valuePathSegments);
+    const OcppReadValueResult baseValueResult = readValueFromFilePath(baseFilePath);
     if (!baseValueResult.success) {
         return baseValueResult;
     }
@@ -413,7 +425,8 @@ OcppReadValueResult readConfigValue(const QStringList &backendPathSegments,
 OcppFillResult fillRequestedReadParameters(const QJsonObject &requestedParameters,
                                            const QStringList &pathPrefix,
                                            const QString &baseDirectoryPath,
-                                           const QString &customDirectoryPath) {
+                                           const QString &customDirectoryPath,
+                                           bool customPathExists) {
     QJsonObject filledParameters;
 
     const auto parameterKeys = requestedParameters.keys();
@@ -426,7 +439,8 @@ OcppFillResult fillRequestedReadParameters(const QJsonObject &requestedParameter
                 fillRequestedReadParameters(parameterValue.toObject(),
                                            currentPath,
                                            baseDirectoryPath,
-                                           customDirectoryPath);
+                                           customDirectoryPath,
+                                           customPathExists);
             if (!nestedFillResult.success) {
                 return nestedFillResult;
             }
@@ -436,7 +450,7 @@ OcppFillResult fillRequestedReadParameters(const QJsonObject &requestedParameter
         }
 
         const OcppReadValueResult readValueResult =
-            readConfigValue(currentPath, baseDirectoryPath, customDirectoryPath);
+            readConfigValue(currentPath, baseDirectoryPath, customDirectoryPath, customPathExists);
         if (!readValueResult.success) {
             return OcppFillResult{
                 .success = false,
@@ -500,7 +514,8 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
                                     {},
                                     baseDirectoryResult.path,
                                     customDirectoryResult.exists ? customDirectoryResult.path
-                                                                 : QString());
+                                                                 : QString(),
+                                    customDirectoryResult.exists);
     if (!fillResult.success) {
         response.parameters = QJsonObject{
             {QStringLiteral("error"), fillResult.error},
