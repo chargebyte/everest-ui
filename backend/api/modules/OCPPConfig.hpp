@@ -13,6 +13,31 @@ enum class OCPPAction {
     Unknown
 };
 
+struct OcppBaseDirResult {
+    bool success = false;
+    QString path;
+    QString error;
+};
+
+struct OcppJsonLoadResult {
+    bool success = false;
+    QJsonObject rootObject;
+    QString error;
+};
+
+struct OcppReadValueResult {
+    bool success = false;
+    bool found = false;
+    QJsonValue value;
+    QString error;
+};
+
+struct OcppFillResult {
+    bool success = false;
+    QJsonObject parameters;
+    QString error;
+};
+
 namespace OCPPConfig {
 ModuleResponse handleRequest(const ModuleRequest &request);
 ModuleResponse handleReadRequest(const ModuleRequest &request);
