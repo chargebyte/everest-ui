@@ -69,6 +69,13 @@ struct OcppWriteResult {
     QString error;
 };
 
+struct OcppBackendPathResult {
+    bool success = false;
+    QString controllerName;
+    QStringList valuePathSegments;
+    QString error;
+};
+
 OCPPAction toOcppAction(const QString &action) {
     if (action == QLatin1String(kActionReadSettings)) {
         return OCPPAction::ReadSettings;
@@ -344,21 +351,40 @@ OcppReadValueResult extractValueFromDocument(const QJsonObject &controllerRoot,
     };
 }
 
-OcppReadValueResult readConfigValue(const QStringList &backendPathSegments,
-                                    const QString &baseDirectoryPath,
-                                    const QString &customDirectoryPath,
-                                    bool customPathExists) {
-    if (backendPathSegments.size() < 2) {
-        return OcppReadValueResult{
+OcppBackendPathResult splitBackendPathSegments(const QStringList &pathSegments) {
+    if (pathSegments.size() < 2) {
+        return OcppBackendPathResult{
             .success = false,
-            .found = false,
-            .value = QJsonValue(),
+            .controllerName = QString(),
+            .valuePathSegments = QStringList{},
             .error = QString::fromLatin1(kErrorInvalidParams),
         };
     }
 
-    const QString controllerName = backendPathSegments.first();
-    const QStringList valuePathSegments = backendPathSegments.mid(1);
+    return OcppBackendPathResult{
+        .success = true,
+        .controllerName = pathSegments.first(),
+        .valuePathSegments = pathSegments.mid(1),
+        .error = QString(),
+    };
+}
+
+OcppReadValueResult readConfigValue(const QStringList &backendPathSegments,
+                                    const QString &baseDirectoryPath,
+                                    const QString &customDirectoryPath,
+                                    bool customPathExists) {
+    const OcppBackendPathResult backendPathResult = splitBackendPathSegments(backendPathSegments);
+    if (!backendPathResult.success) {
+        return OcppReadValueResult{
+            .success = false,
+            .found = false,
+            .value = QJsonValue(),
+            .error = backendPathResult.error,
+        };
+    }
+
+    const QString controllerName = backendPathResult.controllerName;
+    const QStringList valuePathSegments = backendPathResult.valuePathSegments;
     const QString customFilePath =
         buildControllerFilePath(customDirectoryPath, controllerName);
     const QString baseFilePath =
@@ -483,17 +509,40 @@ OcppFillResult fillRequestedReadParameters(const QJsonObject &requestedParameter
     };
 }
 
-OcppWriteResult writeConfigValue(const QStringList &backendPathSegments,
-                                 const QJsonValue &value,
-                                 const QString &customDirectoryPath) {
-    Q_UNUSED(backendPathSegments);
+OcppWriteResult writeValueIntoDocument(const QStringList &valuePathSegments,
+                                       const QJsonValue &value,
+                                       const QString &customFilePath) {
+    Q_UNUSED(valuePathSegments);
     Q_UNUSED(value);
-    Q_UNUSED(customDirectoryPath);
+    Q_UNUSED(customFilePath);
 
     return OcppWriteResult{
         .success = false,
         .error = QString::fromLatin1(kOcppWriteNotImplemented),
     };
+}
+
+OcppWriteResult writeConfigValue(const QStringList &backendPathSegments,
+                                 const QJsonValue &value,
+                                 const QString &customDirectoryPath) {
+    const OcppBackendPathResult backendPathResult = splitBackendPathSegments(backendPathSegments);
+    if (!backendPathResult.success) {
+        return OcppWriteResult{
+            .success = false,
+            .error = backendPathResult.error,
+        };
+    }
+
+    const QString customFilePath =
+        buildControllerFilePath(customDirectoryPath, backendPathResult.controllerName);
+    if (!QFileInfo::exists(customFilePath)) {
+        return OcppWriteResult{
+            .success = false,
+            .error = QString::fromLatin1(kOcppFileNotFound),
+        };
+    }
+
+    return writeValueIntoDocument(backendPathResult.valuePathSegments, value, customFilePath);
 }
 
 OcppWriteResult writeRequestedWriteParameters(const QJsonObject &requestedParameters,
