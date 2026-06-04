@@ -188,6 +188,29 @@ OcppJsonLoadResult loadJsonObjectFile(const QString &filePath) {
     };
 }
 
+OcppWriteResult saveJsonObjectFile(const QString &filePath, const QJsonObject &rootObject) {
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return OcppWriteResult{
+            .success = false,
+            .error = QString::fromLatin1(kOcppWriteNotImplemented),
+        };
+    }
+
+    const QJsonDocument document(rootObject);
+    if (file.write(document.toJson(QJsonDocument::Indented)) < 0) {
+        return OcppWriteResult{
+            .success = false,
+            .error = QString::fromLatin1(kOcppWriteNotImplemented),
+        };
+    }
+
+    return OcppWriteResult{
+        .success = true,
+        .error = QString(),
+    };
+}
+
 OcppReadValueResult getAttributeZeroValue(const QJsonObject &propertyObject) {
     const QJsonArray attributesArray =
         propertyObject.value(QString::fromLatin1(kAttributesKey)).toArray();
@@ -277,6 +300,48 @@ OcppReadValueResult findConfigurationSlotOneProfile(const QJsonArray &profilesAr
     };
 }
 
+int findConfigurationSlotOneProfileIndex(const QJsonArray &profilesArray) {
+    for (qsizetype i = 0; i < profilesArray.size(); ++i) {
+        const QJsonValue &profileValue = profilesArray.at(i);
+        if (!profileValue.isObject()) {
+            continue;
+        }
+
+        const QJsonObject profileObject = profileValue.toObject();
+        if (profileObject.value(QString::fromLatin1(kConfigurationSlotKey)).toInt(-1) == 1) {
+            return static_cast<int>(i);
+        }
+    }
+
+    return -1;
+}
+
+bool writeNestedJsonObjectValue(QJsonObject &jsonObject,
+                                const QStringList &pathSegments,
+                                const QJsonValue &value) {
+    if (pathSegments.isEmpty()) {
+        return false;
+    }
+
+    if (pathSegments.size() == 1) {
+        jsonObject.insert(pathSegments.first(), value);
+        return true;
+    }
+
+    const QString currentKey = pathSegments.first();
+    if (!jsonObject.contains(currentKey) || !jsonObject.value(currentKey).isObject()) {
+        return false;
+    }
+
+    QJsonObject childObject = jsonObject.value(currentKey).toObject();
+    if (!writeNestedJsonObjectValue(childObject, pathSegments.mid(1), value)) {
+        return false;
+    }
+
+    jsonObject.insert(currentKey, childObject);
+    return true;
+}
+
 OcppReadValueResult extractStandardPropertyValue(const QJsonObject &controllerRoot,
                                                  const QString &propertyName) {
     const QJsonObject propertiesObject =
@@ -349,6 +414,106 @@ OcppReadValueResult extractValueFromDocument(const QJsonObject &controllerRoot,
         .value = QJsonValue(),
         .error = QString(),
     };
+}
+
+OcppWriteResult writeStandardPropertyValue(QJsonObject &controllerRoot,
+                                           const QString &propertyName,
+                                           const QJsonValue &value) {
+    const QString propertiesKey = QString::fromLatin1(kPropertiesKey);
+    const QString attributesKey = QString::fromLatin1(kAttributesKey);
+    const QString valueKey = QString::fromLatin1(kValueKey);
+
+    const QJsonObject propertiesObject = controllerRoot.value(propertiesKey).toObject();
+    if (!propertiesObject.contains(propertyName) || !propertiesObject.value(propertyName).isObject()) {
+        return OcppWriteResult{
+            .success = false,
+            .error = QString::fromLatin1(kOcppValueNotFound),
+        };
+    }
+
+    QJsonObject mutablePropertiesObject = propertiesObject;
+    QJsonObject propertyObject = mutablePropertiesObject.value(propertyName).toObject();
+    QJsonArray attributesArray = propertyObject.value(attributesKey).toArray();
+    if (attributesArray.isEmpty() || !attributesArray.first().isObject()) {
+        return OcppWriteResult{
+            .success = false,
+            .error = QString::fromLatin1(kOcppValueNotFound),
+        };
+    }
+
+    QJsonObject attributeZero = attributesArray.first().toObject();
+    attributeZero.insert(valueKey, value);
+    attributesArray[0] = attributeZero;
+    propertyObject.insert(attributesKey, attributesArray);
+    mutablePropertiesObject.insert(propertyName, propertyObject);
+    controllerRoot.insert(propertiesKey, mutablePropertiesObject);
+
+    return OcppWriteResult{
+        .success = true,
+        .error = QString(),
+    };
+}
+
+OcppWriteResult writeNetworkConnectionProfilesValue(QJsonObject &controllerRoot,
+                                                    const QStringList &pathSegments,
+                                                    const QJsonValue &value) {
+    if (pathSegments.isEmpty()) {
+        return OcppWriteResult{
+            .success = false,
+            .error = QString::fromLatin1(kErrorInvalidParams),
+        };
+    }
+
+    const OcppReadValueResult rawProfilesValue =
+        extractStandardPropertyValue(controllerRoot, QString::fromLatin1(kNetworkConnectionProfiles));
+    if (!rawProfilesValue.success) {
+        return OcppWriteResult{
+            .success = false,
+            .error = rawProfilesValue.error,
+        };
+    }
+    if (!rawProfilesValue.found || !rawProfilesValue.value.isString()) {
+        return OcppWriteResult{
+            .success = false,
+            .error = QString::fromLatin1(kOcppValueNotFound),
+        };
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument profilesDocument =
+        QJsonDocument::fromJson(rawProfilesValue.value.toString().toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !profilesDocument.isArray()) {
+        return OcppWriteResult{
+            .success = false,
+            .error = QString::fromLatin1(kOcppReadParseFailed),
+        };
+    }
+
+    QJsonArray profilesArray = profilesDocument.array();
+    const int slotOneProfileIndex = findConfigurationSlotOneProfileIndex(profilesArray);
+    if (slotOneProfileIndex < 0 || !profilesArray.at(slotOneProfileIndex).isObject()) {
+        return OcppWriteResult{
+            .success = false,
+            .error = QString::fromLatin1(kOcppValueNotFound),
+        };
+    }
+
+    QJsonObject slotOneProfileObject = profilesArray.at(slotOneProfileIndex).toObject();
+    if (!writeNestedJsonObjectValue(slotOneProfileObject, pathSegments, value)) {
+        return OcppWriteResult{
+            .success = false,
+            .error = QString::fromLatin1(kOcppValueNotFound),
+        };
+    }
+
+    profilesArray[slotOneProfileIndex] = slotOneProfileObject;
+    const QString updatedProfilesJson =
+        QString::fromUtf8(QJsonDocument(profilesArray).toJson(QJsonDocument::Compact));
+
+    return writeStandardPropertyValue(
+        controllerRoot,
+        QString::fromLatin1(kNetworkConnectionProfiles),
+        QJsonValue(updatedProfilesJson));
 }
 
 OcppBackendPathResult splitBackendPathSegments(const QStringList &pathSegments) {
@@ -512,14 +677,46 @@ OcppFillResult fillRequestedReadParameters(const QJsonObject &requestedParameter
 OcppWriteResult writeValueIntoDocument(const QStringList &valuePathSegments,
                                        const QJsonValue &value,
                                        const QString &customFilePath) {
-    Q_UNUSED(valuePathSegments);
-    Q_UNUSED(value);
-    Q_UNUSED(customFilePath);
+    const OcppJsonLoadResult loadResult = loadJsonObjectFile(customFilePath);
+    if (!loadResult.success) {
+        return OcppWriteResult{
+            .success = false,
+            .error = loadResult.error,
+        };
+    }
 
-    return OcppWriteResult{
-        .success = false,
-        .error = QString::fromLatin1(kOcppWriteNotImplemented),
-    };
+    QJsonObject controllerRoot = loadResult.rootObject;
+    OcppWriteResult writeResult;
+
+    if (valuePathSegments.isEmpty()) {
+        return OcppWriteResult{
+            .success = false,
+            .error = QString::fromLatin1(kErrorInvalidParams),
+        };
+    }
+
+    if (valuePathSegments.first() == QLatin1String(kNetworkConnectionProfiles)) {
+        writeResult = writeNetworkConnectionProfilesValue(
+            controllerRoot,
+            valuePathSegments.mid(1),
+            value);
+    } else if (valuePathSegments.size() == 1) {
+        writeResult = writeStandardPropertyValue(
+            controllerRoot,
+            valuePathSegments.first(),
+            value);
+    } else {
+        return OcppWriteResult{
+            .success = false,
+            .error = QString::fromLatin1(kErrorInvalidParams),
+        };
+    }
+
+    if (!writeResult.success) {
+        return writeResult;
+    }
+
+    return saveJsonObjectFile(customFilePath, controllerRoot);
 }
 
 OcppWriteResult writeConfigValue(const QStringList &backendPathSegments,
