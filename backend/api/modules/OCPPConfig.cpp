@@ -30,6 +30,9 @@ constexpr char kConfigurationSlotKey[] = "configurationSlot";
 constexpr char kOcppBaseConfigMissing[] = "ocpp_base_config_path_missing";
 constexpr char kOcppBaseConfigNotFound[] = "ocpp_base_config_path_not_found";
 constexpr char kOcppBaseConfigNotDirectory[] = "ocpp_base_config_path_not_a_directory";
+constexpr char kOcppCustomConfigMissing[] = "ocpp_custom_config_path_missing";
+constexpr char kOcppCustomConfigCreateFailed[] = "ocpp_custom_config_path_create_failed";
+constexpr char kOcppCustomFileCopyFailed[] = "ocpp_custom_config_file_copy_failed";
 constexpr char kOcppReadParseFailed[] = "ocpp_read_parse_failed";
 constexpr char kOcppValueNotFound[] = "ocpp_value_not_found";
 constexpr char kOcppFileNotFound[] = "ocpp_file_not_found";
@@ -81,11 +84,13 @@ OcppConfigDirResult validateConfigPath(const QString &path,
                                        const QString &notFoundError,
                                        const QString &notDirectoryError,
                                        bool allowMissingPath) {
+    const QString cleanedPath = path.isEmpty() ? QString() : QDir::cleanPath(path);
+
     if (path.isEmpty()) {
         return OcppConfigDirResult{
             .success = allowMissingPath,
             .exists = false,
-            .path = QString(),
+            .path = cleanedPath,
             .error = allowMissingPath ? QString() : missingError,
         };
     }
@@ -95,7 +100,7 @@ OcppConfigDirResult validateConfigPath(const QString &path,
         return OcppConfigDirResult{
             .success = allowMissingPath,
             .exists = false,
-            .path = QString(),
+            .path = cleanedPath,
             .error = allowMissingPath ? QString() : notFoundError,
         };
     }
@@ -112,7 +117,7 @@ OcppConfigDirResult validateConfigPath(const QString &path,
     return OcppConfigDirResult{
         .success = true,
         .exists = true,
-        .path = QDir::cleanPath(path),
+        .path = cleanedPath,
         .error = QString(),
     };
 }
@@ -129,7 +134,7 @@ OcppConfigDirResult loadOcppBaseConfigPath() {
 OcppConfigDirResult loadOcppCustomConfigPath() {
     return validateConfigPath(
         loadBackendConfigValue(QString::fromLatin1(kOcppCustomConfigPathKey)),
-        QString(),
+        QString::fromLatin1(kOcppCustomConfigMissing),
         QString(),
         QString::fromLatin1(kOcppBaseConfigNotDirectory),
         true);
@@ -468,6 +473,55 @@ OcppFillResult fillRequestedReadParameters(const QJsonObject &requestedParameter
         .error = QString(),
     };
 }
+
+QStringList collectRequestedControllerNames(const QJsonObject &parameters) {
+    QStringList controllerNames;
+    const auto parameterKeys = parameters.keys();
+    for (const QString &parameterKey : parameterKeys) {
+        if (!parameters.value(parameterKey).isObject()) {
+            continue;
+        }
+
+        if (!controllerNames.contains(parameterKey)) {
+            controllerNames.append(parameterKey);
+        }
+    }
+
+    return controllerNames;
+}
+
+QString ensureCustomConfigDirectoryExists(const QString &customDirectoryPath) {
+    if (customDirectoryPath.trimmed().isEmpty()) {
+        return QString::fromLatin1(kOcppCustomConfigMissing);
+    }
+
+    QDir directory;
+    if (directory.mkpath(customDirectoryPath)) {
+        return QString();
+    }
+
+    return QString::fromLatin1(kOcppCustomConfigCreateFailed);
+}
+
+QString ensureCustomControllerFileExists(const QString &controllerName,
+                                         const QString &baseDirectoryPath,
+                                         const QString &customDirectoryPath) {
+    const QString customFilePath = buildControllerFilePath(customDirectoryPath, controllerName);
+    if (QFileInfo::exists(customFilePath)) {
+        return QString();
+    }
+
+    const QString baseFilePath = buildControllerFilePath(baseDirectoryPath, controllerName);
+    if (!QFileInfo::exists(baseFilePath)) {
+        return QString::fromLatin1(kOcppFileNotFound);
+    }
+
+    if (QFile::copy(baseFilePath, customFilePath)) {
+        return QString();
+    }
+
+    return QString::fromLatin1(kOcppCustomFileCopyFailed);
+}
 } // namespace
 
 ModuleResponse handleRequest(const ModuleRequest &request) {
@@ -529,15 +583,60 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
 }
 
 ModuleResponse handleWriteRequest(const ModuleRequest &request) {
-    return ModuleResponse{
+    ModuleResponse response{
         .requestId = request.requestId,
         .group = QStringLiteral("ocpp"),
         .action = request.action,
-        .parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kOcppWriteNotImplemented)},
-        },
+        .parameters = QJsonObject{},
         .success = false,
         .final = true,
     };
+
+    const OcppConfigDirResult baseDirectoryResult = loadOcppBaseConfigPath();
+    if (!baseDirectoryResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), baseDirectoryResult.error},
+        };
+        return response;
+    }
+
+    const OcppConfigDirResult customDirectoryResult = loadOcppCustomConfigPath();
+    if (!customDirectoryResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), customDirectoryResult.error},
+        };
+        return response;
+    }
+
+    const QString customDirectoryPath = customDirectoryResult.path;
+    if (!customDirectoryResult.exists) {
+        const QString ensureDirectoryError = ensureCustomConfigDirectoryExists(customDirectoryPath);
+        if (!ensureDirectoryError.isEmpty()) {
+            response.parameters = QJsonObject{
+                {QStringLiteral("error"), ensureDirectoryError},
+            };
+            return response;
+        }
+    }
+
+    const QStringList controllerNames = collectRequestedControllerNames(request.parameters);
+    for (const QString &controllerName : controllerNames) {
+        const QString ensureFileError =
+            ensureCustomControllerFileExists(
+                controllerName,
+                baseDirectoryResult.path,
+                customDirectoryPath);
+        if (!ensureFileError.isEmpty()) {
+            response.parameters = QJsonObject{
+                {QStringLiteral("error"), ensureFileError},
+            };
+            return response;
+        }
+    }
+
+    response.parameters = QJsonObject{
+        {QStringLiteral("error"), QString::fromLatin1(kOcppWriteNotImplemented)},
+    };
+    return response;
 }
 } // namespace OCPPConfig
