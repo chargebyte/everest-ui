@@ -64,6 +64,11 @@ struct OcppFillResult {
     QString error;
 };
 
+struct OcppWriteResult {
+    bool success = false;
+    QString error;
+};
+
 OCPPAction toOcppAction(const QString &action) {
     if (action == QLatin1String(kActionReadSettings)) {
         return OCPPAction::ReadSettings;
@@ -427,6 +432,10 @@ OcppReadValueResult readConfigValue(const QStringList &backendPathSegments,
     return baseValueResult;
 }
 
+QStringList buildBackendPathSegments(const QStringList &pathPrefix, const QString &parameterKey) {
+    return pathPrefix + QStringList{parameterKey};
+}
+
 OcppFillResult fillRequestedReadParameters(const QJsonObject &requestedParameters,
                                            const QStringList &pathPrefix,
                                            const QString &baseDirectoryPath,
@@ -437,7 +446,7 @@ OcppFillResult fillRequestedReadParameters(const QJsonObject &requestedParameter
     const auto parameterKeys = requestedParameters.keys();
     for (const QString &parameterKey : parameterKeys) {
         const QJsonValue parameterValue = requestedParameters.value(parameterKey);
-        const QStringList currentPath = pathPrefix + QStringList{parameterKey};
+        const QStringList currentPath = buildBackendPathSegments(pathPrefix, parameterKey);
 
         if (parameterValue.isObject()) {
             const OcppFillResult nestedFillResult =
@@ -470,6 +479,52 @@ OcppFillResult fillRequestedReadParameters(const QJsonObject &requestedParameter
     return OcppFillResult{
         .success = true,
         .parameters = filledParameters,
+        .error = QString(),
+    };
+}
+
+OcppWriteResult writeConfigValue(const QStringList &backendPathSegments,
+                                 const QJsonValue &value,
+                                 const QString &customDirectoryPath) {
+    Q_UNUSED(backendPathSegments);
+    Q_UNUSED(value);
+    Q_UNUSED(customDirectoryPath);
+
+    return OcppWriteResult{
+        .success = false,
+        .error = QString::fromLatin1(kOcppWriteNotImplemented),
+    };
+}
+
+OcppWriteResult writeRequestedWriteParameters(const QJsonObject &requestedParameters,
+                                              const QStringList &pathPrefix,
+                                              const QString &customDirectoryPath) {
+    const auto parameterKeys = requestedParameters.keys();
+    for (const QString &parameterKey : parameterKeys) {
+        const QJsonValue parameterValue = requestedParameters.value(parameterKey);
+        const QStringList currentPath = buildBackendPathSegments(pathPrefix, parameterKey);
+
+        if (parameterValue.isObject()) {
+            const OcppWriteResult nestedWriteResult =
+                writeRequestedWriteParameters(parameterValue.toObject(),
+                                             currentPath,
+                                             customDirectoryPath);
+            if (!nestedWriteResult.success) {
+                return nestedWriteResult;
+            }
+
+            continue;
+        }
+
+        const OcppWriteResult writeResult =
+            writeConfigValue(currentPath, parameterValue, customDirectoryPath);
+        if (!writeResult.success) {
+            return writeResult;
+        }
+    }
+
+    return OcppWriteResult{
+        .success = true,
         .error = QString(),
     };
 }
@@ -634,9 +689,16 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
         }
     }
 
-    response.parameters = QJsonObject{
-        {QStringLiteral("error"), QString::fromLatin1(kOcppWriteNotImplemented)},
-    };
+    const OcppWriteResult writeResult =
+        writeRequestedWriteParameters(request.parameters, {}, customDirectoryPath);
+    if (!writeResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), writeResult.error},
+        };
+        return response;
+    }
+
+    response.success = true;
     return response;
 }
 } // namespace OCPPConfig
