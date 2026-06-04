@@ -240,48 +240,41 @@
       "settings_table": {
         "general": [
           {
-            "id": "enabled",
-            "display_name": "OCPP Enabled",
-            "description": "",
-            "value_type": "boolean",
-            "backend_path": "OCPP201.enabled"
+            "id": "user_id",
+            "display_name": "User ID",
+            "description": "fill in later",
+            "value_type": "string",
+            "backend_path": "InternalCtrlr.NetworkConnectionProfiles.connectionData.ocppCsmsUrl"
           },
           {
             "id": "csms_server_address",
             "display_name": "CSMS Server Address",
-            "description": "",
+            "description": "fill in later",
             "value_type": "string",
-            "backend_path": "InternalCtrlr.csms_server_address"
+            "backend_path": "InternalCtrlr.NetworkConnectionProfiles.connectionData.ocppCsmsUrl"
           },
           {
             "id": "energy_consumption_point",
             "display_name": "Energy Consumption Point",
-            "description": "",
+            "description": "fill in later",
             "value_type": "string",
-            "backend_path": "InternalCtrlr.energy_consumption_point"
+            "backend_path": "InternalCtrlr.NetworkConnectionProfiles.connectionData.ocppCsmsUrl"
           }
         ],
         "security": [
           {
-            "id": "user_id",
-            "display_name": "User ID",
-            "description": "",
-            "value_type": "string",
-            "backend_path": "InternalCtrlr.user_id"
-          },
-          {
             "id": "password",
             "display_name": "Password",
-            "description": "",
+            "description": "fill in later",
             "value_type": "secret_string",
-            "backend_path": "InternalCtrlr.password"
+            "backend_path": "SecurityCtrlr.BasicAuthPassword"
           },
           {
             "id": "security_profile",
             "display_name": "Security Profile",
-            "description": "",
+            "description": "fill in later",
             "value_type": "string",
-            "backend_path": "InternalCtrlr.security_profile"
+            "backend_path": "InternalCtrlr.NetworkConnectionProfiles.connectionData.securityProfile"
           }
         ]
       }

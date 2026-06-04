@@ -2,102 +2,99 @@
 
 // Copyright 2026 chargebyte GmbH
 
-import { bindSwitchRows, renderSettingsPage } from '../ui/settingsTable.js';
-import { kNoopPageLifecycle } from '../ui/pageLifecycle.js';
+import { renderSettingsTableBlock } from '../ui/settingsTable.js';
+import { loadPageConfig } from '../config/pageConfigAdapter.js';
+import { MODULE_IDS } from '../protocol/constants.js';
+import { buildRequest } from '../protocol/requestBuilder.js';
+import { mapResponse } from '../protocol/responseMapper.js';
 
-function sectionFromBackendPath(path) {
-  return String(path || '').split('.')[0] || 'general';
-}
+export function renderOcppPage(container, {
+  parameterCatalog,
+  sendPayload,
+  addLog
+}) {
+  // load runtime parameter object from parameter catalog
+  const pageConfig = loadPageConfig(MODULE_IDS.OCPP, parameterCatalog);
+  const settingsTableBlock = pageConfig.blocks.find((block) => block.kind === 'settings_table');
 
-function toRow(param) {
-  if (param.value_type === 'boolean') {
-    return {
-      type: 'checkbox',
-      id: param.id,
-      label: param.display_name,
-      checked: false
-    };
-  }
-  if (param.value_type === 'enum') {
-    const options = Array.isArray(param.enum_values) ? param.enum_values : [];
-    return {
-      type: 'select',
-      id: param.id,
-      label: `${param.display_name}:`,
-      options,
-      value: options[0] || ''
-    };
-  }
-  if (param.value_type === 'secret_string') {
-    return {
-      type: 'password',
-      id: param.id,
-      label: `${param.display_name}:`,
-      value: ''
-    };
-  }
-  return {
-    type: 'text',
-    id: param.id,
-    label: `${param.display_name}:`,
-    value: ''
-  };
-}
+  // render UI elements
+  container.innerHTML = '';
 
-export function renderOcppPage(container, { addLog, parameterCatalog }) {
-  const moduleConfig = parameterCatalog?.modules?.ocpp;
-  const parameters = moduleConfig?.parameters || [];
-  const generalRows = parameters
-    .filter((param) => sectionFromBackendPath(param.backend?.path) === 'general')
-    .map(toRow);
-  const securityRows = parameters
-    .filter((param) => sectionFromBackendPath(param.backend?.path) === 'security')
-    .map(toRow);
+  const pageElement = document.createElement('div');
+  pageElement.className = 'page';
+  pageElement.innerHTML = `<h1>${pageConfig.title}</h1>`;
 
-  const refs = renderSettingsPage(container, {
-    title: 'OCPP Configuration',
-    sections: [
-      {
-        title: 'General',
-        rows: generalRows
-      },
-      {
-        title: 'Security',
-        rows: securityRows
-      }
-    ],
-    controlsClass: 'settings-action-controls',
-    buttonId: 'save-ocpp',
+  const settingsTable = renderSettingsTableBlock(settingsTableBlock, {
     buttonLabel: 'Save Configuration'
   });
 
-  const enabledCheckbox = container.querySelector('#enabled');
-
-  function applyOcppEnabledState() {
-    if (!enabledCheckbox) {
-      return;
-    }
-    const disabled = !enabledCheckbox.checked;
-    const controls = container.querySelectorAll('input, select, button, textarea');
-    controls.forEach((control) => {
-      if (control === enabledCheckbox) {
-        return;
-      }
-      control.disabled = disabled;
-    });
-  }
-
-  bindSwitchRows(container);
-  applyOcppEnabledState();
-  enabledCheckbox?.addEventListener('change', applyOcppEnabledState);
-
-  refs.actionButton.addEventListener('click', () => {
-    if (enabledCheckbox && !enabledCheckbox.checked) {
-      addLog('OCPP save ignored: OCPP is disabled');
-      return;
-    }
-    addLog('OCPP configuration saved (placeholder)');
+  settingsTable.bindSubmit(() => {
+    const values = settingsTable.getValues(settingsTable.requestResponseObject);
+    const writeOcppConfigRequest = buildRequest(
+      pageConfig.actions.write_settings.group,
+      pageConfig.actions.write_settings.action,
+      values
+    );
+    sendOcppRequest(
+      sendPayload,
+      addLog,
+      writeOcppConfigRequest,
+      pageConfig.actions.write_settings.group,
+      pageConfig.actions.write_settings.action
+    );
   });
 
-  return kNoopPageLifecycle;
+  pageElement.appendChild(settingsTable.element);
+  container.appendChild(pageElement);
+
+  return {
+    onMessage(message) {
+      if (message.type === 'ocpp.read_settings.result') {
+        addLog('ocpp.read_settings.result received');
+        settingsTable.setValues(
+          mapResponse('settings_table', settingsTable.requestResponseObject, message)
+        );
+        return;
+      }
+
+      // if (message.type === 'everest.write_config_parameters.ack') {
+      //   addLog('everest.write_config_parameters.ack received');
+      // }
+
+      if (message.type === 'ocpp.read_settings.error') {
+        const error = message.parameters.error
+        addLog(`ocpp.read_settings.error: ${error}`);
+      }
+
+      // if (message.type === 'everest.write_config_parameters.error') {
+      //   const error = message.parameters.error
+      //   addLog(`everest.write_config_parameters.error: ${error}`);
+      // }
+    },
+    onConnectionChange(connected) {
+      // request current EVerest configuration after page is loaded and WS is connected
+      if (connected === true) {
+        const values = settingsTable.getValues(settingsTable.requestResponseObject);
+        const readOcppConfigRequest = buildRequest(
+          pageConfig.actions.read_settings.group,
+          pageConfig.actions.read_settings.action,
+          values
+        );
+        sendOcppRequest(
+          sendPayload,
+          addLog,
+          readOcppConfigRequest,
+          pageConfig.actions.read_settings.group,
+          pageConfig.actions.read_settings.action
+        );
+      }
+    },
+    destroy() {}
+  };
+}
+
+function sendOcppRequest(sendPayload, addLog, request, group, action) {
+  const ok = sendPayload(request);
+  addLog(`${group}.${action} ${ok ? 'sent' : 'rejected'}`);
+  return ok;
 }

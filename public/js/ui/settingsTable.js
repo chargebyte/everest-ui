@@ -2,6 +2,8 @@
 
 // Copyright 2026 chargebyte GmbH
 
+import { renderPasswordInput } from './passwordInput.js';
+
 const kSettingsTableFields = {
   string: createSettingsTableTextInput,
   integer: createSettingsTableTextInput,
@@ -189,9 +191,12 @@ function getRadioGroupName(radioGroupId, sectionId, radioGroups) {
   return radioGroups.get(radioGroupId);
 }
 
-function createSettingsTablePasswordInput(parameter) {
-  void parameter;
-  throw new Error('createSettingsTablePasswordInput is not implemented yet');
+function createSettingsTablePasswordInput(parameter, fieldMap) {
+  const inputElement = renderPasswordInput({
+    id: parameter.id
+  });
+  fieldMap.set(parameter.id, inputElement);
+  return inputElement;
 }
 
 function createSettingsTableApplyButton(options) {

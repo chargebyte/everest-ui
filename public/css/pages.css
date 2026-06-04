@@ -177,6 +177,48 @@
   display: block;
 }
 
+.password-input-pair {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.password-input-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.password-input-control {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.password-reveal-button {
+  width: 40px;
+  min-width: 40px;
+  max-width: 40px;
+  flex: 0 0 40px;
+  align-self: center;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.password-reveal-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.password-input-control.password-input-match {
+  border-color: var(--cb-ok);
+}
+
+.password-input-control.password-input-mismatch {
+  border-color: #c62828;
+}
+
 .input-with-unit {
   display: flex;
   align-items: center;
