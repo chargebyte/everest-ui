@@ -3,6 +3,7 @@
 // Copyright 2026 chargebyte GmbH
 
 import { renderSettingsTableBlock } from '../ui/settingsTable.js';
+import { renderConfigLoaderBlock } from '../ui/configLoader.js';
 import { loadPageConfig } from '../config/pageConfigAdapter.js';
 import { MODULE_IDS } from '../protocol/constants.js';
 import { buildRequest } from '../protocol/requestBuilder.js';
@@ -16,6 +17,7 @@ export function renderEverestPage(container, {
   // load runtime parameter object from parameter catalog
   const pageConfig = loadPageConfig(MODULE_IDS.EVEREST, parameterCatalog);
   const settingsTableBlock = pageConfig.blocks.find((block) => block.kind === 'settings_table');
+  const configLoaderBlock = pageConfig.blocks.find((block) => block.kind === 'config_loader');
 
   // render UI elements
   container.innerHTML = '';
@@ -26,6 +28,13 @@ export function renderEverestPage(container, {
 
   const settingsTable = renderSettingsTableBlock(settingsTableBlock, {
     buttonLabel: 'Save Configuration'
+  });
+  const configLoader = renderConfigLoaderBlock(configLoaderBlock, {
+    downloadButtonLabel: 'Download config.yaml',
+    uploadButtonLabel: 'Upload and Apply',
+    onFileError(errorMessage) {
+      addLog(`everest.upload_config file error: ${errorMessage}`);
+    }
   });
 
   settingsTable.bindSubmit(() => {
@@ -44,7 +53,39 @@ export function renderEverestPage(container, {
     );
   });
 
+  configLoader.bindDownload(() => {
+    const downloadEverestConfigRequest = buildRequest(
+      pageConfig.actions.download_config.group,
+      pageConfig.actions.download_config.action,
+      {}
+    );
+    sendEverestRequest(
+      sendPayload,
+      addLog,
+      downloadEverestConfigRequest,
+      pageConfig.actions.download_config.group,
+      pageConfig.actions.download_config.action
+    );
+  });
+
+  configLoader.bindUpload(() => {
+    const uploadAction = pageConfig.actions.upload_config;
+    const uploadEverestConfigRequest = buildRequest(
+      uploadAction.group,
+      uploadAction.action,
+      configLoader.getUploadRequestResponseObject(uploadAction)
+    );
+    sendEverestRequest(
+      sendPayload,
+      addLog,
+      uploadEverestConfigRequest,
+      uploadAction.group,
+      uploadAction.action
+    );
+  });
+
   pageElement.appendChild(settingsTable.element);
+  pageElement.appendChild(configLoader.element);
   container.appendChild(pageElement);
 
   return {
@@ -61,6 +102,18 @@ export function renderEverestPage(container, {
         addLog('everest.write_config_parameters.ack received');
       }
 
+      if (message.type === 'everest.download_config.result') {
+        addLog('everest.download_config.result received');
+        configLoader.downloadConfigFile(message.parameters || {});
+        return;
+      }
+
+      if (message.type === 'everest.upload_config.ack') {
+        addLog('everest.upload_config.ack received');
+        configLoader.clearSelection();
+        return;
+      }
+
       if (message.type === 'everest.read_config_parameters.error') {
         const error = message.parameters.error
         addLog(`everest.read_config_parameters.error: ${error}`);
@@ -69,6 +122,16 @@ export function renderEverestPage(container, {
       if (message.type === 'everest.write_config_parameters.error') {
         const error = message.parameters.error
         addLog(`everest.write_config_parameters.error: ${error}`);
+      }
+
+      if (message.type === 'everest.download_config.error') {
+        const error = message.parameters.error
+        addLog(`everest.download_config.error: ${error}`);
+      }
+
+      if (message.type === 'everest.upload_config.error') {
+        const error = message.parameters.error
+        addLog(`everest.upload_config.error: ${error}`);
       }
     },
     onConnectionChange(connected) {
