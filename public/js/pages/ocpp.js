@@ -57,19 +57,19 @@ export function renderOcppPage(container, {
         return;
       }
 
-      // if (message.type === 'everest.write_config_parameters.ack') {
-      //   addLog('everest.write_config_parameters.ack received');
-      // }
+      if (message.type === 'ocpp.write_settings.ack') {
+        addLog('ocpp.write_settings.ack received');
+      }
 
       if (message.type === 'ocpp.read_settings.error') {
         const error = message.parameters.error
         addLog(`ocpp.read_settings.error: ${error}`);
       }
 
-      // if (message.type === 'everest.write_config_parameters.error') {
-      //   const error = message.parameters.error
-      //   addLog(`everest.write_config_parameters.error: ${error}`);
-      // }
+      if (message.type === 'ocpp.write_settings.error') {
+        const error = message.parameters.error
+        addLog(`ocpp.write_settings.error: ${error}`);
+      }
     },
     onConnectionChange(connected) {
       // request current EVerest configuration after page is loaded and WS is connected
