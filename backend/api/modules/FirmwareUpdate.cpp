@@ -18,8 +18,7 @@
 #include <stdexcept>
 
 namespace {
-// constexpr char kRaucStatusTemplate[] = "rauc status --output-format=json --detailed";
-constexpr char kRaucStatusTemplate[] = "/home/erik/Dokumente/github/everest-ui/test-scripts/firmware-read-version.sh";
+constexpr char kRaucStatusTemplate[] = "rauc status --output-format=json --detailed";
 constexpr char kStateBooted[] = "booted";
 constexpr char kFirmwareImageDirConfigKey[] = "firmware_image_dir";
 constexpr char kFirmwareReadFailed[] = "firmware_read_failed";
