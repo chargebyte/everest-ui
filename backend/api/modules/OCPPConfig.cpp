@@ -5,7 +5,9 @@
 #include "OCPPConfig.hpp"
 
 #include "BackendConfig.hpp"
+#include "EverestServiceControl.hpp"
 #include "ProtocolSchema.hpp"
+#include "RpcApiClient.hpp"
 
 #include <QDir>
 #include <QFile>
@@ -19,6 +21,7 @@
 
 namespace OCPPConfig {
 namespace {
+RpcApiClient *g_rpcApiClient = nullptr;
 constexpr char kOcppBaseConfigPathKey[] = "ocpp_base_config_path";
 constexpr char kOcppCustomConfigPathKey[] = "ocpp_custom_config_path";
 constexpr char kNetworkConnectionProfiles[] = "NetworkConnectionProfiles";
@@ -823,7 +826,42 @@ QString ensureCustomControllerFileExists(const QString &controllerName,
 
     return QString::fromLatin1(kOcppCustomFileCopyFailed);
 }
+
+ModuleResponse restartEverestStack(ModuleResponse response) {
+    const EverestStateAllowedResult stateAllowedResult =
+        EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
+    if (!stateAllowedResult.success) {
+        QString error = stateAllowedResult.error;
+        if (stateAllowedResult.error == QStringLiteral("everest_state_not_allowed")) {
+            error =
+                QStringLiteral("config could not be applied because EVerest-stack is in state \"%1\" and cannot be restarted, please unplug the EV and try again")
+                    .arg(stateAllowedResult.state);
+        }
+
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), error},
+        };
+        return response;
+    }
+
+    const EverestServiceControlResult restartResult =
+        EverestServiceControl::executeEverestRestart(g_rpcApiClient);
+    if (!restartResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), restartResult.error},
+        };
+        return response;
+    }
+
+    response.parameters = QJsonObject{};
+    response.success = true;
+    return response;
+}
 } // namespace
+
+void setRpcApiClient(RpcApiClient *rpcApiClient) {
+    g_rpcApiClient = rpcApiClient;
+}
 
 ModuleResponse handleRequest(const ModuleRequest &request) {
     switch (toOcppAction(request.action)) {
@@ -944,7 +982,6 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
         return response;
     }
 
-    response.success = true;
-    return response;
+    return restartEverestStack(response);
 }
 } // namespace OCPPConfig

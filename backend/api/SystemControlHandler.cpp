@@ -21,6 +21,7 @@ SystemControl::SystemControl(RpcApiClient *rpcApiClient, QObject *parent)
     : QObject(parent) {
     EverestConfig::setRpcApiClient(rpcApiClient);
     SafetyController::setRpcApiClient(rpcApiClient);
+    OCPPConfig::setRpcApiClient(rpcApiClient);
     connect(&FirmwareUpdate::runtime(), &FirmwareUpdateRuntime::responseReady, this,
             &SystemControl::handleAsyncFirmwareResponse);
 }

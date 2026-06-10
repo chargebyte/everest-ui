@@ -7,6 +7,8 @@
 
 #include "RequestResponseTypes.hpp"
 
+class RpcApiClient;
+
 enum class OCPPAction {
     ReadSettings,
     WriteSettings,
@@ -39,6 +41,7 @@ struct OcppFillResult {
 };
 
 namespace OCPPConfig {
+void setRpcApiClient(RpcApiClient *rpcApiClient);
 ModuleResponse handleRequest(const ModuleRequest &request);
 ModuleResponse handleReadRequest(const ModuleRequest &request);
 ModuleResponse handleWriteRequest(const ModuleRequest &request);
