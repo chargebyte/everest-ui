@@ -13,6 +13,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QTemporaryFile>
 #include <QTimer>
 
 #include <stdexcept>
@@ -21,6 +22,12 @@ namespace EverestConfig {
 namespace {
 RpcApiClient *g_rpcApiClient = nullptr;
 constexpr int kEverestSilFixedWaitMs = 5000;
+constexpr char kConfigYamlKey[] = "config_yaml";
+constexpr char kConfigFileKey[] = "file";
+constexpr char kConfigFileName[] = "config.yaml";
+constexpr char kErrorInvalidParams[] = "invalid_params";
+constexpr char kErrorConfigReadFailed[] = "everest_config_read_failed";
+constexpr char kErrorConfigWriteFailed[] = "everest_config_upload_write_failed";
 
 EverestAction toEverestAction(const QString &action) {
     if (action == QLatin1String(kActionReadConfigParameters)) {
@@ -138,13 +145,97 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
 }
 
 ModuleResponse handleDownloadRequest(const ModuleRequest &request) {
-    Q_UNUSED(request);
-    throw std::runtime_error("EverestConfig::handleDownloadRequest is not implemented yet");
+    ModuleResponse response{
+        .requestId = request.requestId,
+        .group = QStringLiteral("everest"),
+        .action = request.action,
+        .parameters = QJsonObject{},
+        .success = false,
+        .final = true,
+    };
+
+    const ConfigPathResult configPathResult =
+        loadEverestConfigPath(QStringLiteral("everest_config_path"));
+    if (!configPathResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), configPathResult.error},
+        };
+        return response;
+    }
+
+    QString configYaml;
+    if (!readTextFile(configPathResult.path, configYaml)) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kErrorConfigReadFailed)},
+        };
+        return response;
+    }
+
+    response.parameters = QJsonObject{
+        {QString::fromLatin1(kConfigFileKey), QString::fromLatin1(kConfigFileName)},
+        {QString::fromLatin1(kConfigYamlKey), configYaml},
+    };
+    response.success = true;
+    return response;
 }
 
 ModuleResponse handleUploadRequest(const ModuleRequest &request) {
-    Q_UNUSED(request);
-    throw std::runtime_error("EverestConfig::handleUploadRequest is not implemented yet");
+    ModuleResponse response{
+        .requestId = request.requestId,
+        .group = QStringLiteral("everest"),
+        .action = request.action,
+        .parameters = QJsonObject{},
+        .success = false,
+        .final = true,
+    };
+
+    const QString configYaml =
+        request.parameters.value(QString::fromLatin1(kConfigYamlKey)).toString();
+    if (configYaml.trimmed().isEmpty()) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kErrorInvalidParams)},
+        };
+        return response;
+    }
+
+    const QString yamlValidationError = validateYamlText(configYaml);
+    if (!yamlValidationError.isEmpty()) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), yamlValidationError},
+        };
+        return response;
+    }
+
+    const ConfigPathResult baseConfigPathResult =
+        loadEverestConfigPath(QStringLiteral("everest_base_config_path"));
+    if (!baseConfigPathResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), baseConfigPathResult.error},
+        };
+        return response;
+    }
+
+    if (!writeTextFile(baseConfigPathResult.path, configYaml)) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kErrorConfigWriteFailed)},
+        };
+        return response;
+    }
+
+    const YamlLoadResult writtenYamlLoadResult = loadYamlFile(baseConfigPathResult.path);
+    if (!writtenYamlLoadResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), writtenYamlLoadResult.error},
+        };
+        return response;
+    }
+
+    response = ensureEverestConfigSymlink(response);
+    if (!response.parameters.isEmpty()) {
+        return response;
+    }
+
+    return restartEverestStack(response);
 }
 
 ConfigPathResult loadEverestConfigPath(const QString &configKey) {
@@ -188,6 +279,41 @@ bool contentIdentical(const QString &firstPath, const QString &secondPath) {
     }
 
     return firstFile.readAll() == secondFile.readAll();
+}
+
+bool readTextFile(const QString &path, QString &content) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return false;
+    }
+
+    content = QString::fromUtf8(file.readAll());
+    return true;
+}
+
+bool writeTextFile(const QString &path, const QString &content) {
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        return false;
+    }
+
+    const QByteArray data = content.toUtf8();
+    return file.write(data) == data.size();
+}
+
+QString validateYamlText(const QString &content) {
+    QTemporaryFile tempFile;
+    if (!tempFile.open()) {
+        return QStringLiteral("everest_config_validation_failed");
+    }
+
+    const QByteArray data = content.toUtf8();
+    if (tempFile.write(data) != data.size() || !tempFile.flush()) {
+        return QStringLiteral("everest_config_validation_failed");
+    }
+
+    const YamlLoadResult yamlLoadResult = loadYamlFile(tempFile.fileName());
+    return yamlLoadResult.success ? QString() : yamlLoadResult.error;
 }
 
 QJsonObject buildEverestConfigOverlayObject(const QJsonObject &requestParameters,

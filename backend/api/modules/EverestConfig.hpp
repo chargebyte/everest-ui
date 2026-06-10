@@ -44,6 +44,9 @@ ConfigPathResult loadEverestConfigPath(const QString &configKey);
 QString loadBackendConfigValue(const QString &configKey);
 bool copyContent(const QString &sourcePath, const QString &targetPath);
 bool contentIdentical(const QString &firstPath, const QString &secondPath);
+bool readTextFile(const QString &path, QString &content);
+bool writeTextFile(const QString &path, const QString &content);
+QString validateYamlText(const QString &content);
 QJsonObject buildEverestConfigOverlayObject(const QJsonObject &requestParameters,
                                             const QJsonObject &baseYamlRoot);
 QString resolveActiveModuleKey(const QString &moduleName, const QJsonObject &baseYamlRoot);
