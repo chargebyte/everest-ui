@@ -11,6 +11,7 @@
 #include "SystemdService.hpp"
 
 #include <QEventLoop>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QTemporaryFile>
@@ -25,6 +26,7 @@ constexpr int kEverestSilFixedWaitMs = 5000;
 constexpr char kConfigYamlKey[] = "config_yaml";
 constexpr char kConfigFileKey[] = "file";
 constexpr char kConfigFileName[] = "config.yaml";
+constexpr char kConfigFileNameKey[] = "file_name";
 constexpr char kErrorInvalidParams[] = "invalid_params";
 constexpr char kErrorConfigReadFailed[] = "everest_config_read_failed";
 constexpr char kErrorConfigWriteFailed[] = "everest_config_upload_write_failed";
@@ -171,8 +173,19 @@ ModuleResponse handleDownloadRequest(const ModuleRequest &request) {
         return response;
     }
 
+    QString downloadFileName = QString::fromLatin1(kConfigFileName);
+    const QFileInfo configFileInfo(configPathResult.path);
+    if (configFileInfo.isSymLink()) {
+        const QFileInfo targetInfo(configFileInfo.symLinkTarget());
+        if (!targetInfo.fileName().trimmed().isEmpty()) {
+            downloadFileName = targetInfo.fileName();
+        }
+    } else if (!configFileInfo.fileName().trimmed().isEmpty()) {
+        downloadFileName = configFileInfo.fileName();
+    }
+
     response.parameters = QJsonObject{
-        {QString::fromLatin1(kConfigFileKey), QString::fromLatin1(kConfigFileName)},
+        {QString::fromLatin1(kConfigFileKey), downloadFileName},
         {QString::fromLatin1(kConfigYamlKey), configYaml},
     };
     response.success = true;
@@ -198,6 +211,15 @@ ModuleResponse handleUploadRequest(const ModuleRequest &request) {
         return response;
     }
 
+    const QString uploadedFileName = sanitizeUploadedConfigFileName(
+        request.parameters.value(QString::fromLatin1(kConfigFileNameKey)).toString());
+    if (uploadedFileName.isEmpty()) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QString::fromLatin1(kErrorInvalidParams)},
+        };
+        return response;
+    }
+
     const QString yamlValidationError = validateYamlText(configYaml);
     if (!yamlValidationError.isEmpty()) {
         response.parameters = QJsonObject{
@@ -215,14 +237,16 @@ ModuleResponse handleUploadRequest(const ModuleRequest &request) {
         return response;
     }
 
-    if (!writeTextFile(baseConfigPathResult.path, configYaml)) {
+    const QString uploadedConfigPath =
+        buildUploadedConfigTargetPath(baseConfigPathResult.path, uploadedFileName);
+    if (uploadedConfigPath.isEmpty() || !writeTextFile(uploadedConfigPath, configYaml)) {
         response.parameters = QJsonObject{
             {QStringLiteral("error"), QString::fromLatin1(kErrorConfigWriteFailed)},
         };
         return response;
     }
 
-    const YamlLoadResult writtenYamlLoadResult = loadYamlFile(baseConfigPathResult.path);
+    const YamlLoadResult writtenYamlLoadResult = loadYamlFile(uploadedConfigPath);
     if (!writtenYamlLoadResult.success) {
         response.parameters = QJsonObject{
             {QStringLiteral("error"), writtenYamlLoadResult.error},
@@ -230,7 +254,7 @@ ModuleResponse handleUploadRequest(const ModuleRequest &request) {
         return response;
     }
 
-    response = ensureEverestConfigSymlink(response);
+    response = ensureEverestConfigSymlinkToTarget(uploadedConfigPath, response);
     if (!response.parameters.isEmpty()) {
         return response;
     }
@@ -314,6 +338,25 @@ QString validateYamlText(const QString &content) {
 
     const YamlLoadResult yamlLoadResult = loadYamlFile(tempFile.fileName());
     return yamlLoadResult.success ? QString() : yamlLoadResult.error;
+}
+
+QString sanitizeUploadedConfigFileName(const QString &rawFileName) {
+    const QString fileName = QFileInfo(rawFileName.trimmed()).fileName().trimmed();
+    if (fileName.isEmpty() || fileName == QStringLiteral(".") || fileName == QStringLiteral("..")) {
+        return QString();
+    }
+
+    return fileName;
+}
+
+QString buildUploadedConfigTargetPath(const QString &baseConfigPath, const QString &uploadedFileName) {
+    if (baseConfigPath.trimmed().isEmpty() || uploadedFileName.trimmed().isEmpty()) {
+        return QString();
+    }
+
+    const QFileInfo baseConfigInfo(baseConfigPath);
+    const QDir baseConfigDirectory = baseConfigInfo.dir();
+    return baseConfigDirectory.filePath(uploadedFileName);
 }
 
 QJsonObject buildEverestConfigOverlayObject(const QJsonObject &requestParameters,
@@ -498,18 +541,29 @@ ModuleResponse ensureEverestConfigSymlink(ModuleResponse response) {
         return response;
     }
 
-    const ConfigPathResult configPathResult =
-        loadEverestConfigPath(QStringLiteral("everest_config_path"));
-    if (!configPathResult.success) {
+    return ensureEverestConfigSymlinkToTarget(baseConfigPathResult.path, response);
+}
+
+ModuleResponse ensureEverestConfigSymlinkToTarget(const QString &targetPath, ModuleResponse response) {
+    if (targetPath.trimmed().isEmpty()) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), configPathResult.error},
+            {QStringLiteral("error"), QStringLiteral("everest_config_symlink_create_failed")},
         };
         return response;
     }
 
-    QFileInfo configFileInfo(configPathResult.path);
+    const ConfigPathResult baseConfigPathResult =
+        loadEverestConfigPath(QStringLiteral("everest_config_path"));
+    if (!baseConfigPathResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), baseConfigPathResult.error},
+        };
+        return response;
+    }
+
+    QFileInfo configFileInfo(baseConfigPathResult.path);
     if (configFileInfo.exists() || configFileInfo.isSymLink()) {
-        if (!QFile::remove(configPathResult.path)) {
+        if (!QFile::remove(baseConfigPathResult.path)) {
             response.parameters = QJsonObject{
                 {QStringLiteral("error"), QStringLiteral("everest_config_symlink_create_failed")},
             };
@@ -517,15 +571,15 @@ ModuleResponse ensureEverestConfigSymlink(ModuleResponse response) {
         }
     }
 
-    if (!QFile::link(baseConfigPathResult.path, configPathResult.path)) {
+    if (!QFile::link(targetPath, baseConfigPathResult.path)) {
         response.parameters = QJsonObject{
             {QStringLiteral("error"), QStringLiteral("everest_config_symlink_create_failed")},
         };
         return response;
     }
 
-    const QFileInfo symlinkInfo(configPathResult.path);
-    if (!symlinkInfo.isSymLink() || symlinkInfo.symLinkTarget() != baseConfigPathResult.path) {
+    const QFileInfo symlinkInfo(baseConfigPathResult.path);
+    if (!symlinkInfo.isSymLink() || symlinkInfo.symLinkTarget() != targetPath) {
         response.parameters = QJsonObject{
             {QStringLiteral("error"), QStringLiteral("everest_config_symlink_verification_failed")},
         };

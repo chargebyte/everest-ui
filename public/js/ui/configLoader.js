@@ -86,6 +86,11 @@ export function renderConfigLoaderBlock(blockConfig, options = {}) {
     getUploadRequestResponseObject(actionConfig) {
       const payloadField = actionConfig?.payload_field || 'config_yaml';
       return {
+        direct_config_file_name: {
+          backend_path: 'file_name',
+          value_type: 'string',
+          value: state.fileName
+        },
         [blockConfig.id || 'direct_config']: {
           backend_path: payloadField,
           value_type: 'string',

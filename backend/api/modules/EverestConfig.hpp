@@ -38,6 +38,7 @@ ModuleResponse handleUploadRequest(const ModuleRequest &request);
 ModuleResponse ensureEverestBaseConfig(ModuleResponse response);
 ModuleResponse ensureEverestConfigOverlay(const ModuleRequest &request, ModuleResponse response);
 ModuleResponse ensureEverestConfigSymlink(ModuleResponse response);
+ModuleResponse ensureEverestConfigSymlinkToTarget(const QString &targetPath, ModuleResponse response);
 ModuleResponse restartEverestStack(ModuleResponse response);
 
 ConfigPathResult loadEverestConfigPath(const QString &configKey);
@@ -47,6 +48,8 @@ bool contentIdentical(const QString &firstPath, const QString &secondPath);
 bool readTextFile(const QString &path, QString &content);
 bool writeTextFile(const QString &path, const QString &content);
 QString validateYamlText(const QString &content);
+QString sanitizeUploadedConfigFileName(const QString &rawFileName);
+QString buildUploadedConfigTargetPath(const QString &baseConfigPath, const QString &uploadedFileName);
 QJsonObject buildEverestConfigOverlayObject(const QJsonObject &requestParameters,
                                             const QJsonObject &baseYamlRoot);
 QString resolveActiveModuleKey(const QString &moduleName, const QJsonObject &baseYamlRoot);
