@@ -412,6 +412,84 @@ OcppReadValueResult extractOcppCsmsUrlPart(const QJsonObject &profileObject,
     };
 }
 
+QString trimLeadingSlashes(QString value) {
+    while (value.startsWith(QLatin1Char('/'))) {
+        value.remove(0, 1);
+    }
+
+    return value;
+}
+
+QString trimTrailingSlashes(QString value) {
+    while (value.endsWith(QLatin1Char('/'))) {
+        value.chop(1);
+    }
+
+    return value;
+}
+
+QString trimBoundarySlashes(QString value) {
+    return trimLeadingSlashes(trimTrailingSlashes(value));
+}
+
+QString composeOcppCsmsUrl(const QJsonObject &ocppCsmsUrlParts) {
+    const QString csmsServerAddress = trimTrailingSlashes(
+        ocppCsmsUrlParts
+            .value(QString::fromLatin1(kOcppCsmsUrlCsmsServerAddressKey))
+            .toString()
+            .trimmed());
+    const QString energyConsumptionPoint = trimBoundarySlashes(
+        ocppCsmsUrlParts
+            .value(QString::fromLatin1(kOcppCsmsUrlEnergyConsumptionPointKey))
+            .toString()
+            .trimmed());
+    const QString userId = trimLeadingSlashes(
+        ocppCsmsUrlParts
+            .value(QString::fromLatin1(kOcppCsmsUrlUserIdKey))
+            .toString()
+            .trimmed());
+
+    if (energyConsumptionPoint.isEmpty() && userId.isEmpty()) {
+        return csmsServerAddress;
+    }
+
+    if (userId.isEmpty()) {
+        return csmsServerAddress + QLatin1Char('/') + energyConsumptionPoint;
+    }
+
+    if (energyConsumptionPoint.isEmpty()) {
+        return csmsServerAddress + QLatin1Char('/') + userId;
+    }
+
+    return csmsServerAddress + QLatin1Char('/') + energyConsumptionPoint +
+           QLatin1Char('/') + userId;
+}
+
+QJsonObject normalizeOcppWriteParameters(const QJsonObject &requestParameters) {
+    QJsonObject normalizedParameters = requestParameters;
+
+    QJsonObject internalCtrlr =
+        normalizedParameters.value(QStringLiteral("InternalCtrlr")).toObject();
+    QJsonObject networkConnectionProfiles =
+        internalCtrlr.value(QString::fromLatin1(kNetworkConnectionProfiles)).toObject();
+    QJsonObject connectionData =
+        networkConnectionProfiles.value(QString::fromLatin1(kConnectionDataKey)).toObject();
+    const QJsonValue ocppCsmsUrlValue =
+        connectionData.value(QString::fromLatin1(kOcppCsmsUrlKey));
+
+    if (!ocppCsmsUrlValue.isObject()) {
+        return normalizedParameters;
+    }
+
+    connectionData.insert(QString::fromLatin1(kOcppCsmsUrlKey),
+                          composeOcppCsmsUrl(ocppCsmsUrlValue.toObject()));
+    networkConnectionProfiles.insert(QString::fromLatin1(kConnectionDataKey), connectionData);
+    internalCtrlr.insert(QString::fromLatin1(kNetworkConnectionProfiles),
+                         networkConnectionProfiles);
+    normalizedParameters.insert(QStringLiteral("InternalCtrlr"), internalCtrlr);
+    return normalizedParameters;
+}
+
 OcppReadValueResult findConfigurationSlotOneProfile(const QJsonArray &profilesArray) {
     for (const QJsonValue &profileValue : profilesArray) {
         if (!profileValue.isObject()) {
@@ -1097,7 +1175,8 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
         }
     }
 
-    const QStringList controllerNames = collectRequestedControllerNames(request.parameters);
+    const QJsonObject normalizedParameters = normalizeOcppWriteParameters(request.parameters);
+    const QStringList controllerNames = collectRequestedControllerNames(normalizedParameters);
     for (const QString &controllerName : controllerNames) {
         const QString ensureFileError =
             ensureCustomControllerFileExists(
@@ -1113,7 +1192,7 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
     }
 
     const OcppWriteResult writeResult =
-        writeRequestedWriteParameters(request.parameters, {}, customDirectoryPath);
+        writeRequestedWriteParameters(normalizedParameters, {}, customDirectoryPath);
     if (!writeResult.success) {
         response.parameters = QJsonObject{
             {QStringLiteral("error"), writeResult.error},
