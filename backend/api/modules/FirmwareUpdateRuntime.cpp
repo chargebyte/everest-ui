@@ -16,8 +16,7 @@
 #include <QTimer>
 
 namespace {
-// constexpr char kRaucInstallTemplate[] = "rauc install @image_path@";
-constexpr char kRaucInstallTemplate[] = "/home/erik/Dokumente/github/everest-ui/test-scripts/firmware-update-copy-fail.sh";
+constexpr char kRaucInstallTemplate[] = "rauc install @image_path@";
 constexpr char kRebootTemplate[] = "reboot";
 constexpr char kFirmwareRebootCommandConfigKey[] = "firmware_reboot_command";
 constexpr char kFirmwareImageDirConfigKey[] = "firmware_image_dir";

@@ -332,6 +332,11 @@
           "group": "firmware",
           "action": "update_image",
           "parameters_mode": "empty"
+        },
+        "reboot": {
+          "group": "firmware",
+          "action": "reboot",
+          "parameters_mode": "empty"
         }
       },
       "updater": {
