@@ -29,6 +29,11 @@ constexpr char kPropertiesKey[] = "properties";
 constexpr char kAttributesKey[] = "attributes";
 constexpr char kValueKey[] = "value";
 constexpr char kConfigurationSlotKey[] = "configurationSlot";
+constexpr char kConnectionDataKey[] = "connectionData";
+constexpr char kOcppCsmsUrlKey[] = "ocppCsmsUrl";
+constexpr char kOcppCsmsUrlUserIdKey[] = "userId";
+constexpr char kOcppCsmsUrlCsmsServerAddressKey[] = "csmsServerAddress";
+constexpr char kOcppCsmsUrlEnergyConsumptionPointKey[] = "energyConsumptionPoint";
 
 constexpr char kOcppBaseConfigMissing[] = "ocpp_base_config_path_missing";
 constexpr char kOcppBaseConfigNotFound[] = "ocpp_base_config_path_not_found";
@@ -77,6 +82,13 @@ struct OcppBackendPathResult {
     QString controllerName;
     QStringList valuePathSegments;
     QString error;
+};
+
+struct OcppCsmsUrlParts {
+    bool success = false;
+    QString csmsServerAddress;
+    QString energyConsumptionPoint;
+    QString userId;
 };
 
 OCPPAction toOcppAction(const QString &action) {
@@ -278,6 +290,128 @@ OcppReadValueResult navigateJsonObject(const QJsonObject &jsonObject,
     };
 }
 
+bool isOcppCsmsUrlPartPath(const QStringList &pathSegments) {
+    if (pathSegments.size() != 3) {
+        return false;
+    }
+
+    if (pathSegments.at(0) != QLatin1String(kConnectionDataKey) ||
+        pathSegments.at(1) != QLatin1String(kOcppCsmsUrlKey)) {
+        return false;
+    }
+
+    const QString partName = pathSegments.at(2);
+    return partName == QLatin1String(kOcppCsmsUrlUserIdKey) ||
+           partName == QLatin1String(kOcppCsmsUrlCsmsServerAddressKey) ||
+           partName == QLatin1String(kOcppCsmsUrlEnergyConsumptionPointKey);
+}
+
+OcppCsmsUrlParts splitOcppCsmsUrl(const QString &ocppCsmsUrl) {
+    const QString normalizedUrl = ocppCsmsUrl.trimmed();
+    if (normalizedUrl.isEmpty()) {
+        return OcppCsmsUrlParts{
+            .success = true,
+            .csmsServerAddress = QString(),
+            .energyConsumptionPoint = QString(),
+            .userId = QString(),
+        };
+    }
+
+    const int schemeSeparatorIndex = normalizedUrl.indexOf(QStringLiteral("://"));
+    const int firstSplitCandidateIndex =
+        schemeSeparatorIndex >= 0 ? schemeSeparatorIndex + 3 : 0;
+
+    const int userIdSeparatorIndex = normalizedUrl.lastIndexOf(QLatin1Char('/'));
+    if (userIdSeparatorIndex < firstSplitCandidateIndex ||
+        userIdSeparatorIndex >= normalizedUrl.size() - 1) {
+        return OcppCsmsUrlParts{
+            .success = true,
+            .csmsServerAddress = normalizedUrl,
+            .energyConsumptionPoint = QString(),
+            .userId = QString(),
+        };
+    }
+
+    const int energyPointSeparatorIndex =
+        normalizedUrl.lastIndexOf(QLatin1Char('/'), userIdSeparatorIndex - 1);
+    if (energyPointSeparatorIndex < firstSplitCandidateIndex ||
+        energyPointSeparatorIndex >= userIdSeparatorIndex - 1) {
+        return OcppCsmsUrlParts{
+            .success = true,
+            .csmsServerAddress = normalizedUrl,
+            .energyConsumptionPoint = QString(),
+            .userId = QString(),
+        };
+    }
+
+    return OcppCsmsUrlParts{
+        .success = true,
+        .csmsServerAddress = normalizedUrl.left(energyPointSeparatorIndex),
+        .energyConsumptionPoint = normalizedUrl.mid(
+            energyPointSeparatorIndex + 1,
+            userIdSeparatorIndex - energyPointSeparatorIndex - 1),
+        .userId = normalizedUrl.mid(userIdSeparatorIndex + 1),
+    };
+}
+
+OcppReadValueResult extractOcppCsmsUrlPart(const QJsonObject &profileObject,
+                                           const QStringList &pathSegments) {
+    const OcppReadValueResult ocppCsmsUrlValue =
+        navigateJsonObject(profileObject, {
+                                             QString::fromLatin1(kConnectionDataKey),
+                                             QString::fromLatin1(kOcppCsmsUrlKey),
+                                         });
+    if (!ocppCsmsUrlValue.success || !ocppCsmsUrlValue.found ||
+        !ocppCsmsUrlValue.value.isString()) {
+        return ocppCsmsUrlValue;
+    }
+
+    const OcppCsmsUrlParts urlParts = splitOcppCsmsUrl(ocppCsmsUrlValue.value.toString());
+    if (!urlParts.success) {
+        return OcppReadValueResult{
+            .success = true,
+            .found = false,
+            .value = QJsonValue(),
+            .error = QString(),
+        };
+    }
+
+    const QString partName = pathSegments.at(2);
+    if (partName == QLatin1String(kOcppCsmsUrlUserIdKey)) {
+        return OcppReadValueResult{
+            .success = true,
+            .found = true,
+            .value = urlParts.userId,
+            .error = QString(),
+        };
+    }
+
+    if (partName == QLatin1String(kOcppCsmsUrlCsmsServerAddressKey)) {
+        return OcppReadValueResult{
+            .success = true,
+            .found = true,
+            .value = urlParts.csmsServerAddress,
+            .error = QString(),
+        };
+    }
+
+    if (partName == QLatin1String(kOcppCsmsUrlEnergyConsumptionPointKey)) {
+        return OcppReadValueResult{
+            .success = true,
+            .found = true,
+            .value = urlParts.energyConsumptionPoint,
+            .error = QString(),
+        };
+    }
+
+    return OcppReadValueResult{
+        .success = true,
+        .found = false,
+        .value = QJsonValue(),
+        .error = QString(),
+    };
+}
+
 OcppReadValueResult findConfigurationSlotOneProfile(const QJsonArray &profilesArray) {
     for (const QJsonValue &profileValue : profilesArray) {
         if (!profileValue.isObject()) {
@@ -387,7 +521,12 @@ OcppReadValueResult extractNetworkConnectionProfilesValue(const QJsonObject &con
         return slotOneProfile;
     }
 
-    return navigateJsonObject(slotOneProfile.value.toObject(), pathSegments);
+    const QJsonObject profileObject = slotOneProfile.value.toObject();
+    if (isOcppCsmsUrlPartPath(pathSegments)) {
+        return extractOcppCsmsUrlPart(profileObject, pathSegments);
+    }
+
+    return navigateJsonObject(profileObject, pathSegments);
 }
 
 OcppReadValueResult extractValueFromDocument(const QJsonObject &controllerRoot,

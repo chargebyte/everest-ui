@@ -244,21 +244,21 @@
             "display_name": "User ID",
             "description": "fill in later",
             "value_type": "string",
-            "backend_path": "InternalCtrlr.NetworkConnectionProfiles.connectionData.ocppCsmsUrl"
+            "backend_path": "InternalCtrlr.NetworkConnectionProfiles.connectionData.ocppCsmsUrl.userId"
           },
           {
             "id": "csms_server_address",
             "display_name": "CSMS Server Address",
             "description": "fill in later",
             "value_type": "string",
-            "backend_path": "InternalCtrlr.NetworkConnectionProfiles.connectionData.ocppCsmsUrl"
+            "backend_path": "InternalCtrlr.NetworkConnectionProfiles.connectionData.ocppCsmsUrl.csmsServerAddress"
           },
           {
             "id": "energy_consumption_point",
             "display_name": "Energy Consumption Point",
             "description": "fill in later",
             "value_type": "string",
-            "backend_path": "InternalCtrlr.NetworkConnectionProfiles.connectionData.ocppCsmsUrl"
+            "backend_path": "InternalCtrlr.NetworkConnectionProfiles.connectionData.ocppCsmsUrl.energyConsumptionPoint"
           }
         ],
         "security": [
