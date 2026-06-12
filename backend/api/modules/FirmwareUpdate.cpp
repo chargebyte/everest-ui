@@ -26,6 +26,7 @@ constexpr char kFirmwareReadParseFailed[] = "firmware_read_parse_failed";
 constexpr char kFirmwareVersionNotFound[] = "firmware_version_not_found";
 constexpr char kFirmwareImageDirMissing[] = "firmware_image_dir_missing";
 constexpr char kFirmwareImageDirNotFound[] = "firmware_image_dir_not_found";
+constexpr char kFirmwareImageDirCreateFailed[] = "firmware_image_dir_create_failed";
 constexpr char kFirmwareImageDirNotADirectory[] = "firmware_image_dir_not_a_directory";
 constexpr char kFirmwareImageDirNotWritable[] = "firmware_image_dir_not_writable";
 constexpr char kFirmwareImageInvalidParams[] = "invalid_params";
@@ -215,7 +216,21 @@ FirmwareImageDirResult loadFirmwareImageDir(const QString &configKey) {
         };
     }
 
-    const QFileInfo pathInfo(value);
+    const QString cleanPath = QDir::cleanPath(value);
+    QFileInfo pathInfo(cleanPath);
+    if (!pathInfo.exists()) {
+        QDir imageDir;
+        if (!imageDir.mkpath(cleanPath)) {
+            return FirmwareImageDirResult{
+                .success = false,
+                .path = QString(),
+                .error = QString::fromLatin1(kFirmwareImageDirCreateFailed),
+            };
+        }
+
+        pathInfo = QFileInfo(cleanPath);
+    }
+
     if (!pathInfo.exists()) {
         return FirmwareImageDirResult{
             .success = false,
@@ -242,7 +257,7 @@ FirmwareImageDirResult loadFirmwareImageDir(const QString &configKey) {
 
     return FirmwareImageDirResult{
         .success = true,
-        .path = QDir::cleanPath(value),
+        .path = cleanPath,
         .error = QString(),
     };
 }

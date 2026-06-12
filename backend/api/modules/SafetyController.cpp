@@ -355,7 +355,7 @@ ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse r
         if (errorResult.success) {
             response.parameters = QJsonObject{
                 {QStringLiteral("error"),
-                 QStringLiteral("settings can't be applied because the safety controller configuration put EVerest into an error state")},
+                 QStringLiteral("settings put EVerest into an error, please revert immediately")},
             };
             return response;
         }
