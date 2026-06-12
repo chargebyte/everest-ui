@@ -68,21 +68,401 @@ void setRpcApiClient(RpcApiClient *rpcApiClient) {
     g_rpcApiClient = rpcApiClient;
 }
 
-ModuleResponse handleRequest(const ModuleRequest &request) {
-    switch (toEverestAction(request.action)) {
-    case EverestAction::ReadConfigParameters:
-        return handleReadRequest(request);
-    case EverestAction::WriteConfigParameters:
-        return handleWriteRequest(request);
-    case EverestAction::DownloadConfig:
-        return handleDownloadRequest(request);
-    case EverestAction::UploadConfig:
-        return handleUploadRequest(request);
-    case EverestAction::Unknown:
-        throw std::runtime_error("EverestConfig::handleRequest got unsupported action");
+QString loadBackendConfigValue(const QString &configKey) {
+    return ::readBackendConfigValue(configKey);
+}
+
+bool copyContent(const QString &sourcePath, const QString &targetPath) {
+    if (QFile::exists(targetPath) && !QFile::remove(targetPath)) {
+        return false;
     }
 
-    throw std::runtime_error("EverestConfig::handleRequest reached unreachable code");
+    return QFile::copy(sourcePath, targetPath);
+}
+
+bool contentIdentical(const QString &firstPath, const QString &secondPath) {
+    QFile firstFile(firstPath);
+    QFile secondFile(secondPath);
+    if (!firstFile.open(QIODevice::ReadOnly) || !secondFile.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+
+    if (firstFile.size() != secondFile.size()) {
+        return false;
+    }
+
+    return firstFile.readAll() == secondFile.readAll();
+}
+
+bool readTextFile(const QString &path, QString &content) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return false;
+    }
+
+    content = QString::fromUtf8(file.readAll());
+    return true;
+}
+
+bool writeTextFile(const QString &path, const QString &content) {
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        return false;
+    }
+
+    const QByteArray data = content.toUtf8();
+    return file.write(data) == data.size();
+}
+
+QString sanitizeUploadedConfigFileName(const QString &rawFileName) {
+    const QString fileName = QFileInfo(rawFileName.trimmed()).fileName().trimmed();
+    if (fileName.isEmpty() || fileName == QStringLiteral(".") || fileName == QStringLiteral("..")) {
+        return QString();
+    }
+
+    return fileName;
+}
+
+QString validateYamlText(const QString &content) {
+    QTemporaryFile tempFile;
+    if (!tempFile.open()) {
+        return QStringLiteral("everest_config_validation_failed");
+    }
+
+    const QByteArray data = content.toUtf8();
+    if (tempFile.write(data) != data.size() || !tempFile.flush()) {
+        return QStringLiteral("everest_config_validation_failed");
+    }
+
+    const YamlLoadResult yamlLoadResult = loadYamlFile(tempFile.fileName());
+    return yamlLoadResult.success ? QString() : yamlLoadResult.error;
+}
+
+ConfigPathResult loadEverestConfigPath(const QString &configKey) {
+    const QString value = loadBackendConfigValue(configKey);
+    if (!value.isEmpty()) {
+        return ConfigPathResult{
+            .success = true,
+            .path = value,
+            .error = QString(),
+        };
+    }
+
+    return ConfigPathResult{
+        .success = false,
+        .path = QString(),
+        .error = configKey + QStringLiteral("_missing"),
+    };
+}
+
+QString buildUploadedConfigTargetPath(const QString &baseConfigPath, const QString &uploadedFileName) {
+    if (baseConfigPath.trimmed().isEmpty() || uploadedFileName.trimmed().isEmpty()) {
+        return QString();
+    }
+
+    const QFileInfo baseConfigInfo(baseConfigPath);
+    const QDir baseConfigDirectory = baseConfigInfo.dir();
+    return baseConfigDirectory.filePath(uploadedFileName);
+}
+
+QJsonObject fillRequestedReadParameters(const QJsonObject &requestParameters,
+                                        const QJsonObject &yamlRoot) {
+    QJsonObject responseParameters = requestParameters;
+    const auto requestedModuleNames = responseParameters.keys();
+
+    for (const QString &requestedModuleName : requestedModuleNames) {
+        const QJsonObject activeModuleConfig =
+            findActiveModuleConfig(yamlRoot, requestedModuleName);
+        
+        QJsonObject requestedModuleParameters =
+            responseParameters.value(requestedModuleName).toObject();
+        const auto requestedParameterNames = requestedModuleParameters.keys();
+        
+        if (activeModuleConfig.isEmpty()) {
+            for (const QString &requestedParameterName : requestedParameterNames) {
+                requestedModuleParameters.insert(
+                    requestedParameterName, QJsonValue());
+            }
+            responseParameters.insert(requestedModuleName, requestedModuleParameters);
+            continue;
+        }
+
+        for (const QString &requestedParameterName : requestedParameterNames) {
+            if (!activeModuleConfig.contains(requestedParameterName)) {
+                requestedModuleParameters.insert(
+                    requestedParameterName, QJsonValue());
+                continue;
+            }
+
+            requestedModuleParameters.insert(
+                requestedParameterName, activeModuleConfig.value(requestedParameterName));
+        }
+
+        responseParameters.insert(requestedModuleName, requestedModuleParameters);
+    }
+
+    return responseParameters;
+}
+
+ModuleResponse ensureEverestBaseConfig(ModuleResponse response) {
+    const ConfigPathResult baseConfigPathResult =
+        loadEverestConfigPath(QStringLiteral("everest_base_config_path"));
+    if (!baseConfigPathResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), baseConfigPathResult.error},
+        };
+        return response;
+    }
+
+    const ConfigPathResult configPathResult =
+        loadEverestConfigPath(QStringLiteral("everest_config_path"));
+    if (!configPathResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), configPathResult.error},
+        };
+        return response;
+    }
+
+    const QFileInfo sourceFileInfo(configPathResult.path);
+    const QFileInfo targetFileInfo(baseConfigPathResult.path);
+    const QString sourceCanonicalPath = sourceFileInfo.canonicalFilePath();
+    const QString targetCanonicalPath = targetFileInfo.canonicalFilePath();
+    if (!sourceCanonicalPath.isEmpty() &&
+        !targetCanonicalPath.isEmpty() &&
+        sourceCanonicalPath == targetCanonicalPath) {
+        return response;
+    }
+
+    if (!copyContent(configPathResult.path, baseConfigPathResult.path)) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QStringLiteral("everest_base_config_copy_failed")},
+        };
+        return response;
+    }
+
+    if (!contentIdentical(configPathResult.path, baseConfigPathResult.path)) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QStringLiteral("everest_base_config_verification_failed")},
+        };
+        return response;
+    }
+
+    return response;
+}
+
+QString generateActiveModuleKey(const QString &moduleName,
+                                const QJsonObject &activeModulesObject) {
+    QString sanitizedModuleName = moduleName.toLower();
+    sanitizedModuleName.replace(QLatin1Char(' '), QLatin1Char('_'));
+
+    QString baseKey = QStringLiteral("module_");
+    for (const QChar character : sanitizedModuleName) {
+        if (character.isLetterOrNumber() || character == QLatin1Char('_')) {
+            baseKey.append(character);
+        }
+    }
+
+    if (baseKey == QStringLiteral("module_")) {
+        baseKey = QStringLiteral("module_generated");
+    }
+
+    QString candidateKey = baseKey;
+    int suffix = 2;
+    while (activeModulesObject.contains(candidateKey)) {
+        candidateKey = baseKey + QLatin1Char('_') + QString::number(suffix);
+        suffix += 1;
+    }
+
+    return candidateKey;
+}
+
+QString resolveActiveModuleKey(const QString &moduleName, const QJsonObject &baseYamlRoot) {
+    const QJsonObject activeModules = baseYamlRoot.value(QStringLiteral("active_modules")).toObject();
+    const auto activeModuleKeys = activeModules.keys();
+    for (const QString &activeModuleKey : activeModuleKeys) {
+        const QJsonObject activeModule = activeModules.value(activeModuleKey).toObject();
+        if (activeModule.value(QStringLiteral("module")).toString() == moduleName) {
+            return activeModuleKey;
+        }
+    }
+
+    return generateActiveModuleKey(moduleName, activeModules);
+}
+
+QJsonObject buildEverestConfigOverlayObject(const QJsonObject &requestParameters,
+                                            const QJsonObject &baseYamlRoot) {
+    QJsonObject overlayActiveModules;
+    const auto requestedModuleNames = requestParameters.keys();
+    for (const QString &requestedModuleName : requestedModuleNames) {
+        const QString activeModuleKey =
+            resolveActiveModuleKey(requestedModuleName, baseYamlRoot);
+
+        overlayActiveModules.insert(activeModuleKey, QJsonObject{
+                                                       {QStringLiteral("module"), requestedModuleName},
+                                                       {QStringLiteral("config_module"),
+                                                        requestParameters.value(requestedModuleName).toObject()},
+                                                   });
+    }
+
+    return QJsonObject{
+        {QStringLiteral("active_modules"), overlayActiveModules},
+    };
+}
+
+bool writeEverestConfigOverlay(const QString &overlayPath, const QJsonObject &overlayObject) {
+    QFile overlayFile(overlayPath);
+    if (!overlayFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        return false;
+    }
+
+    QTextStream stream(&overlayFile);
+    stream << "active_modules:\n";
+
+    const QJsonObject activeModules = overlayObject.value(QStringLiteral("active_modules")).toObject();
+    const auto activeModuleKeys = activeModules.keys();
+    for (const QString &activeModuleKey : activeModuleKeys) {
+        const QJsonObject activeModule = activeModules.value(activeModuleKey).toObject();
+        stream << "  " << activeModuleKey << ":\n";
+        stream << "    module: " << formatYamlScalar(activeModule.value(QStringLiteral("module"))) << "\n";
+        stream << "    config_module:\n";
+
+        const QJsonObject configModule = activeModule.value(QStringLiteral("config_module")).toObject();
+        const auto configKeys = configModule.keys();
+        for (const QString &configKey : configKeys) {
+            stream << "      " << configKey << ": "
+                   << formatYamlScalar(configModule.value(configKey)) << "\n";
+        }
+    }
+
+    return stream.status() == QTextStream::Ok;
+}
+
+ModuleResponse ensureEverestConfigOverlay(const ModuleRequest &request, ModuleResponse response) {
+    const ConfigPathResult overlayConfigPathResult =
+        loadEverestConfigPath(QStringLiteral("everest_config_overlay_path"));
+    if (!overlayConfigPathResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), overlayConfigPathResult.error},
+        };
+        return response;
+    }
+
+    const ConfigPathResult baseConfigPathResult =
+        loadEverestConfigPath(QStringLiteral("everest_base_config_path"));
+    if (!baseConfigPathResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), baseConfigPathResult.error},
+        };
+        return response;
+    }
+
+    const YamlLoadResult baseYamlLoadResult = loadYamlFile(baseConfigPathResult.path);
+    if (!baseYamlLoadResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), baseYamlLoadResult.error},
+        };
+        return response;
+    }
+
+    const QJsonObject overlayObject =
+        buildEverestConfigOverlayObject(request.parameters, baseYamlLoadResult.yamlRoot);
+    if (!writeEverestConfigOverlay(overlayConfigPathResult.path, overlayObject)) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QStringLiteral("everest_config_overlay_write_failed")},
+        };
+        return response;
+    }
+
+    return response;
+}
+
+ModuleResponse ensureEverestConfigSymlinkToTarget(const QString &targetPath, ModuleResponse response) {
+    if (targetPath.trimmed().isEmpty()) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QStringLiteral("everest_config_symlink_create_failed")},
+        };
+        return response;
+    }
+
+    const ConfigPathResult baseConfigPathResult =
+        loadEverestConfigPath(QStringLiteral("everest_config_path"));
+    if (!baseConfigPathResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), baseConfigPathResult.error},
+        };
+        return response;
+    }
+
+    QFileInfo configFileInfo(baseConfigPathResult.path);
+    if (configFileInfo.exists() || configFileInfo.isSymLink()) {
+        if (!QFile::remove(baseConfigPathResult.path)) {
+            response.parameters = QJsonObject{
+                {QStringLiteral("error"), QStringLiteral("everest_config_symlink_create_failed")},
+            };
+            return response;
+        }
+    }
+
+    if (!QFile::link(targetPath, baseConfigPathResult.path)) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QStringLiteral("everest_config_symlink_create_failed")},
+        };
+        return response;
+    }
+
+    const QFileInfo symlinkInfo(baseConfigPathResult.path);
+    if (!symlinkInfo.isSymLink() || symlinkInfo.symLinkTarget() != targetPath) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), QStringLiteral("everest_config_symlink_verification_failed")},
+        };
+        return response;
+    }
+
+    return response;
+}
+
+ModuleResponse ensureEverestConfigSymlink(ModuleResponse response) {
+    const ConfigPathResult baseConfigPathResult =
+        loadEverestConfigPath(QStringLiteral("everest_base_config_path"));
+    if (!baseConfigPathResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), baseConfigPathResult.error},
+        };
+        return response;
+    }
+
+    return ensureEverestConfigSymlinkToTarget(baseConfigPathResult.path, response);
+}
+
+ModuleResponse restartEverestStack(ModuleResponse response) {
+    const EverestStateAllowedResult stateAllowedResult =
+        EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
+    if (!stateAllowedResult.success) {
+        QString error = stateAllowedResult.error;
+        if (stateAllowedResult.error == QStringLiteral("everest_state_not_allowed")) {
+            error =
+                QStringLiteral("config could not be applied because EVerest-stack is in state \"%1\" and cannot be restarted, please unplug the EV and try again")
+                    .arg(stateAllowedResult.state);
+        }
+
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), error},
+        };
+        return response;
+    }
+
+    const EverestServiceControlResult restartResult =
+        EverestServiceControl::executeEverestRestart(g_rpcApiClient);
+    if (!restartResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), restartResult.error},
+        };
+        return response;
+    }
+
+    response.parameters = QJsonObject{};
+    response.success = true;
+    return response;
 }
 
 ModuleResponse handleReadRequest(const ModuleRequest &request) {
@@ -262,400 +642,20 @@ ModuleResponse handleUploadRequest(const ModuleRequest &request) {
     return restartEverestStack(response);
 }
 
-ConfigPathResult loadEverestConfigPath(const QString &configKey) {
-    const QString value = loadBackendConfigValue(configKey);
-    if (!value.isEmpty()) {
-        return ConfigPathResult{
-            .success = true,
-            .path = value,
-            .error = QString(),
-        };
+ModuleResponse handleRequest(const ModuleRequest &request) {
+    switch (toEverestAction(request.action)) {
+    case EverestAction::ReadConfigParameters:
+        return handleReadRequest(request);
+    case EverestAction::WriteConfigParameters:
+        return handleWriteRequest(request);
+    case EverestAction::DownloadConfig:
+        return handleDownloadRequest(request);
+    case EverestAction::UploadConfig:
+        return handleUploadRequest(request);
+    case EverestAction::Unknown:
+        throw std::runtime_error("EverestConfig::handleRequest got unsupported action");
     }
 
-    return ConfigPathResult{
-        .success = false,
-        .path = QString(),
-        .error = configKey + QStringLiteral("_missing"),
-    };
-}
-
-QString loadBackendConfigValue(const QString &configKey) {
-    return ::readBackendConfigValue(configKey);
-}
-
-bool copyContent(const QString &sourcePath, const QString &targetPath) {
-    if (QFile::exists(targetPath) && !QFile::remove(targetPath)) {
-        return false;
-    }
-
-    return QFile::copy(sourcePath, targetPath);
-}
-
-bool contentIdentical(const QString &firstPath, const QString &secondPath) {
-    QFile firstFile(firstPath);
-    QFile secondFile(secondPath);
-    if (!firstFile.open(QIODevice::ReadOnly) || !secondFile.open(QIODevice::ReadOnly)) {
-        return false;
-    }
-
-    if (firstFile.size() != secondFile.size()) {
-        return false;
-    }
-
-    return firstFile.readAll() == secondFile.readAll();
-}
-
-bool readTextFile(const QString &path, QString &content) {
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return false;
-    }
-
-    content = QString::fromUtf8(file.readAll());
-    return true;
-}
-
-bool writeTextFile(const QString &path, const QString &content) {
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-        return false;
-    }
-
-    const QByteArray data = content.toUtf8();
-    return file.write(data) == data.size();
-}
-
-QString validateYamlText(const QString &content) {
-    QTemporaryFile tempFile;
-    if (!tempFile.open()) {
-        return QStringLiteral("everest_config_validation_failed");
-    }
-
-    const QByteArray data = content.toUtf8();
-    if (tempFile.write(data) != data.size() || !tempFile.flush()) {
-        return QStringLiteral("everest_config_validation_failed");
-    }
-
-    const YamlLoadResult yamlLoadResult = loadYamlFile(tempFile.fileName());
-    return yamlLoadResult.success ? QString() : yamlLoadResult.error;
-}
-
-QString sanitizeUploadedConfigFileName(const QString &rawFileName) {
-    const QString fileName = QFileInfo(rawFileName.trimmed()).fileName().trimmed();
-    if (fileName.isEmpty() || fileName == QStringLiteral(".") || fileName == QStringLiteral("..")) {
-        return QString();
-    }
-
-    return fileName;
-}
-
-QString buildUploadedConfigTargetPath(const QString &baseConfigPath, const QString &uploadedFileName) {
-    if (baseConfigPath.trimmed().isEmpty() || uploadedFileName.trimmed().isEmpty()) {
-        return QString();
-    }
-
-    const QFileInfo baseConfigInfo(baseConfigPath);
-    const QDir baseConfigDirectory = baseConfigInfo.dir();
-    return baseConfigDirectory.filePath(uploadedFileName);
-}
-
-QJsonObject buildEverestConfigOverlayObject(const QJsonObject &requestParameters,
-                                            const QJsonObject &baseYamlRoot) {
-    QJsonObject overlayActiveModules;
-    const auto requestedModuleNames = requestParameters.keys();
-    for (const QString &requestedModuleName : requestedModuleNames) {
-        const QString activeModuleKey =
-            resolveActiveModuleKey(requestedModuleName, baseYamlRoot);
-
-        overlayActiveModules.insert(activeModuleKey, QJsonObject{
-                                                       {QStringLiteral("module"), requestedModuleName},
-                                                       {QStringLiteral("config_module"),
-                                                        requestParameters.value(requestedModuleName).toObject()},
-                                                   });
-    }
-
-    return QJsonObject{
-        {QStringLiteral("active_modules"), overlayActiveModules},
-    };
-}
-
-QString resolveActiveModuleKey(const QString &moduleName, const QJsonObject &baseYamlRoot) {
-    const QJsonObject activeModules = baseYamlRoot.value(QStringLiteral("active_modules")).toObject();
-    const auto activeModuleKeys = activeModules.keys();
-    for (const QString &activeModuleKey : activeModuleKeys) {
-        const QJsonObject activeModule = activeModules.value(activeModuleKey).toObject();
-        if (activeModule.value(QStringLiteral("module")).toString() == moduleName) {
-            return activeModuleKey;
-        }
-    }
-
-    return generateActiveModuleKey(moduleName, activeModules);
-}
-
-QString generateActiveModuleKey(const QString &moduleName,
-                                const QJsonObject &activeModulesObject) {
-    QString sanitizedModuleName = moduleName.toLower();
-    sanitizedModuleName.replace(QLatin1Char(' '), QLatin1Char('_'));
-
-    QString baseKey = QStringLiteral("module_");
-    for (const QChar character : sanitizedModuleName) {
-        if (character.isLetterOrNumber() || character == QLatin1Char('_')) {
-            baseKey.append(character);
-        }
-    }
-
-    if (baseKey == QStringLiteral("module_")) {
-        baseKey = QStringLiteral("module_generated");
-    }
-
-    QString candidateKey = baseKey;
-    int suffix = 2;
-    while (activeModulesObject.contains(candidateKey)) {
-        candidateKey = baseKey + QLatin1Char('_') + QString::number(suffix);
-        suffix += 1;
-    }
-
-    return candidateKey;
-}
-
-bool writeEverestConfigOverlay(const QString &overlayPath, const QJsonObject &overlayObject) {
-    QFile overlayFile(overlayPath);
-    if (!overlayFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
-        return false;
-    }
-
-    QTextStream stream(&overlayFile);
-    stream << "active_modules:\n";
-
-    const QJsonObject activeModules = overlayObject.value(QStringLiteral("active_modules")).toObject();
-    const auto activeModuleKeys = activeModules.keys();
-    for (const QString &activeModuleKey : activeModuleKeys) {
-        const QJsonObject activeModule = activeModules.value(activeModuleKey).toObject();
-        stream << "  " << activeModuleKey << ":\n";
-        stream << "    module: " << formatYamlScalar(activeModule.value(QStringLiteral("module"))) << "\n";
-        stream << "    config_module:\n";
-
-        const QJsonObject configModule = activeModule.value(QStringLiteral("config_module")).toObject();
-        const auto configKeys = configModule.keys();
-        for (const QString &configKey : configKeys) {
-            stream << "      " << configKey << ": "
-                   << formatYamlScalar(configModule.value(configKey)) << "\n";
-        }
-    }
-
-    return stream.status() == QTextStream::Ok;
-}
-
-ModuleResponse ensureEverestBaseConfig(ModuleResponse response) {
-    const ConfigPathResult baseConfigPathResult =
-        loadEverestConfigPath(QStringLiteral("everest_base_config_path"));
-    if (!baseConfigPathResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), baseConfigPathResult.error},
-        };
-        return response;
-    }
-
-    const ConfigPathResult configPathResult =
-        loadEverestConfigPath(QStringLiteral("everest_config_path"));
-    if (!configPathResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), configPathResult.error},
-        };
-        return response;
-    }
-
-    const QFileInfo sourceFileInfo(configPathResult.path);
-    const QFileInfo targetFileInfo(baseConfigPathResult.path);
-    const QString sourceCanonicalPath = sourceFileInfo.canonicalFilePath();
-    const QString targetCanonicalPath = targetFileInfo.canonicalFilePath();
-    if (!sourceCanonicalPath.isEmpty() &&
-        !targetCanonicalPath.isEmpty() &&
-        sourceCanonicalPath == targetCanonicalPath) {
-        return response;
-    }
-
-    if (!copyContent(configPathResult.path, baseConfigPathResult.path)) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), QStringLiteral("everest_base_config_copy_failed")},
-        };
-        return response;
-    }
-
-    if (!contentIdentical(configPathResult.path, baseConfigPathResult.path)) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), QStringLiteral("everest_base_config_verification_failed")},
-        };
-        return response;
-    }
-
-    return response;
-}
-
-ModuleResponse ensureEverestConfigOverlay(const ModuleRequest &request, ModuleResponse response) {
-    const ConfigPathResult overlayConfigPathResult =
-        loadEverestConfigPath(QStringLiteral("everest_config_overlay_path"));
-    if (!overlayConfigPathResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), overlayConfigPathResult.error},
-        };
-        return response;
-    }
-
-    const ConfigPathResult baseConfigPathResult =
-        loadEverestConfigPath(QStringLiteral("everest_base_config_path"));
-    if (!baseConfigPathResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), baseConfigPathResult.error},
-        };
-        return response;
-    }
-
-    const YamlLoadResult baseYamlLoadResult = loadYamlFile(baseConfigPathResult.path);
-    if (!baseYamlLoadResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), baseYamlLoadResult.error},
-        };
-        return response;
-    }
-
-    const QJsonObject overlayObject =
-        buildEverestConfigOverlayObject(request.parameters, baseYamlLoadResult.yamlRoot);
-    if (!writeEverestConfigOverlay(overlayConfigPathResult.path, overlayObject)) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), QStringLiteral("everest_config_overlay_write_failed")},
-        };
-        return response;
-    }
-
-    return response;
-}
-
-ModuleResponse ensureEverestConfigSymlink(ModuleResponse response) {
-    const ConfigPathResult baseConfigPathResult =
-        loadEverestConfigPath(QStringLiteral("everest_base_config_path"));
-    if (!baseConfigPathResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), baseConfigPathResult.error},
-        };
-        return response;
-    }
-
-    return ensureEverestConfigSymlinkToTarget(baseConfigPathResult.path, response);
-}
-
-ModuleResponse ensureEverestConfigSymlinkToTarget(const QString &targetPath, ModuleResponse response) {
-    if (targetPath.trimmed().isEmpty()) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), QStringLiteral("everest_config_symlink_create_failed")},
-        };
-        return response;
-    }
-
-    const ConfigPathResult baseConfigPathResult =
-        loadEverestConfigPath(QStringLiteral("everest_config_path"));
-    if (!baseConfigPathResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), baseConfigPathResult.error},
-        };
-        return response;
-    }
-
-    QFileInfo configFileInfo(baseConfigPathResult.path);
-    if (configFileInfo.exists() || configFileInfo.isSymLink()) {
-        if (!QFile::remove(baseConfigPathResult.path)) {
-            response.parameters = QJsonObject{
-                {QStringLiteral("error"), QStringLiteral("everest_config_symlink_create_failed")},
-            };
-            return response;
-        }
-    }
-
-    if (!QFile::link(targetPath, baseConfigPathResult.path)) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), QStringLiteral("everest_config_symlink_create_failed")},
-        };
-        return response;
-    }
-
-    const QFileInfo symlinkInfo(baseConfigPathResult.path);
-    if (!symlinkInfo.isSymLink() || symlinkInfo.symLinkTarget() != targetPath) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), QStringLiteral("everest_config_symlink_verification_failed")},
-        };
-        return response;
-    }
-
-    return response;
-}
-
-ModuleResponse restartEverestStack(ModuleResponse response) {
-    const EverestStateAllowedResult stateAllowedResult =
-        EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
-    if (!stateAllowedResult.success) {
-        QString error = stateAllowedResult.error;
-        if (stateAllowedResult.error == QStringLiteral("everest_state_not_allowed")) {
-            error =
-                QStringLiteral("config could not be applied because EVerest-stack is in state \"%1\" and cannot be restarted, please unplug the EV and try again")
-                    .arg(stateAllowedResult.state);
-        }
-
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), error},
-        };
-        return response;
-    }
-
-    const EverestServiceControlResult restartResult =
-        EverestServiceControl::executeEverestRestart(g_rpcApiClient);
-    if (!restartResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), restartResult.error},
-        };
-        return response;
-    }
-
-    response.parameters = QJsonObject{};
-    response.success = true;
-    return response;
-}
-
-QJsonObject fillRequestedReadParameters(const QJsonObject &requestParameters,
-                                        const QJsonObject &yamlRoot) {
-    QJsonObject responseParameters = requestParameters;
-    const auto requestedModuleNames = responseParameters.keys();
-
-    for (const QString &requestedModuleName : requestedModuleNames) {
-        const QJsonObject activeModuleConfig =
-            findActiveModuleConfig(yamlRoot, requestedModuleName);
-        
-        QJsonObject requestedModuleParameters =
-            responseParameters.value(requestedModuleName).toObject();
-        const auto requestedParameterNames = requestedModuleParameters.keys();
-        
-        if (activeModuleConfig.isEmpty()) {
-            for (const QString &requestedParameterName : requestedParameterNames) {
-                requestedModuleParameters.insert(
-                    requestedParameterName, QJsonValue());
-            }
-            responseParameters.insert(requestedModuleName, requestedModuleParameters);
-            continue;
-        }
-
-        for (const QString &requestedParameterName : requestedParameterNames) {
-            if (!activeModuleConfig.contains(requestedParameterName)) {
-                requestedModuleParameters.insert(
-                    requestedParameterName, QJsonValue());
-                continue;
-            }
-
-            requestedModuleParameters.insert(
-                requestedParameterName, activeModuleConfig.value(requestedParameterName));
-        }
-
-        responseParameters.insert(requestedModuleName, requestedModuleParameters);
-    }
-
-    return responseParameters;
+    throw std::runtime_error("EverestConfig::handleRequest reached unreachable code");
 }
 } // namespace EverestConfig

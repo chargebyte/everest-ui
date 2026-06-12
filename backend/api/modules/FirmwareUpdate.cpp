@@ -70,75 +70,6 @@ FirmwareUpdateRuntime &runtime() {
     return instance;
 }
 
-ModuleResponse handleRequest(const ModuleRequest &request) {
-    switch (toFirmwareUpdateAction(request.action)) {
-    case FirmwareUpdateAction::ReadVersion:
-        return handleReadRequest(request);
-    case FirmwareUpdateAction::UpdateImage:
-        return handleUpdateRequest(request);
-    case FirmwareUpdateAction::Reboot:
-        return handleRebootRequest(request);
-    case FirmwareUpdateAction::UploadImageStart:
-        return handleUploadStartRequest(request);
-    case FirmwareUpdateAction::UploadImageChunk:
-        return handleUploadChunkRequest(request);
-    case FirmwareUpdateAction::UploadImageFinish:
-        return handleUploadFinishRequest(request);
-    case FirmwareUpdateAction::Unknown:
-        throw std::runtime_error("FirmwareUpdate::handleRequest got unsupported action");
-    }
-
-    throw std::runtime_error("FirmwareUpdate::handleRequest reached unreachable code");
-}
-
-ModuleResponse handleReadRequest(const ModuleRequest &request) {
-    ModuleResponse response{
-        .requestId = request.requestId,
-        .group = QStringLiteral("firmware"),
-        .action = request.action,
-        .parameters = QJsonObject{},
-        .success = false,
-        .final = true,
-    };
-
-    const FirmwareVersionReadResult versionResult = readFirmwareVersion();
-    if (!versionResult.success) {
-        response.parameters = QJsonObject{
-            {QStringLiteral("error"), versionResult.error},
-        };
-        return response;
-    }
-
-    response.parameters = QJsonObject{
-        {QStringLiteral("image"),
-         QJsonObject{
-             {QStringLiteral("version"), versionResult.version},
-         }},
-    };
-    response.success = true;
-    return response;
-}
-
-ModuleResponse handleUpdateRequest(const ModuleRequest &request) {
-    return runtime().handleUpdateRequest(request);
-}
-
-ModuleResponse handleRebootRequest(const ModuleRequest &request) {
-    return runtime().handleRebootRequest(request);
-}
-
-ModuleResponse handleUploadStartRequest(const ModuleRequest &request) {
-    return runtime().handleUploadStartRequest(request);
-}
-
-ModuleResponse handleUploadChunkRequest(const ModuleRequest &request) {
-    return runtime().handleUploadChunkRequest(request);
-}
-
-ModuleResponse handleUploadFinishRequest(const ModuleRequest &request) {
-    return runtime().handleUploadFinishRequest(request);
-}
-
 FirmwareVersionReadResult readFirmwareVersion() {
     ConsoleConnector console;
     ConsoleConnector::ExecOptions options;
@@ -204,6 +135,75 @@ FirmwareVersionReadResult readFirmwareVersion() {
         .version = QString(),
         .error = QString::fromLatin1(kFirmwareVersionNotFound),
     };
+}
+
+ModuleResponse handleReadRequest(const ModuleRequest &request) {
+    ModuleResponse response{
+        .requestId = request.requestId,
+        .group = QStringLiteral("firmware"),
+        .action = request.action,
+        .parameters = QJsonObject{},
+        .success = false,
+        .final = true,
+    };
+
+    const FirmwareVersionReadResult versionResult = readFirmwareVersion();
+    if (!versionResult.success) {
+        response.parameters = QJsonObject{
+            {QStringLiteral("error"), versionResult.error},
+        };
+        return response;
+    }
+
+    response.parameters = QJsonObject{
+        {QStringLiteral("image"),
+         QJsonObject{
+             {QStringLiteral("version"), versionResult.version},
+         }},
+    };
+    response.success = true;
+    return response;
+}
+
+ModuleResponse handleUpdateRequest(const ModuleRequest &request) {
+    return runtime().handleUpdateRequest(request);
+}
+
+ModuleResponse handleRebootRequest(const ModuleRequest &request) {
+    return runtime().handleRebootRequest(request);
+}
+
+ModuleResponse handleUploadStartRequest(const ModuleRequest &request) {
+    return runtime().handleUploadStartRequest(request);
+}
+
+ModuleResponse handleUploadChunkRequest(const ModuleRequest &request) {
+    return runtime().handleUploadChunkRequest(request);
+}
+
+ModuleResponse handleUploadFinishRequest(const ModuleRequest &request) {
+    return runtime().handleUploadFinishRequest(request);
+}
+
+ModuleResponse handleRequest(const ModuleRequest &request) {
+    switch (toFirmwareUpdateAction(request.action)) {
+    case FirmwareUpdateAction::ReadVersion:
+        return handleReadRequest(request);
+    case FirmwareUpdateAction::UpdateImage:
+        return handleUpdateRequest(request);
+    case FirmwareUpdateAction::Reboot:
+        return handleRebootRequest(request);
+    case FirmwareUpdateAction::UploadImageStart:
+        return handleUploadStartRequest(request);
+    case FirmwareUpdateAction::UploadImageChunk:
+        return handleUploadChunkRequest(request);
+    case FirmwareUpdateAction::UploadImageFinish:
+        return handleUploadFinishRequest(request);
+    case FirmwareUpdateAction::Unknown:
+        throw std::runtime_error("FirmwareUpdate::handleRequest got unsupported action");
+    }
+
+    throw std::runtime_error("FirmwareUpdate::handleRequest reached unreachable code");
 }
 
 FirmwareImageDirResult loadFirmwareImageDir(const QString &configKey) {
