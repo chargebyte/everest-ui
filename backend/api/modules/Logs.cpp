@@ -28,6 +28,23 @@ LogsAction toLogsAction(const QString &action) {
 }
 
 namespace Logs {
+constexpr char kErrorMissing[] = "_missing";
+constexpr char kErrorLogsPathNotFound[] = "logs_path_not_found";
+constexpr char kErrorLogsPathNotDirectory[] = "logs_path_not_a_directory";
+constexpr char kErrorLogsPathNotReadable[] = "logs_path_not_readable";
+constexpr char kErrorZipFailed[] = "zip_failed";
+constexpr char kGroupLogs[] = "logs";
+constexpr char kParametersError[] = "error";
+constexpr char kParametersFiles[] = "files";
+constexpr char kConfLogsPath[] = "logs_path";
+constexpr char kFileName[] = "name";
+constexpr char kFileSizeBytes[] = "size_bytes";
+constexpr char kFileLastModified[] = "last_modified";
+constexpr char kFileDefaultName[] = "logs_bundle.tar.gz";
+constexpr char kCmdFlafCzf[] = "-czf";
+constexpr char kCmdFlagC[] = "-C";
+constexpr char kCmdFlagTar[] = "tar";
+
 ModuleResponse handleRequest(const ModuleRequest &request) {
     switch (toLogsAction(request.action)) {
     case LogsAction::Read:
@@ -44,17 +61,17 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
 ModuleResponse handleReadRequest(const ModuleRequest &request) {
     ModuleResponse response{
         .requestId = request.requestId,
-        .group = QStringLiteral("logs"),
+        .group = QLatin1String(kGroupLogs),
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
         .final = true,
     };
 
-    const LogsConfigPathResult logsPathResult = loadLogsSettingsPath(QStringLiteral("logs_paths"));
+    const LogsConfigPathResult logsPathResult = loadLogsSettingsPath(QLatin1String(kConfLogsPath));
     if (!logsPathResult.success) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), logsPathResult.error},
+            {QLatin1String(kParametersError), logsPathResult.error},
         };
         return response;
     }
@@ -62,7 +79,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
     const LogsReadResult readResult = readLogFilesInformation(logsPathResult.path);
     if (!readResult.success) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), readResult.error},
+            {QLatin1String(kParametersError), readResult.error},
         };
         return response;
     }
@@ -76,7 +93,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
 ModuleResponse handleDownloadRequest(const ModuleRequest &request) {
     ModuleResponse response{
         .requestId = request.requestId,
-        .group = QStringLiteral("logs"),
+        .group = QLatin1String(kGroupLogs),
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
@@ -86,7 +103,7 @@ ModuleResponse handleDownloadRequest(const ModuleRequest &request) {
     const LogsDownloadResult downloadResult = createLogsArchive(request.parameters);
     if (!downloadResult.success) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), downloadResult.error},
+            {QLatin1String(kParametersError), downloadResult.error},
         };
         return response;
     }
@@ -109,7 +126,7 @@ LogsConfigPathResult loadLogsSettingsPath(const QString &configKey) {
     return LogsConfigPathResult{
         .success = false,
         .path = QString(),
-        .error = configKey + QStringLiteral("_missing"),
+        .error = configKey + QLatin1String(kErrorMissing),
     };
 }
 
@@ -132,7 +149,7 @@ LogsReadResult readLogFilesInformation(const QString &logPaths) {
             return LogsReadResult{
                 .success = false,
                 .parameters = QJsonObject{},
-                .error = QString("logs_path_not_found")
+                .error = QLatin1String(kErrorLogsPathNotFound)
             };
         }
 
@@ -140,7 +157,7 @@ LogsReadResult readLogFilesInformation(const QString &logPaths) {
             return LogsReadResult{
                 .success = false,
                 .parameters = QJsonObject{},
-                .error = QString("logs_path_not_a_directory")
+                .error = QLatin1String(kErrorLogsPathNotDirectory)
             };
         }
 
@@ -148,7 +165,7 @@ LogsReadResult readLogFilesInformation(const QString &logPaths) {
             return LogsReadResult{
                 .success = false,
                 .parameters = QJsonObject{},
-                .error = QString("logs_path_not_readable")
+                .error = QLatin1String(kErrorLogsPathNotReadable)
             };
         }
 
@@ -165,16 +182,16 @@ LogsReadResult readLogFilesInformation(const QString &logPaths) {
 
             files.insert(QString::number(idCounter),
                          QJsonObject{
-                             { QStringLiteral("name"), (path + fileInfo.fileName()) },
-                             { QStringLiteral("size_bytes"), size },
-                             { QStringLiteral("last_modified"), lastModified.toString(Qt::ISODate) }
+                             { QLatin1String(kFileName), (path + fileInfo.fileName()) },
+                             { QLatin1String(kFileSizeBytes), size },
+                             { QLatin1String(kFileLastModified), lastModified.toString(Qt::ISODate) }
                          });
 
             idCounter++;
         }
     }
 
-    parameters.insert(QStringLiteral("files"), files);
+    parameters.insert(QLatin1String(kParametersFiles), files);
     return LogsReadResult{
         .success = true,
         .parameters = parameters,
@@ -184,7 +201,7 @@ LogsReadResult readLogFilesInformation(const QString &logPaths) {
 }
 
 LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
-    const QJsonObject selectedFiles = requestParameters.value(QStringLiteral("files")).toObject();
+    const QJsonObject selectedFiles = requestParameters.value(QLatin1String(kParametersFiles)).toObject();
     if (selectedFiles.isEmpty()) {
         return LogsDownloadResult{
             .success = false,
@@ -233,27 +250,27 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
         };
     }
 
-    const QString archiveFileName = QStringLiteral("logs_bundle.tar.gz");
+    const QString archiveFileName = QLatin1String(kFileDefaultName);
     const QString tarPath = archiveDir.filePath(archiveFileName);
 
     QStringList args;
-    args << QStringLiteral("-czf");
+    args << QLatin1String(kCmdFlafCzf);
     args << tarPath;
 
     for (const QString &file : files) {
         QFileInfo info(file);
 
-        args << "-C"
+        args << kCmdFlagC
              << info.absolutePath()
              << info.fileName();
     }
 
-    const int exitCode = QProcess::execute(QStringLiteral("tar"), args);
+    const int exitCode = QProcess::execute(QLatin1String(kCmdFlagTar), args);
     if (exitCode != 0) {
         return LogsDownloadResult{
             .success = false,
             .parameters = QJsonObject{},
-            .error = QStringLiteral("zip_failed"),
+            .error = QLatin1String(kErrorZipFailed),
         };
     }
 

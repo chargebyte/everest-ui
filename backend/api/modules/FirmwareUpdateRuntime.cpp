@@ -16,10 +16,16 @@
 #include <QTimer>
 
 namespace {
+constexpr char kActionProgress[] = ".progress";
 constexpr char kRaucInstallTemplate[] = "rauc install @image_path@";
+constexpr char kRaucCheckingSlot[] = "Checking slot ";
+constexpr char kRaucDone[] = " done.";
+constexpr char kRaucSucceeded[] = "succeeded";
+constexpr char kRaucFailed[] = "failed";
 constexpr char kRebootTemplate[] = "reboot";
 constexpr char kFirmwareRebootCommandConfigKey[] = "firmware_reboot_command";
 constexpr char kFirmwareImageDirConfigKey[] = "firmware_image_dir";
+constexpr char kParametersError[] = "error";
 constexpr char kFirmwareUpdateInProgress[] = "update_in_progress";
 constexpr char kFirmwareUpdateStartFailed[] = "firmware_update_start_failed";
 constexpr char kFirmwareRebootNotAllowed[] = "not_allowed";
@@ -35,6 +41,18 @@ constexpr char kFirmwareUploadSizeExceeded[] = "upload_size_exceeded";
 constexpr char kFirmwareUploadIncomplete[] = "upload_incomplete";
 constexpr char kFirmwareUploadFinishFailed[] = "firmware_upload_finish_failed";
 constexpr char kFirmwareUploadChecksumMismatch[] = "checksum_mismatch";
+constexpr char kParametersImage[] = "image";
+constexpr char kParametersFileName[] = "file_name";
+constexpr char kParametersSizeBytes[] = "size_bytes";
+constexpr char kParametersChunkCount[] = "chunk_count";
+constexpr char kParametersChunkSizeBytes[] = "chunk_size_bytes";
+constexpr char kParametersChunkIndex[] = "chunk_index";
+constexpr char kParametersDataB64[] = "dataB64";
+constexpr char kParametersSha256[] = "sha256";
+constexpr char kParametersProgess[] = "progress";
+constexpr char kParametersStage[] = "stage";
+constexpr char kParametersRestartRequired[] = "restart_required";
+
 }
 
 FirmwareUpdateRuntime::FirmwareUpdateRuntime(QObject *parent)
@@ -48,7 +66,7 @@ FirmwareUpdateRuntime::FirmwareUpdateRuntime(QObject *parent)
 ModuleResponse FirmwareUpdateRuntime::handleUpdateRequest(const ModuleRequest &request) {
     ModuleResponse response{
         .requestId = request.requestId,
-        .group = QStringLiteral("firmware"),
+        .group = QLatin1String(kGroupFirmware),
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
@@ -57,14 +75,14 @@ ModuleResponse FirmwareUpdateRuntime::handleUpdateRequest(const ModuleRequest &r
 
     if (m_updateRunning) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUpdateInProgress)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUpdateInProgress)},
         };
         return response;
     }
 
     if (!hasFinishedUpload()) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadNotReady)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadNotReady)},
         };
         return response;
     }
@@ -79,7 +97,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUpdateRequest(const ModuleRequest &r
         ConsoleConnector::ExecMode::StreamingAsync);
     if (startResult.exitCode != 0) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUpdateStartFailed)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUpdateStartFailed)},
         };
         return response;
     }
@@ -99,7 +117,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUpdateRequest(const ModuleRequest &r
 ModuleResponse FirmwareUpdateRuntime::handleRebootRequest(const ModuleRequest &request) {
     ModuleResponse response{
         .requestId = request.requestId,
-        .group = QStringLiteral("firmware"),
+        .group = QLatin1String(kGroupFirmware),
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
@@ -108,7 +126,7 @@ ModuleResponse FirmwareUpdateRuntime::handleRebootRequest(const ModuleRequest &r
 
     if (m_updateRunning || m_uploadRunning || !m_rebootRequired) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareRebootNotAllowed)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareRebootNotAllowed)},
         };
         return response;
     }
@@ -126,7 +144,7 @@ ModuleResponse FirmwareUpdateRuntime::handleRebootRequest(const ModuleRequest &r
 ModuleResponse FirmwareUpdateRuntime::handleUploadStartRequest(const ModuleRequest &request) {
     ModuleResponse response{
         .requestId = request.requestId,
-        .group = QStringLiteral("firmware"),
+        .group = QLatin1String(kGroupFirmware),
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
@@ -134,24 +152,24 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadStartRequest(const ModuleReque
     };
     if (m_uploadRunning) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadInProgress)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadInProgress)},
         };
         return response;
     }
 
     resetUploadState();
 
-    const QJsonObject imageObject = request.parameters.value(QStringLiteral("image")).toObject();
-    const QString rawFileName = imageObject.value(QStringLiteral("file_name")).toString().trimmed();
+    const QJsonObject imageObject = request.parameters.value(QLatin1String(kParametersImage)).toObject();
+    const QString rawFileName = imageObject.value(QLatin1String(kParametersFileName)).toString().trimmed();
     const QString fileName = QFileInfo(rawFileName).fileName();
     const qint64 sizeBytes =
-        imageObject.value(QStringLiteral("size_bytes")).toVariant().toLongLong();
-    const int chunkCount = imageObject.value(QStringLiteral("chunk_count")).toInt(-1);
-    const int chunkSizeBytes = imageObject.value(QStringLiteral("chunk_size_bytes")).toInt(-1);
+        imageObject.value(QLatin1String(kParametersSizeBytes)).toVariant().toLongLong();
+    const int chunkCount = imageObject.value(QLatin1String(kParametersChunkCount)).toInt(-1);
+    const int chunkSizeBytes = imageObject.value(QLatin1String(kParametersChunkSizeBytes)).toInt(-1);
 
     if (fileName.isEmpty() || sizeBytes <= 0 || chunkCount <= 0 || chunkSizeBytes <= 0) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadInvalidParams)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadInvalidParams)},
         };
         return response;
     }
@@ -160,7 +178,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadStartRequest(const ModuleReque
         FirmwareUpdate::loadFirmwareImageDir(QString::fromLatin1(kFirmwareImageDirConfigKey));
     if (!imageDirResult.success) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), imageDirResult.error},
+            {QLatin1String(kParametersError), imageDirResult.error},
         };
         return response;
     }
@@ -168,7 +186,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadStartRequest(const ModuleReque
     const FirmwareImageCleanupResult cleanupResult = FirmwareUpdate::cleanOldFirmwareImages(QString());
     if (!cleanupResult.success) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), cleanupResult.error},
+            {QLatin1String(kParametersError), cleanupResult.error},
         };
         return response;
     }
@@ -178,7 +196,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadStartRequest(const ModuleReque
     if (!m_uploadFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         resetUploadState();
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadStartFailed)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadStartFailed)},
         };
         return response;
     }
@@ -200,7 +218,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadStartRequest(const ModuleReque
 ModuleResponse FirmwareUpdateRuntime::handleUploadChunkRequest(const ModuleRequest &request) {
     ModuleResponse response{
         .requestId = request.requestId,
-        .group = QStringLiteral("firmware"),
+        .group = QLatin1String(kGroupFirmware),
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
@@ -208,25 +226,25 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadChunkRequest(const ModuleReque
     };
     if (!m_uploadRunning || !m_uploadFile.isOpen() || m_uploadFinished) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadNotStarted)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadNotStarted)},
         };
         return response;
     }
 
-    const QJsonObject imageObject = request.parameters.value(QStringLiteral("image")).toObject();
-    const int chunkIndex = imageObject.value(QStringLiteral("chunk_index")).toInt(-1);
-    const QString dataB64 = imageObject.value(QStringLiteral("dataB64")).toString().trimmed();
+    const QJsonObject imageObject = request.parameters.value(QLatin1String(kParametersImage)).toObject();
+    const int chunkIndex = imageObject.value(QLatin1String(kParametersChunkIndex)).toInt(-1);
+    const QString dataB64 = imageObject.value(QLatin1String(kParametersDataB64)).toString().trimmed();
 
     if (chunkIndex < 0 || dataB64.isEmpty()) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadInvalidParams)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadInvalidParams)},
         };
         return response;
     }
 
     if (chunkIndex != m_nextExpectedChunkIndex || chunkIndex >= m_expectedChunkCount) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadChunkOutOfOrder)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadChunkOutOfOrder)},
         };
         return response;
     }
@@ -234,14 +252,14 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadChunkRequest(const ModuleReque
     const QByteArray chunkData = QByteArray::fromBase64(dataB64.toLatin1());
     if (chunkData.isEmpty()) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadChunkInvalid)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadChunkInvalid)},
         };
         return response;
     }
 
     if (chunkData.size() > m_expectedChunkSizeBytes) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadChunkInvalid)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadChunkInvalid)},
         };
         return response;
     }
@@ -249,7 +267,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadChunkRequest(const ModuleReque
     if (m_writtenUploadSizeBytes + chunkData.size() > m_expectedUploadSizeBytes) {
         abortUploadAndRemovePartialFile();
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadSizeExceeded)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadSizeExceeded)},
         };
         return response;
     }
@@ -258,7 +276,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadChunkRequest(const ModuleReque
     if (bytesWritten != chunkData.size()) {
         abortUploadAndRemovePartialFile();
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadChunkWriteFailed)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadChunkWriteFailed)},
         };
         return response;
     }
@@ -273,7 +291,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadChunkRequest(const ModuleReque
 ModuleResponse FirmwareUpdateRuntime::handleUploadFinishRequest(const ModuleRequest &request) {
     ModuleResponse response{
         .requestId = request.requestId,
-        .group = QStringLiteral("firmware"),
+        .group = QLatin1String(kGroupFirmware),
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
@@ -281,21 +299,21 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadFinishRequest(const ModuleRequ
     };
     if (!m_uploadRunning || !m_uploadFile.isOpen() || m_uploadFinished) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadNotStarted)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadNotStarted)},
         };
         return response;
     }
 
     const QString expectedSha256 = request.parameters
-                                       .value(QStringLiteral("image"))
+                                       .value(QLatin1String(kParametersImage))
                                        .toObject()
-                                       .value(QStringLiteral("sha256"))
+                                       .value(QLatin1String(kParametersSha256))
                                        .toString()
                                        .trimmed()
                                        .toLower();
     if (expectedSha256.isEmpty()) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadInvalidParams)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadInvalidParams)},
         };
         return response;
     }
@@ -304,7 +322,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadFinishRequest(const ModuleRequ
         m_writtenUploadSizeBytes != m_expectedUploadSizeBytes) {
         abortUploadAndRemovePartialFile();
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadIncomplete)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadIncomplete)},
         };
         return response;
     }
@@ -312,7 +330,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadFinishRequest(const ModuleRequ
     if (!m_uploadFile.flush()) {
         abortUploadAndRemovePartialFile();
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadFinishFailed)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadFinishFailed)},
         };
         return response;
     }
@@ -323,7 +341,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadFinishRequest(const ModuleRequ
     if (!uploadedFile.open(QIODevice::ReadOnly)) {
         abortUploadAndRemovePartialFile();
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadFinishFailed)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadFinishFailed)},
         };
         return response;
     }
@@ -333,7 +351,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadFinishRequest(const ModuleRequ
         uploadedFile.close();
         abortUploadAndRemovePartialFile();
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadFinishFailed)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadFinishFailed)},
         };
         return response;
     }
@@ -343,7 +361,7 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadFinishRequest(const ModuleRequ
     if (actualSha256 != expectedSha256) {
         abortUploadAndRemovePartialFile();
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QString::fromLatin1(kFirmwareUploadChecksumMismatch)},
+            {QLatin1String(kParametersError), QString::fromLatin1(kFirmwareUploadChecksumMismatch)},
         };
         return response;
     }
@@ -414,23 +432,23 @@ void FirmwareUpdateRuntime::handleStdoutLine(const QString &line) {
         if (ok) {
             emit responseReady(ModuleResponse{
                 .requestId = m_currentRequestId,
-                .group = QStringLiteral("firmware"),
-                .action = m_currentAction + QStringLiteral(".progress"),
+                .group = QLatin1String(kGroupFirmware),
+                .action = m_currentAction + QLatin1String(kActionProgress),
                 .parameters = QJsonObject{
-                    {QStringLiteral("progress"), progress},
-                    {QStringLiteral("stage"), stage},
+                    {QLatin1String(kParametersProgess), progress},
+                    {QLatin1String(kParametersStage), stage},
                 },
                 .success = true,
                 .final = false,
             });
 
             if (!m_ackSent &&
-                stage.startsWith(QStringLiteral("Checking slot ")) &&
-                stage.endsWith(QStringLiteral(" done."))) {
+                stage.startsWith(QLatin1String(kRaucCheckingSlot)) &&
+                stage.endsWith(QLatin1String(kRaucDone))) {
                 m_ackSent = true;
                 emit responseReady(ModuleResponse{
                     .requestId = m_currentRequestId,
-                    .group = QStringLiteral("firmware"),
+                    .group = QLatin1String(kGroupFirmware),
                     .action = m_currentAction,
                     .parameters = QJsonObject{},
                     .success = true,
@@ -440,11 +458,11 @@ void FirmwareUpdateRuntime::handleStdoutLine(const QString &line) {
         }
     }
 
-    if (trimmedLine.endsWith(QStringLiteral("succeeded"))) {
+    if (trimmedLine.endsWith(QLatin1String(kRaucSucceeded))) {
         m_successSeen = true;
     }
 
-    if (trimmedLine.contains(QStringLiteral("failed"), Qt::CaseInsensitive)) {
+    if (trimmedLine.contains(QLatin1String(kRaucFailed), Qt::CaseInsensitive)) {
         m_failureSeen = true;
     }
 }
@@ -460,10 +478,10 @@ void FirmwareUpdateRuntime::handleStreamingFinished(const ConsoleConnector::RunR
         m_rebootRequired = true;
         emit responseReady(ModuleResponse{
             .requestId = m_currentRequestId,
-            .group = QStringLiteral("firmware"),
+            .group = QLatin1String(kGroupFirmware),
             .action = m_currentAction,
             .parameters = QJsonObject{
-                {QStringLiteral("restart_required"), true},
+                {QLatin1String(kParametersRestartRequired), true},
             },
             .success = true,
             .final = true,
@@ -472,10 +490,10 @@ void FirmwareUpdateRuntime::handleStreamingFinished(const ConsoleConnector::RunR
         m_rebootRequired = false;
         emit responseReady(ModuleResponse{
             .requestId = m_currentRequestId,
-            .group = QStringLiteral("firmware"),
+            .group = QLatin1String(kGroupFirmware),
             .action = m_currentAction,
             .parameters = QJsonObject{
-                {QStringLiteral("error"), QString::fromLatin1(kErrorFlashFailed)},
+                {QLatin1String(kParametersError), QString::fromLatin1(kErrorFlashFailed)},
             },
             .success = false,
             .final = true,

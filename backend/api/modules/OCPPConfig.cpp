@@ -45,6 +45,12 @@ constexpr char kOcppReadParseFailed[] = "ocpp_read_parse_failed";
 constexpr char kOcppValueNotFound[] = "ocpp_value_not_found";
 constexpr char kOcppFileNotFound[] = "ocpp_file_not_found";
 constexpr char kOcppWriteNotImplemented[] = "ocpp_write_not_implemented";
+constexpr char kErrorEverestStateNotAllowed[] = "everest_state_not_allowed";
+
+constexpr char kFileEnding[] = ".json";
+constexpr char kOcppParamInternalCtrlr[] = "InternalCtrlr";
+constexpr char kParametersError[] = "error";
+constexpr char kGroupOcpp[] = "ocpp";
 
 struct OcppConfigDirResult {
     bool success = false;
@@ -172,7 +178,7 @@ QString buildControllerFilePath(const QString &directoryPath, const QString &con
         return QString();
     }
 
-    return QDir(directoryPath).filePath(controllerName + QStringLiteral(".json"));
+    return QDir(directoryPath).filePath(controllerName + QLatin1String(kFileEnding));
 }
 
 OcppJsonLoadResult loadJsonObjectFile(const QString &filePath) {
@@ -469,7 +475,7 @@ QJsonObject normalizeOcppWriteParameters(const QJsonObject &requestParameters) {
     QJsonObject normalizedParameters = requestParameters;
 
     QJsonObject internalCtrlr =
-        normalizedParameters.value(QStringLiteral("InternalCtrlr")).toObject();
+        normalizedParameters.value(QLatin1String(kOcppParamInternalCtrlr)).toObject();
     QJsonObject networkConnectionProfiles =
         internalCtrlr.value(QString::fromLatin1(kNetworkConnectionProfiles)).toObject();
     QJsonObject connectionData =
@@ -486,7 +492,7 @@ QJsonObject normalizeOcppWriteParameters(const QJsonObject &requestParameters) {
     networkConnectionProfiles.insert(QString::fromLatin1(kConnectionDataKey), connectionData);
     internalCtrlr.insert(QString::fromLatin1(kNetworkConnectionProfiles),
                          networkConnectionProfiles);
-    normalizedParameters.insert(QStringLiteral("InternalCtrlr"), internalCtrlr);
+    normalizedParameters.insert(QLatin1String(kOcppParamInternalCtrlr), internalCtrlr);
     return normalizedParameters;
 }
 
@@ -1049,14 +1055,14 @@ ModuleResponse restartEverestStack(ModuleResponse response) {
         EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
     if (!stateAllowedResult.success) {
         QString error = stateAllowedResult.error;
-        if (stateAllowedResult.error == QStringLiteral("everest_state_not_allowed")) {
+        if (stateAllowedResult.error == QLatin1String(kErrorEverestStateNotAllowed)) {
             error =
                 QStringLiteral("config could not be applied because EVerest-stack is in state \"%1\" and cannot be restarted, please unplug the EV and try again")
                     .arg(stateAllowedResult.state);
         }
 
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), error},
+            {QLatin1String(kParametersError), error},
         };
         return response;
     }
@@ -1065,7 +1071,7 @@ ModuleResponse restartEverestStack(ModuleResponse response) {
         EverestServiceControl::executeEverestRestart(g_rpcApiClient);
     if (!restartResult.success) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), restartResult.error},
+            {QLatin1String(kParametersError), restartResult.error},
         };
         return response;
     }
@@ -1096,7 +1102,7 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
 ModuleResponse handleReadRequest(const ModuleRequest &request) {
     ModuleResponse response{
         .requestId = request.requestId,
-        .group = QStringLiteral("ocpp"),
+        .group = QLatin1String(kGroupOcpp),
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
@@ -1106,7 +1112,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
     const OcppConfigDirResult baseDirectoryResult = loadOcppBaseConfigPath();
     if (!baseDirectoryResult.success) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), baseDirectoryResult.error},
+            {QLatin1String(kParametersError), baseDirectoryResult.error},
         };
         return response;
     }
@@ -1114,7 +1120,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
     const OcppConfigDirResult customDirectoryResult = loadOcppCustomConfigPath();
     if (!customDirectoryResult.success) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), customDirectoryResult.error},
+            {QLatin1String(kParametersError), customDirectoryResult.error},
         };
         return response;
     }
@@ -1128,7 +1134,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
                                     customDirectoryResult.exists);
     if (!fillResult.success) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), fillResult.error},
+            {QLatin1String(kParametersError), fillResult.error},
         };
         return response;
     }
@@ -1141,7 +1147,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
 ModuleResponse handleWriteRequest(const ModuleRequest &request) {
     ModuleResponse response{
         .requestId = request.requestId,
-        .group = QStringLiteral("ocpp"),
+        .group = QLatin1String(kGroupOcpp),
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
@@ -1151,7 +1157,7 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
     const OcppConfigDirResult baseDirectoryResult = loadOcppBaseConfigPath();
     if (!baseDirectoryResult.success) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), baseDirectoryResult.error},
+            {QLatin1String(kParametersError), baseDirectoryResult.error},
         };
         return response;
     }
@@ -1159,7 +1165,7 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
     const OcppConfigDirResult customDirectoryResult = loadOcppCustomConfigPath();
     if (!customDirectoryResult.success) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), customDirectoryResult.error},
+            {QLatin1String(kParametersError), customDirectoryResult.error},
         };
         return response;
     }
@@ -1169,7 +1175,7 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
         const QString ensureDirectoryError = ensureCustomConfigDirectoryExists(customDirectoryPath);
         if (!ensureDirectoryError.isEmpty()) {
             response.parameters = QJsonObject{
-                {QStringLiteral("error"), ensureDirectoryError},
+                {QLatin1String(kParametersError), ensureDirectoryError},
             };
             return response;
         }
@@ -1185,7 +1191,7 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
                 customDirectoryPath);
         if (!ensureFileError.isEmpty()) {
             response.parameters = QJsonObject{
-                {QStringLiteral("error"), ensureFileError},
+                {QLatin1String(kParametersError), ensureFileError},
             };
             return response;
         }
@@ -1195,7 +1201,7 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
         writeRequestedWriteParameters(normalizedParameters, {}, customDirectoryPath);
     if (!writeResult.success) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), writeResult.error},
+            {QLatin1String(kParametersError), writeResult.error},
         };
         return response;
     }

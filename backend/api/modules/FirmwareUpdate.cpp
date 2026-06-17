@@ -19,7 +19,13 @@
 
 namespace {
 constexpr char kRaucStatusTemplate[] = "rauc status --output-format=json --detailed";
+constexpr char kRaucSlots[] = "slots";
+constexpr char kRaucState[] = "state";
+constexpr char kRaucSlotStatus[] = "slot_status";
+constexpr char kRaucBundle[] = "bundle";
+constexpr char kRaucVersion[] = "version";
 constexpr char kStateBooted[] = "booted";
+constexpr char kParametersError[] = "error";
 constexpr char kFirmwareImageDirConfigKey[] = "firmware_image_dir";
 constexpr char kFirmwareReadFailed[] = "firmware_read_failed";
 constexpr char kFirmwareReadParseFailed[] = "firmware_read_parse_failed";
@@ -33,6 +39,11 @@ constexpr char kFirmwareImageInvalidParams[] = "invalid_params";
 constexpr char kFirmwareImageBase64Invalid[] = "invalid_image";
 constexpr char kFirmwareImageWriteFailed[] = "firmware_image_write_failed";
 constexpr char kFirmwareImageCleanupFailed[] = "firmware_image_cleanup_failed";
+constexpr char kParametersImage[] = "image";
+constexpr char kParametersVersion[] = "version";
+constexpr char kParametersFileName[] = "file_name";
+constexpr char kParametersDataB64[] = "dataB64";
+
 } // namespace
 namespace {
 FirmwareUpdateAction toFirmwareUpdateAction(const QString &action) {
@@ -97,7 +108,7 @@ FirmwareVersionReadResult readFirmwareVersion() {
         };
     }
 
-    const QJsonArray slotArray = document.object().value(QStringLiteral("slots")).toArray();
+    const QJsonArray slotArray = document.object().value(QLatin1String(kRaucSlots)).toArray();
     for (const QJsonValue &slotEntryValue : slotArray) {
         const QJsonObject slotEntryObject = slotEntryValue.toObject();
         const QStringList slotNames = slotEntryObject.keys();
@@ -107,16 +118,16 @@ FirmwareVersionReadResult readFirmwareVersion() {
         }
 
         const QJsonObject slotObject = slotEntryObject.value(slotNames.first()).toObject();
-        if (slotObject.value(QStringLiteral("state")).toString() != QLatin1String(kStateBooted)) {
+        if (slotObject.value(QLatin1String(kRaucState)).toString() != QLatin1String(kStateBooted)) {
             continue;
         }
 
         const QString version = slotObject
-                                    .value(QStringLiteral("slot_status"))
+                                    .value(QLatin1String(kRaucSlotStatus))
                                     .toObject()
-                                    .value(QStringLiteral("bundle"))
+                                    .value(QLatin1String(kRaucBundle))
                                     .toObject()
-                                    .value(QStringLiteral("version"))
+                                    .value(QLatin1String(kRaucVersion))
                                     .toString()
                                     .trimmed();
         if (version.isEmpty()) {
@@ -140,7 +151,7 @@ FirmwareVersionReadResult readFirmwareVersion() {
 ModuleResponse handleReadRequest(const ModuleRequest &request) {
     ModuleResponse response{
         .requestId = request.requestId,
-        .group = QStringLiteral("firmware"),
+        .group = QLatin1String(kGroupFirmware),
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
@@ -150,15 +161,15 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
     const FirmwareVersionReadResult versionResult = readFirmwareVersion();
     if (!versionResult.success) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), versionResult.error},
+            {QLatin1String(kParametersError), versionResult.error},
         };
         return response;
     }
 
     response.parameters = QJsonObject{
-        {QStringLiteral("image"),
+        {QLatin1String(kParametersImage),
          QJsonObject{
-             {QStringLiteral("version"), versionResult.version},
+             {QLatin1String(kParametersVersion), versionResult.version},
          }},
     };
     response.success = true;
@@ -267,9 +278,9 @@ QString loadBackendConfigValue(const QString &configKey) {
 }
 
 FirmwareImagePayloadResult parseFirmwareImagePayload(const QJsonObject &requestParameters) {
-    const QJsonObject imageObject = requestParameters.value(QStringLiteral("image")).toObject();
-    const QString rawFileName = imageObject.value(QStringLiteral("file_name")).toString().trimmed();
-    const QString dataB64 = imageObject.value(QStringLiteral("dataB64")).toString().trimmed();
+    const QJsonObject imageObject = requestParameters.value(QLatin1String(kParametersImage)).toObject();
+    const QString rawFileName = imageObject.value(QLatin1String(kParametersFileName)).toString().trimmed();
+    const QString dataB64 = imageObject.value(QLatin1String(kParametersDataB64)).toString().trimmed();
 
     const QString fileName = QFileInfo(rawFileName).fileName();
     if (fileName.isEmpty() || dataB64.isEmpty()) {

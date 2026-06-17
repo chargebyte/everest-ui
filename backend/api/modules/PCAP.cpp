@@ -21,6 +21,8 @@ constexpr char kTcpdumpTemplate[] = "tcpdump -i <interface> -w <file_name>";
 constexpr char kStopTemplate[] = "true";
 constexpr char kPlaceholderInterface[] = "<interface>";
 constexpr char kPlaceholderFileName[] = "<file_name>";
+constexpr char kPcapTmpFileName[] = "pcap_XXXXXX.pcap";
+constexpr char kParametersError[] = "error";
 
 QHash<QString, QString> buildPcapValues(const QString &iface, const QString &filePath) {
     QHash<QString, QString> values;
@@ -30,7 +32,7 @@ QHash<QString, QString> buildPcapValues(const QString &iface, const QString &fil
 }
 
 QString createTempPcapFile() {
-    QTemporaryFile tempFile(QDir::tempPath() + QLatin1String("/pcap_XXXXXX.pcap"));
+    QTemporaryFile tempFile(QDir::tempPath() + QLatin1String("/") + QLatin1String(kPcapTmpFileName));
     tempFile.setAutoRemove(false);
     if (!tempFile.open()) {
         return QString();
@@ -93,7 +95,7 @@ void PCAP::processQueue() {
 ModuleResponse PCAP::startCapture(const ModuleRequest &request) {
     ModuleResponse response{
         .requestId = request.requestId,
-        .group = QStringLiteral("pcap"),
+        .group = QLatin1String(kGroupPcap),
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
@@ -102,7 +104,7 @@ ModuleResponse PCAP::startCapture(const ModuleRequest &request) {
 
     if (m_busy || m_recording) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QLatin1String(kErrorPcapBusy)},
+            {QLatin1String(kParametersError), QLatin1String(kErrorPcapBusy)},
         };
         return response;
     }
@@ -110,7 +112,7 @@ ModuleResponse PCAP::startCapture(const ModuleRequest &request) {
     const QString iface = extractInterface(request);
     if (iface.isEmpty() || !isInterfaceAvailable(iface)) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QLatin1String(kErrorInvalidParams)},
+            {QLatin1String(kParametersError), QLatin1String(kErrorInvalidParams)},
         };
         return response;
     }
@@ -120,7 +122,7 @@ ModuleResponse PCAP::startCapture(const ModuleRequest &request) {
     if (tempPath.isEmpty()) {
         m_busy = false;
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QLatin1String(kErrorFileIoFailed)},
+            {QLatin1String(kParametersError), QLatin1String(kErrorFileIoFailed)},
         };
         return response;
     }
@@ -138,7 +140,7 @@ ModuleResponse PCAP::startCapture(const ModuleRequest &request) {
         QFile::remove(m_lastFile);
         m_lastFile.clear();
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QLatin1String(kErrorInvalidParams)},
+            {QLatin1String(kParametersError), QLatin1String(kErrorInvalidParams)},
         };
         return response;
     }
@@ -152,7 +154,7 @@ ModuleResponse PCAP::startCapture(const ModuleRequest &request) {
 ModuleResponse PCAP::readCapture(const ModuleRequest &request) {
     ModuleResponse response{
         .requestId = request.requestId,
-        .group = QStringLiteral("pcap"),
+        .group = QLatin1String(kGroupPcap),
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
@@ -161,13 +163,13 @@ ModuleResponse PCAP::readCapture(const ModuleRequest &request) {
 
     if (m_busy) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QLatin1String(kErrorPcapBusy)},
+            {QLatin1String(kParametersError), QLatin1String(kErrorPcapBusy)},
         };
         return response;
     }
     if (!m_recording || m_lastFile.isEmpty()) {
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QLatin1String(kErrorNotRecording)},
+            {QLatin1String(kParametersError), QLatin1String(kErrorNotRecording)},
         };
         return response;
     }
@@ -183,7 +185,7 @@ ModuleResponse PCAP::readCapture(const ModuleRequest &request) {
     if (result.exitCode != 0) {
         m_busy = false;
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QLatin1String(kErrorPcapStopFailed)},
+            {QLatin1String(kParametersError), QLatin1String(kErrorPcapStopFailed)},
         };
         return response;
     }
@@ -192,7 +194,7 @@ ModuleResponse PCAP::readCapture(const ModuleRequest &request) {
     if (!file.open(QIODevice::ReadOnly)) {
         m_busy = false;
         response.parameters = QJsonObject{
-            {QStringLiteral("error"), QLatin1String(kErrorFileIoFailed)},
+            {QLatin1String(kParametersError), QLatin1String(kErrorFileIoFailed)},
         };
         return response;
     }
