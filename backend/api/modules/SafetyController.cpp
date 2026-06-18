@@ -20,17 +20,13 @@
 namespace SafetyController {
 namespace {
 RpcApiClient *g_rpcApiClient = nullptr;
-constexpr char kErrorMissing[] = "_missing";
-constexpr char kErrorEverestStateNotAllowed[] = "everest_state_not_allowed";
 constexpr char kErrorSafetyControllerDumpFailed[] = "safety_controller_dump_failed";
 constexpr char kErrorSafetyControllerPbDumpFailed[] = "safety_controller_pb_dump_failed";
 constexpr char kErrorSafetyControllerYamlWriteFailed[] = "safety_controller_yaml_write_failed";
 constexpr char kErrorSafetyControllerPbCreateFailed[] = "safety_controller_pb_create_failed";
 constexpr char kErrorSafetyControllerFlashFailed[] = "safety_controller_flash_failed";
 constexpr char kErrorSafetyControllerYamlMissingReloadRequired[] = "safety_controller_yaml_missing_reload_required";
-constexpr char kInfoEverestErrorPresentNotDetected[] = "everest_error_present_not_detected";
 constexpr char kErrorStdErr[] = "stderr";
-constexpr char kParametersError[] = "error";
 constexpr char kParametersPt1000[] = "pt1000_";
 constexpr char kParametersContactors[] = "contactors_";
 constexpr char kParametersEstops[] = "estops_";
@@ -46,7 +42,6 @@ constexpr char kSftyCtrlrParamDisabled[] = "disabled";
 constexpr char kSftyCtrlrParamAbortTemp[] = "abort-temperature";
 constexpr char kSftyCtrlrParamResistanceOffset[] = "resistance-offset";
 constexpr char kSftyCtrlrParamOvertempProtection[] = "overtemperature-protection";
-constexpr char kSftyCtrlrParamType[] = "type";
 constexpr char kSftyCtrlrParamCloseTime[] = "close-time";
 constexpr char kSftyCtrlrParamOpenTime[] = "open-time";
 constexpr char kSftyCtrlrParamEnabled[] = "enabled";
@@ -56,7 +51,6 @@ constexpr char kSftyCtrlrParamEstops[] = "estops";
 constexpr char kUnitCelsius[] = " \u00b0C";
 constexpr char kUnitOhm[] = " \u03a9";
 constexpr char kUnitMs[] = " ms";
-constexpr char kGroupSafety[] = "safety";
 constexpr char kConfSafetyControllerSettingsBin[] = "safety_controller_settings_bin";
 constexpr char kConfSafetyControllerSettingsYaml[] = "safety_controller_settings_yaml";
 
@@ -129,7 +123,7 @@ ModuleResponse readSafetyControllerSettingsAsBin(const QString &binPath, ModuleR
         }
 
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), error},
+            {QLatin1String(kError), error},
         };
         return response;
     }
@@ -138,7 +132,7 @@ ModuleResponse readSafetyControllerSettingsAsBin(const QString &binPath, ModuleR
         EverestServiceControl::executeEverestStop();
     if (!stopResult.success) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), stopResult.error},
+            {QLatin1String(kError), stopResult.error},
         };
         return response;
     }
@@ -155,7 +149,7 @@ ModuleResponse readSafetyControllerSettingsAsBin(const QString &binPath, ModuleR
         EverestServiceControl::executeEverestRestart(g_rpcApiClient);
     if (!restartResult.success) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), restartResult.error},
+            {QLatin1String(kError), restartResult.error},
         };
         return response;
     }
@@ -165,7 +159,7 @@ ModuleResponse readSafetyControllerSettingsAsBin(const QString &binPath, ModuleR
     }
 
     response.parameters = QJsonObject{
-        {QLatin1String(kParametersError), QLatin1String(kErrorSafetyControllerDumpFailed)},
+        {QLatin1String(kError), QLatin1String(kErrorSafetyControllerDumpFailed)},
         {QLatin1String(kErrorStdErr), QString::fromUtf8(result.stderrData).trimmed()},
     };
     return response;
@@ -184,7 +178,7 @@ ModuleResponse convertSafetyControllerBinToYaml(const QString &binPath,
 
     if (result.exitCode != 0) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), QLatin1String(kErrorSafetyControllerPbDumpFailed)},
+            {QLatin1String(kError), QLatin1String(kErrorSafetyControllerPbDumpFailed)},
             {QLatin1String(kErrorStdErr), QString::fromUtf8(result.stderrData).trimmed()},
         };
         return response;
@@ -193,7 +187,7 @@ ModuleResponse convertSafetyControllerBinToYaml(const QString &binPath,
     QFile yamlFile(yamlPath);
     if (!yamlFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), QLatin1String(kErrorSafetyControllerYamlWriteFailed)},
+            {QLatin1String(kError), QLatin1String(kErrorSafetyControllerYamlWriteFailed)},
         };
         return response;
     }
@@ -201,7 +195,7 @@ ModuleResponse convertSafetyControllerBinToYaml(const QString &binPath,
     if (yamlFile.write(result.stdoutData) < 0) {
         yamlFile.close();
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), QLatin1String(kErrorSafetyControllerYamlWriteFailed)},
+            {QLatin1String(kError), QLatin1String(kErrorSafetyControllerYamlWriteFailed)},
         };
         return response;
     }
@@ -248,7 +242,7 @@ QJsonObject readContactorParametersFromYaml(const QJsonObject &requestBlock, con
     QJsonObject filledBlock = requestBlock;
 
     if (yamlEntry.isString() && yamlEntry.toString() == QLatin1String(kSftyCtrlrParamDisabled)) {
-        filledBlock.insert(QLatin1String(kSftyCtrlrParamType), QLatin1String(kSftyCtrlrParamDisabled));
+        filledBlock.insert(QLatin1String(kKeyType), QLatin1String(kSftyCtrlrParamDisabled));
         filledBlock.insert(QLatin1String(kSftyCtrlrParamCloseTime), QStringLiteral(""));
         filledBlock.insert(QLatin1String(kSftyCtrlrParamOpenTime), QStringLiteral(""));
         return filledBlock;
@@ -259,7 +253,7 @@ QJsonObject readContactorParametersFromYaml(const QJsonObject &requestBlock, con
     }
 
     const QJsonObject yamlObject = yamlEntry.toObject();
-    filledBlock.insert(QLatin1String(kSftyCtrlrParamType), yamlObject.value(QLatin1String(kSftyCtrlrParamType)));
+    filledBlock.insert(QLatin1String(kKeyType), yamlObject.value(QLatin1String(kKeyType)));
     filledBlock.insert(QLatin1String(kSftyCtrlrParamCloseTime),
                        stripUnitSuffix(yamlObject.value(QLatin1String(kSftyCtrlrParamCloseTime))));
     filledBlock.insert(QLatin1String(kSftyCtrlrParamOpenTime),
@@ -339,13 +333,13 @@ QJsonValue updatePt1000ParametersInYaml(const QJsonObject &requestBlock) {
 }
 
 QJsonValue updateContactorParametersInYaml(const QJsonObject &requestBlock) {
-    const QString type = requestBlock.value(QLatin1String(kSftyCtrlrParamType)).toString();
+    const QString type = requestBlock.value(QLatin1String(kKeyType)).toString();
     if (type == QLatin1String(kSftyCtrlrParamDisabled)) {
         return QLatin1String(kSftyCtrlrParamDisabled);
     }
 
     return QJsonObject{
-        {QLatin1String(kSftyCtrlrParamType), type},
+        {QLatin1String(kKeyType), type},
         {QLatin1String(kSftyCtrlrParamCloseTime),
          jsonValueToText(requestBlock.value(QLatin1String(kSftyCtrlrParamCloseTime))) +
              QLatin1String(kUnitMs)},
@@ -446,7 +440,7 @@ bool writeSafetyControllerYamlFile(const QString &yamlPath, const QJsonObject &y
                   {QLatin1String(kSftyCtrlrParamAbortTemp), QLatin1String(kSftyCtrlrParamResistanceOffset)});
     writeSequence(QLatin1String(kSftyCtrlrParamContactors),
                   yamlRoot.value(QLatin1String(kSftyCtrlrParamContactors)).toArray(),
-                  {QLatin1String(kSftyCtrlrParamType), QLatin1String(kSftyCtrlrParamCloseTime), QLatin1String(kSftyCtrlrParamOpenTime)});
+                  {QLatin1String(kKeyType), QLatin1String(kSftyCtrlrParamCloseTime), QLatin1String(kSftyCtrlrParamOpenTime)});
     writeSequence(QLatin1String(kSftyCtrlrParamEstops),
                   yamlRoot.value(QLatin1String(kSftyCtrlrParamEstops)).toArray(),
                   {});
@@ -473,7 +467,7 @@ ModuleResponse convertSafetyControllerYamlToBin(const QString &yamlPath,
     }
 
     response.parameters = QJsonObject{
-        {QLatin1String(kParametersError), QLatin1String(kErrorSafetyControllerPbCreateFailed)},
+        {QLatin1String(kError), QLatin1String(kErrorSafetyControllerPbCreateFailed)},
         {QLatin1String(kErrorStdErr), QString::fromUtf8(result.stderrData).trimmed()},
     };
     return response;
@@ -491,7 +485,7 @@ ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse r
         }
 
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), error},
+            {QLatin1String(kError), error},
         };
         return response;
     }
@@ -500,7 +494,7 @@ ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse r
         EverestServiceControl::executeEverestStop();
     if (!stopResult.success) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), stopResult.error},
+            {QLatin1String(kError), stopResult.error},
         };
         return response;
     }
@@ -517,7 +511,7 @@ ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse r
         EverestServiceControl::executeEverestRestart(g_rpcApiClient);
     if (!restartResult.success) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), restartResult.error},
+            {QLatin1String(kError), restartResult.error},
         };
         return response;
     }
@@ -527,7 +521,7 @@ ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse r
             EverestServiceControl::monitorEverestErrorPresent(g_rpcApiClient, 1);
         if (errorResult.success) {
             response.parameters = QJsonObject{
-                {QLatin1String(kParametersError),
+                {QLatin1String(kError),
                  QStringLiteral("settings put EVerest into an error, please revert immediately")},
             };
             return response;
@@ -535,7 +529,7 @@ ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse r
 
         if (errorResult.error != QLatin1String(kInfoEverestErrorPresentNotDetected)) {
             response.parameters = QJsonObject{
-                {QLatin1String(kParametersError), errorResult.error},
+                {QLatin1String(kError), errorResult.error},
             };
             return response;
         }
@@ -544,7 +538,7 @@ ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse r
     }
 
     response.parameters = QJsonObject{
-        {QLatin1String(kParametersError), QLatin1String(kErrorSafetyControllerFlashFailed)},
+        {QLatin1String(kError), QLatin1String(kErrorSafetyControllerFlashFailed)},
         {QLatin1String(kErrorStdErr), QString::fromUtf8(result.stderrData).trimmed()},
     };
     return response;
@@ -564,7 +558,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
         loadSafetyControllerSettingsPath(QLatin1String(kConfSafetyControllerSettingsBin));
     if (!binPathResult.success) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), binPathResult.error},
+            {QLatin1String(kError), binPathResult.error},
         };
         return response;
     }
@@ -573,7 +567,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
         loadSafetyControllerSettingsPath(QLatin1String(kConfSafetyControllerSettingsYaml));
     if (!yamlPathResult.success) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), yamlPathResult.error},
+            {QLatin1String(kError), yamlPathResult.error},
         };
         return response;
     }
@@ -586,7 +580,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
     const YamlLoadResult yamlLoadResult = loadYamlFile(yamlPathResult.path);
     if (!yamlLoadResult.success) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), yamlLoadResult.error},
+            {QLatin1String(kError), yamlLoadResult.error},
         };
         return response;
     }
@@ -611,7 +605,7 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
         loadSafetyControllerSettingsPath(QLatin1String(kConfSafetyControllerSettingsBin));
     if (!binPathResult.success) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), binPathResult.error},
+            {QLatin1String(kError), binPathResult.error},
         };
         return response;
     }
@@ -620,7 +614,7 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
         loadSafetyControllerSettingsPath(QLatin1String(kConfSafetyControllerSettingsYaml));
     if (!yamlPathResult.success) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), yamlPathResult.error},
+            {QLatin1String(kError), yamlPathResult.error},
         };
         return response;
     }
@@ -628,7 +622,7 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
     const YamlLoadResult yamlLoadResult = loadYamlFile(yamlPathResult.path);
     if (!yamlLoadResult.success) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), QLatin1String(kErrorSafetyControllerYamlMissingReloadRequired)},
+            {QLatin1String(kError), QLatin1String(kErrorSafetyControllerYamlMissingReloadRequired)},
         };
         return response;
     }
@@ -637,7 +631,7 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
         updateRequestParametersInYaml(request.parameters, yamlLoadResult.yamlRoot);
     if (!writeSafetyControllerYamlFile(yamlPathResult.path, updatedParameters)) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), QLatin1String(kErrorSafetyControllerYamlWriteFailed)},
+            {QLatin1String(kError), QLatin1String(kErrorSafetyControllerYamlWriteFailed)},
         };
         return response;
     }

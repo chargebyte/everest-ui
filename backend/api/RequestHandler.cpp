@@ -51,7 +51,7 @@ void RequestHandler::handleTextMessage(const QString &message) {
             .group = QStringLiteral("request"),
             .action = QStringLiteral("parse"),
             .parameters = QJsonObject{
-                {QStringLiteral("error"), QStringLiteral("invalid_json")},
+                {QLatin1String(kError), QStringLiteral("invalid_json")},
             },
             .success = false,
             .final = true,
@@ -72,7 +72,7 @@ void RequestHandler::handleTextMessage(const QString &message) {
             .group = QStringLiteral("request"),
             .action = QStringLiteral("template"),
             .parameters = QJsonObject{
-                {QStringLiteral("error"), QStringLiteral("invalid_template")},
+                {QLatin1String(kError), QStringLiteral("invalid_template")},
             },
             .success = false,
             .final = true,

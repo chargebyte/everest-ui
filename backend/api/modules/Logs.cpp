@@ -28,17 +28,13 @@ LogsAction toLogsAction(const QString &action) {
 }
 
 namespace Logs {
-constexpr char kErrorMissing[] = "_missing";
 constexpr char kErrorLogsPathNotFound[] = "logs_path_not_found";
 constexpr char kErrorLogsPathNotDirectory[] = "logs_path_not_a_directory";
 constexpr char kErrorLogsPathNotReadable[] = "logs_path_not_readable";
 constexpr char kErrorZipFailed[] = "zip_failed";
-constexpr char kGroupLogs[] = "logs";
-constexpr char kParametersError[] = "error";
 constexpr char kParametersFiles[] = "files";
 constexpr char kConfLogsPath[] = "logs_path";
 constexpr char kFileName[] = "name";
-constexpr char kFileSizeBytes[] = "size_bytes";
 constexpr char kFileLastModified[] = "last_modified";
 constexpr char kFileDefaultName[] = "logs_bundle.tar.gz";
 constexpr char kCmdFlafCzf[] = "-czf";
@@ -71,7 +67,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
     const LogsConfigPathResult logsPathResult = loadLogsSettingsPath(QLatin1String(kConfLogsPath));
     if (!logsPathResult.success) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), logsPathResult.error},
+            {QLatin1String(kError), logsPathResult.error},
         };
         return response;
     }
@@ -79,7 +75,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
     const LogsReadResult readResult = readLogFilesInformation(logsPathResult.path);
     if (!readResult.success) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), readResult.error},
+            {QLatin1String(kError), readResult.error},
         };
         return response;
     }
@@ -103,7 +99,7 @@ ModuleResponse handleDownloadRequest(const ModuleRequest &request) {
     const LogsDownloadResult downloadResult = createLogsArchive(request.parameters);
     if (!downloadResult.success) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), downloadResult.error},
+            {QLatin1String(kError), downloadResult.error},
         };
         return response;
     }
@@ -183,7 +179,7 @@ LogsReadResult readLogFilesInformation(const QString &logPaths) {
             files.insert(QString::number(idCounter),
                          QJsonObject{
                              { QLatin1String(kFileName), (path + fileInfo.fileName()) },
-                             { QLatin1String(kFileSizeBytes), size },
+                             { QLatin1String(kParametersSizeBytes), size },
                              { QLatin1String(kFileLastModified), lastModified.toString(Qt::ISODate) }
                          });
 

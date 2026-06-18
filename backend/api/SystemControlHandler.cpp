@@ -10,6 +10,7 @@
 #include "modules/SafetyController.hpp"
 #include "RpcApiClient.hpp"
 #include "SystemControlHandler.hpp"
+#include "ProtocolSchema.hpp"
 
 #include "ResponseBuilder.hpp"
 
@@ -125,19 +126,19 @@ void SystemControl::emitResponse(const ModuleResponse &response) {
 }
 
 ModuleGroup SystemControl::toModuleGroup(const QString &group) const {
-    if (group == QStringLiteral("everest")) {
+    if (group == QLatin1String(kGroupEverest)) {
         return ModuleGroup::EverestConfig;
     }
-    if (group == QStringLiteral("safety")) {
+    if (group == QLatin1String(kGroupSafety)) {
         return ModuleGroup::SafetyController;
     }
-    if (group == QStringLiteral("ocpp")) {
+    if (group == QLatin1String(kGroupOcpp)) {
         return ModuleGroup::OCPPConfig;
     }
-    if (group == QStringLiteral("firmware")) {
+    if (group == QLatin1String(kGroupFirmware)) {
         return ModuleGroup::FirmwareUpdate;
     }
-    if (group == QStringLiteral("logs")) {
+    if (group == QLatin1String(kGroupLogs)) {
         return ModuleGroup::Logs;
     }
 
@@ -145,8 +146,8 @@ ModuleGroup SystemControl::toModuleGroup(const QString &group) const {
 }
 
 bool SystemControl::isFirmwareUpdateStartAccepted(const ModuleResponse &response) const {
-    return response.group == QStringLiteral("firmware") &&
-           response.action == QStringLiteral("update_image") &&
+    return response.group == QLatin1String(kGroupFirmware) &&
+           response.action == QLatin1String(kActionUpdateImage) &&
            response.success &&
            response.parameters.isEmpty();
 }
@@ -163,7 +164,7 @@ bool SystemControl::isMatchingAsyncFirmwareResponse(const ModuleResponse &respon
     }
 
     return response.action == pendingRequest.action ||
-           response.action == pendingRequest.action + QStringLiteral(".progress");
+           response.action == pendingRequest.action + QStringLiteral(".") + QLatin1String(kActionProgress);
 }
 
 bool SystemControl::isFinalAsyncFirmwareResponse(const ModuleResponse &response,

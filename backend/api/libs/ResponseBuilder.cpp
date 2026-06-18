@@ -10,24 +10,24 @@
 
 QJsonObject ResponseBuilder::buildResponse(const ModuleResponse &response) {
     return QJsonObject{
-        {QStringLiteral("ok"), response.success},
-        {QStringLiteral("final"), response.final},
-        {QStringLiteral("requestId"), response.requestId},
-        {QStringLiteral("type"), buildType(response)},
-        {QStringLiteral("parameters"), response.parameters},
+        {QLatin1String(kKeyOk), response.success},
+        {QLatin1String(kKeyFinal), response.final},
+        {QLatin1String(kKeyRequestId), response.requestId},
+        {QLatin1String(kKeyType), buildType(response)},
+        {QLatin1String(kKeyParameters), response.parameters},
     };
 }
 
 QString ResponseBuilder::buildTypeSuffix(bool success, const QJsonObject &parameters) {
     if (!success) {
-        return QStringLiteral("error");
+        return QLatin1String(kError);
     }
 
     if (parameters.isEmpty()) {
-        return QStringLiteral("ack");
+        return QLatin1String(kTypeAck);
     }
 
-    return QStringLiteral("result");
+    return QLatin1String(kTypeResult);
 }
 
 QString ResponseBuilder::buildType(const ModuleResponse &response) {

@@ -7,6 +7,7 @@
 #include "BackendConfig.hpp"
 #include "RpcApiClient.hpp"
 #include "SystemdService.hpp"
+#include "ProtocolSchema.hpp"
 
 #include <QEventLoop>
 #include <QTimer>
@@ -56,7 +57,7 @@ EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient *rpcApiClient, i
         return EverestStateAllowedResult{
             .success = false,
             .state = evseStateResult.state,
-            .error = QStringLiteral("everest_state_not_allowed"),
+            .error = QLatin1String(kErrorEverestStateNotAllowed),
         };
     }
 
@@ -137,7 +138,7 @@ EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient *rpcApiClient,
     return EverestErrorPresentResult{
         .success = false,
         .errorPresent = false,
-        .error = QStringLiteral("everest_error_present_not_detected"),
+        .error = QLatin1String(kInfoEverestErrorPresentNotDetected),
     };
 }
 

@@ -3,6 +3,7 @@
 // Copyright 2026 chargebyte GmbH
 
 #include "RpcApiClient.hpp"
+#include "ProtocolSchema.hpp"
 
 #include "BackendConfig.hpp"
 #include "YamlUtils.hpp"
@@ -33,7 +34,7 @@ RpcApiClient::RpcApiClient(QObject *parent)
 
 void RpcApiClient::start() {
     m_rpcApiHost = readBackendConfigValue(QStringLiteral("rpc_api_host"));
-    m_everestConfigPath = readBackendConfigValue(QStringLiteral("everest_config_path"));
+    m_everestConfigPath = readBackendConfigValue(QLatin1String(kConfEverestConfPath));
     m_rpcApiConfigured = false;
     m_configurationError.clear();
     m_everestConfigRoot = QJsonObject{};
@@ -144,7 +145,7 @@ RpcApiEvseStatusResult RpcApiClient::getEvseStatus(int evseIndex) {
     m_lastRpcResponse = QJsonObject{};
     m_hasLastRpcResponse = false;
 
-    const QJsonValue errorValue = response.value(QStringLiteral("error"));
+    const QJsonValue errorValue = response.value(QLatin1String(kError));
     if (errorValue.isObject()) {
         const QJsonObject errorObject = errorValue.toObject();
         const QString message = errorObject.value(QStringLiteral("message")).toString();
@@ -159,7 +160,7 @@ RpcApiEvseStatusResult RpcApiClient::getEvseStatus(int evseIndex) {
         };
     }
 
-    const QJsonObject resultObject = response.value(QStringLiteral("result")).toObject();
+    const QJsonObject resultObject = response.value(QLatin1String(kTypeResult)).toObject();
     const QJsonObject statusObject = resultObject.value(QStringLiteral("status")).toObject();
     if (resultObject.isEmpty() || statusObject.isEmpty()) {
         return RpcApiEvseStatusResult{
@@ -278,10 +279,10 @@ void RpcApiClient::onBinaryMessageReceived(const QByteArray &message) {
 
     const bool isSuccessResponse =
         response.value(QStringLiteral("jsonrpc")).toString() == QStringLiteral("2.0") &&
-        response.value(QStringLiteral("result")).isObject();
+        response.value(QLatin1String(kTypeResult)).isObject();
     const bool isErrorResponse =
         response.value(QStringLiteral("jsonrpc")).toString() == QStringLiteral("2.0") &&
-        response.value(QStringLiteral("error")).isObject();
+        response.value(QLatin1String(kError)).isObject();
 
     if (isSuccessResponse || isErrorResponse) {
         m_lastRpcResponse = response;
@@ -404,16 +405,16 @@ RpcApiModuleConfigResult RpcApiClient::findRpcApiModuleConfig() const {
     constexpr int kDefaultRpcApiWebsocketPort = 8080;
 
     const QJsonObject activeModules =
-        m_everestConfigRoot.value(QStringLiteral("active_modules")).toObject();
+        m_everestConfigRoot.value(QLatin1String(kEverestConfActiveModules)).toObject();
     const auto activeModuleKeys = activeModules.keys();
     for (const QString &activeModuleKey : activeModuleKeys) {
         const QJsonObject activeModule = activeModules.value(activeModuleKey).toObject();
-        if (activeModule.value(QStringLiteral("module")).toString() != QStringLiteral("RpcApi")) {
+        if (activeModule.value(QLatin1String(kEverestConfModule)).toString() != QStringLiteral("RpcApi")) {
             continue;
         }
 
         const QJsonObject configModule =
-            activeModule.value(QStringLiteral("config_module")).toObject();
+            activeModule.value(QLatin1String(kEverestConfConfigModule)).toObject();
         const QJsonValue websocketEnabledValue =
             configModule.value(QStringLiteral("websocket_enabled"));
         if (websocketEnabledValue.isBool() && !websocketEnabledValue.toBool()) {
@@ -486,7 +487,7 @@ void RpcApiClient::onHelloResponse(const QJsonObject &response) {
     const bool isValidHelloResponse =
         response.value(QStringLiteral("jsonrpc")).toString() == QStringLiteral("2.0") &&
         response.value(QStringLiteral("id")).toInt() == kApiHelloRequestId &&
-        response.value(QStringLiteral("result")).isObject();
+        response.value(QLatin1String(kTypeResult)).isObject();
 
     if (isValidHelloResponse) {
         m_handshakeComplete = true;

@@ -25,24 +25,18 @@ constexpr char kRaucSlotStatus[] = "slot_status";
 constexpr char kRaucBundle[] = "bundle";
 constexpr char kRaucVersion[] = "version";
 constexpr char kStateBooted[] = "booted";
-constexpr char kParametersError[] = "error";
-constexpr char kFirmwareImageDirConfigKey[] = "firmware_image_dir";
-constexpr char kFirmwareReadFailed[] = "firmware_read_failed";
-constexpr char kFirmwareReadParseFailed[] = "firmware_read_parse_failed";
-constexpr char kFirmwareVersionNotFound[] = "firmware_version_not_found";
-constexpr char kFirmwareImageDirMissing[] = "firmware_image_dir_missing";
-constexpr char kFirmwareImageDirNotFound[] = "firmware_image_dir_not_found";
-constexpr char kFirmwareImageDirCreateFailed[] = "firmware_image_dir_create_failed";
-constexpr char kFirmwareImageDirNotADirectory[] = "firmware_image_dir_not_a_directory";
-constexpr char kFirmwareImageDirNotWritable[] = "firmware_image_dir_not_writable";
-constexpr char kFirmwareImageInvalidParams[] = "invalid_params";
-constexpr char kFirmwareImageBase64Invalid[] = "invalid_image";
-constexpr char kFirmwareImageWriteFailed[] = "firmware_image_write_failed";
-constexpr char kFirmwareImageCleanupFailed[] = "firmware_image_cleanup_failed";
-constexpr char kParametersImage[] = "image";
+constexpr char kErrorFirmwareReadFailed[] = "firmware_read_failed";
+constexpr char kErrorFirmwareReadParseFailed[] = "firmware_read_parse_failed";
+constexpr char kErrorFirmwareVersionNotFound[] = "firmware_version_not_found";
+constexpr char kErrorFirmwareImageDirMissing[] = "firmware_image_dir_missing";
+constexpr char kErrorFirmwareImageDirNotFound[] = "firmware_image_dir_not_found";
+constexpr char kErrorFirmwareImageDirCreateFailed[] = "firmware_image_dir_create_failed";
+constexpr char kErrorFirmwareImageDirNotADirectory[] = "firmware_image_dir_not_a_directory";
+constexpr char kErrorFirmwareImageDirNotWritable[] = "firmware_image_dir_not_writable";
+constexpr char kErrorFirmwareImageBase64Invalid[] = "invalid_image";
+constexpr char kErrorFirmwareImageWriteFailed[] = "firmware_image_write_failed";
+constexpr char kErrorFirmwareImageCleanupFailed[] = "firmware_image_cleanup_failed";
 constexpr char kParametersVersion[] = "version";
-constexpr char kParametersFileName[] = "file_name";
-constexpr char kParametersDataB64[] = "dataB64";
 
 } // namespace
 namespace {
@@ -94,7 +88,7 @@ FirmwareVersionReadResult readFirmwareVersion() {
         return FirmwareVersionReadResult{
             .success = false,
             .version = QString(),
-            .error = QString::fromLatin1(kFirmwareReadFailed),
+            .error = QString::fromLatin1(kErrorFirmwareReadFailed),
         };
     }
 
@@ -104,7 +98,7 @@ FirmwareVersionReadResult readFirmwareVersion() {
         return FirmwareVersionReadResult{
             .success = false,
             .version = QString(),
-            .error = QString::fromLatin1(kFirmwareReadParseFailed),
+            .error = QString::fromLatin1(kErrorFirmwareReadParseFailed),
         };
     }
 
@@ -144,7 +138,7 @@ FirmwareVersionReadResult readFirmwareVersion() {
     return FirmwareVersionReadResult{
         .success = false,
         .version = QString(),
-        .error = QString::fromLatin1(kFirmwareVersionNotFound),
+        .error = QString::fromLatin1(kErrorFirmwareVersionNotFound),
     };
 }
 
@@ -161,7 +155,7 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
     const FirmwareVersionReadResult versionResult = readFirmwareVersion();
     if (!versionResult.success) {
         response.parameters = QJsonObject{
-            {QLatin1String(kParametersError), versionResult.error},
+            {QLatin1String(kError), versionResult.error},
         };
         return response;
     }
@@ -223,7 +217,7 @@ FirmwareImageDirResult loadFirmwareImageDir(const QString &configKey) {
         return FirmwareImageDirResult{
             .success = false,
             .path = QString(),
-            .error = QString::fromLatin1(kFirmwareImageDirMissing),
+            .error = QString::fromLatin1(kErrorFirmwareImageDirMissing),
         };
     }
 
@@ -235,7 +229,7 @@ FirmwareImageDirResult loadFirmwareImageDir(const QString &configKey) {
             return FirmwareImageDirResult{
                 .success = false,
                 .path = QString(),
-                .error = QString::fromLatin1(kFirmwareImageDirCreateFailed),
+                .error = QString::fromLatin1(kErrorFirmwareImageDirCreateFailed),
             };
         }
 
@@ -246,7 +240,7 @@ FirmwareImageDirResult loadFirmwareImageDir(const QString &configKey) {
         return FirmwareImageDirResult{
             .success = false,
             .path = QString(),
-            .error = QString::fromLatin1(kFirmwareImageDirNotFound),
+            .error = QString::fromLatin1(kErrorFirmwareImageDirNotFound),
         };
     }
 
@@ -254,7 +248,7 @@ FirmwareImageDirResult loadFirmwareImageDir(const QString &configKey) {
         return FirmwareImageDirResult{
             .success = false,
             .path = QString(),
-            .error = QString::fromLatin1(kFirmwareImageDirNotADirectory),
+            .error = QString::fromLatin1(kErrorFirmwareImageDirNotADirectory),
         };
     }
 
@@ -262,7 +256,7 @@ FirmwareImageDirResult loadFirmwareImageDir(const QString &configKey) {
         return FirmwareImageDirResult{
             .success = false,
             .path = QString(),
-            .error = QString::fromLatin1(kFirmwareImageDirNotWritable),
+            .error = QString::fromLatin1(kErrorFirmwareImageDirNotWritable),
         };
     }
 
@@ -280,7 +274,7 @@ QString loadBackendConfigValue(const QString &configKey) {
 FirmwareImagePayloadResult parseFirmwareImagePayload(const QJsonObject &requestParameters) {
     const QJsonObject imageObject = requestParameters.value(QLatin1String(kParametersImage)).toObject();
     const QString rawFileName = imageObject.value(QLatin1String(kParametersFileName)).toString().trimmed();
-    const QString dataB64 = imageObject.value(QLatin1String(kParametersDataB64)).toString().trimmed();
+    const QString dataB64 = imageObject.value(QLatin1String(kKeyDataB64)).toString().trimmed();
 
     const QString fileName = QFileInfo(rawFileName).fileName();
     if (fileName.isEmpty() || dataB64.isEmpty()) {
@@ -288,7 +282,7 @@ FirmwareImagePayloadResult parseFirmwareImagePayload(const QJsonObject &requestP
             .success = false,
             .fileName = QString(),
             .imageData = QByteArray(),
-            .error = QString::fromLatin1(kFirmwareImageInvalidParams),
+            .error = QString::fromLatin1(kErrorInvalidParams),
         };
     }
 
@@ -298,7 +292,7 @@ FirmwareImagePayloadResult parseFirmwareImagePayload(const QJsonObject &requestP
             .success = false,
             .fileName = QString(),
             .imageData = QByteArray(),
-            .error = QString::fromLatin1(kFirmwareImageBase64Invalid),
+            .error = QString::fromLatin1(kErrorFirmwareImageBase64Invalid),
         };
     }
 
@@ -319,7 +313,7 @@ FirmwareImageWriteResult saveFirmwareImageToDisk(const QString &imageDirPath,
         return FirmwareImageWriteResult{
             .success = false,
             .path = QString(),
-            .error = QString::fromLatin1(kFirmwareImageWriteFailed),
+            .error = QString::fromLatin1(kErrorFirmwareImageWriteFailed),
         };
     }
 
@@ -328,7 +322,7 @@ FirmwareImageWriteResult saveFirmwareImageToDisk(const QString &imageDirPath,
         return FirmwareImageWriteResult{
             .success = false,
             .path = QString(),
-            .error = QString::fromLatin1(kFirmwareImageWriteFailed),
+            .error = QString::fromLatin1(kErrorFirmwareImageWriteFailed),
         };
     }
 
@@ -343,7 +337,7 @@ FirmwareImageWriteResult saveFirmwareImageToDisk(const QString &imageDirPath,
 
 FirmwareImageCleanupResult cleanOldFirmwareImages(const QString &keepFilePath) {
     const FirmwareImageDirResult imageDirResult =
-        loadFirmwareImageDir(QString::fromLatin1(kFirmwareImageDirConfigKey));
+        loadFirmwareImageDir(QString::fromLatin1(kConfFirmwareImageDir));
     if (!imageDirResult.success) {
         return FirmwareImageCleanupResult{
             .success = false,
@@ -366,7 +360,7 @@ FirmwareImageCleanupResult cleanOldFirmwareImages(const QString &keepFilePath) {
         if (!QFile::remove(candidatePath)) {
             return FirmwareImageCleanupResult{
                 .success = false,
-                .error = QString::fromLatin1(kFirmwareImageCleanupFailed),
+                .error = QString::fromLatin1(kErrorFirmwareImageCleanupFailed),
             };
         }
     }
