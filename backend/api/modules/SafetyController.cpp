@@ -15,6 +15,10 @@
 #include <QJsonArray>
 #include <QTextStream>
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#include <QStringConverter>
+#endif
+
 #include <stdexcept>
 
 namespace SafetyController {
@@ -406,7 +410,11 @@ bool writeSafetyControllerYamlFile(const QString &yamlPath, const QJsonObject &y
     }
 
     QTextStream stream(&yamlFile);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    stream.setEncoding(QStringConverter::Utf8);
+#else
     stream.setCodec("UTF-8");
+#endif
     stream << "version: "
            << formatYamlScalar(yamlRoot.value(QStringLiteral("version"))) << "\n\n";
 
