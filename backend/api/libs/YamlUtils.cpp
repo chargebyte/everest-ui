@@ -6,6 +6,7 @@
 
 #include <QJsonArray>
 #include <QJsonValue>
+#include <iostream>
 
 #include <yaml-cpp/exceptions.h>
 #include <yaml-cpp/yaml.h>
@@ -65,6 +66,7 @@ YamlLoadResult loadYamlFile(const QString &path) {
     QJsonValue jsonValue;
 
     try {
+        std::cout << "Checking file " << path.toStdString() << std::endl;
         jsonValue = yamlNodeToJsonValue(YAML::LoadFile(path.toStdString()));
     } catch (const YAML::BadFile &) {
         return YamlLoadResult{
