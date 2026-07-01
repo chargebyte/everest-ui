@@ -145,7 +145,7 @@
           {
             "id": "supported_scheduled_mode",
             "display_name": "Scheduled Mode",
-            "description": "fill in later",
+            "description": "Whether the EVSE should support scheduled mode",
             "value_type": "boolean",
             "radio_group": 1,
             "backend_path": "Evse15118D20.supported_scheduled_mode"
@@ -153,7 +153,7 @@
           {
             "id": "supported_dynamic_mode",
             "display_name": "Dynamic Mode",
-            "description": "fill in later",
+            "description": "Whether the EVSE should support dynamic mode",
             "value_type": "boolean",
             "radio_group": 1,
             "backend_path": "Evse15118D20.supported_dynamic_mode"
@@ -170,14 +170,14 @@
           {
             "id": "charger_name",
             "display_name": "Charger Name (EVSEID)",
-            "description": "fill in later",
+            "description": "The charger name as used by the Profinet module",
             "value_type": "string",
             "backend_path": "Profinet.charger_name"
           },
           {
             "id": "update_time",
             "display_name": "Update Time",
-            "description": "fill in later",
+            "description": "Time period	 for Profinet periodical data update, in ms",
             "value_type": "integer",
             "unit": "s",
             "backend_path": "Profinet.update_time"
@@ -192,22 +192,22 @@
           {
             "id": "profinet_timeout",
             "display_name": "Profinet Timeout",
-            "description": "fill in later",
+            "description": "When the Profinet connection interrupts and this timeout expires, a hlc_stop_transaction is sent to EV",
             "value_type": "integer",
             "unit": "ms",
             "backend_path": "Profinet.profinet_timeout"
           },
           {
             "id": "device",
-            "display_name": "eth2 (Profinet)",
-            "description": "Profinet Linux network interface",
+            "display_name": "Profinet network interface",
+            "description": "Profinet Linux network interface (usually eth2)",
             "value_type": "string",
             "backend_path": "Profinet.device"
           },
           {
             "id": "debug_mode",
             "display_name": "Debug Mode",
-            "description": "fill in later",
+            "description": "Enables debug mode and provides PLC relevant data to EVerest manager",
             "value_type": "boolean",
             "overwrite_value": false,
             "backend_path": "Profinet.debug_mode"
