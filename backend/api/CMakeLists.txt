@@ -1,4 +1,5 @@
 find_package(yaml-cpp REQUIRED)
+find_package(${QT_PACKAGE_NAME} COMPONENTS Core)
 
 add_executable(api
     server.cpp
