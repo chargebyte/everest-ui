@@ -13,6 +13,7 @@
 
 #include <QFile>
 #include <QJsonArray>
+#include <QStringList>
 #include <QTextStream>
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -52,11 +53,17 @@ constexpr char kSftyCtrlrParamEnabled[] = "enabled";
 constexpr char kSftyCtrlrParamPt1000S[] = "pt1000s";
 constexpr char kSftyCtrlrParamContactors[] = "contactors";
 constexpr char kSftyCtrlrParamEstops[] = "estops";
+constexpr char kSafetyControllerSettingAll[] = "all";
+constexpr char kSafetyControllerSettingNone[] = "none";
+constexpr char kSafetyControllerSettingPt1000[] = "pt1000";
+constexpr char kSafetyControllerSettingContactors[] = "contactors";
+constexpr char kSafetyControllerSettingEstops[] = "estops";
 constexpr char kUnitCelsius[] = " \u00b0C";
 constexpr char kUnitOhm[] = " \u03a9";
 constexpr char kUnitMs[] = " ms";
 constexpr char kConfSafetyControllerSettingsBin[] = "safety_controller_settings_bin";
 constexpr char kConfSafetyControllerSettingsYaml[] = "safety_controller_settings_yaml";
+constexpr char kConfSafetyControllerAvailableSettings[] = "safety_controller_available_settings";
 
 SafetyControllerAction toSafetyControllerAction(const QString &action) {
     if (action == QLatin1String(kActionReadSettings)) {
@@ -88,6 +95,49 @@ QString jsonValueToText(const QJsonValue &value) {
     }
 
     return QString();
+}
+
+QStringList defaultAvailableSafetyControllerSettings() {
+    return {
+        QLatin1String(kSafetyControllerSettingPt1000),
+        QLatin1String(kSafetyControllerSettingContactors),
+        QLatin1String(kSafetyControllerSettingEstops),
+    };
+}
+
+QStringList loadAvailableSafetyControllerSettings() {
+    const QString configuredSettings =
+        ::readBackendConfigValue(QLatin1String(kConfSafetyControllerAvailableSettings)).trimmed();
+    if (configuredSettings.isEmpty()) {
+        return defaultAvailableSafetyControllerSettings();
+    }
+
+    QStringList availableSettings;
+    const QStringList configuredSettingList = configuredSettings.split(QLatin1Char(','));
+    for (const QString &configuredSetting : configuredSettingList) {
+        const QString setting = configuredSetting.trimmed();
+        if (!setting.isEmpty()) {
+            availableSettings.append(setting);
+        }
+    }
+
+    if (availableSettings.isEmpty()) {
+        return defaultAvailableSafetyControllerSettings();
+    }
+
+    return availableSettings;
+}
+
+bool isSafetyControllerSettingAvailable(const QStringList &availableSettings,
+                                        const QString &setting) {
+    if (availableSettings.contains(QLatin1String(kSafetyControllerSettingNone),
+                                   Qt::CaseInsensitive)) {
+        return false;
+    }
+
+    return availableSettings.contains(QLatin1String(kSafetyControllerSettingAll),
+                                      Qt::CaseInsensitive) ||
+        availableSettings.contains(setting, Qt::CaseInsensitive);
 }
 } // namespace
 
@@ -278,6 +328,7 @@ QJsonObject readEstopParametersFromYaml(const QJsonObject &requestBlock, const Q
 QJsonObject readRequestedParametersFromYaml(const QJsonObject &requestParameters,
                                             const QJsonObject &yamlRoot) {
     QJsonObject filledParameters = requestParameters;
+    const QStringList availableSettings = loadAvailableSafetyControllerSettings();
     const QJsonArray pt1000Entries = yamlRoot.value(QLatin1String(kSftyCtrlrParamPt1000S)).toArray();
     const QJsonArray contactorEntries = yamlRoot.value(QLatin1String(kSftyCtrlrParamContactors)).toArray();
     const QJsonArray estopEntries = yamlRoot.value(QLatin1String(kSftyCtrlrParamEstops)).toArray();
@@ -286,6 +337,12 @@ QJsonObject readRequestedParametersFromYaml(const QJsonObject &requestParameters
     for (const QString &parameterKey : parameterKeys) {
         const QJsonObject requestBlock = requestParameters.value(parameterKey).toObject();
         if (parameterKey.startsWith(QLatin1String(kParametersPt1000))) {
+            if (!isSafetyControllerSettingAvailable(
+                    availableSettings, QLatin1String(kSafetyControllerSettingPt1000))) {
+                filledParameters.remove(parameterKey);
+                continue;
+            }
+
             const QString indexString = parameterKey.mid(QLatin1String(kParametersPt1000).size());
             const int index = indexString.toInt();
             if (index >= 0 && index < pt1000Entries.size()) {
@@ -296,6 +353,12 @@ QJsonObject readRequestedParametersFromYaml(const QJsonObject &requestParameters
         }
 
         if (parameterKey.startsWith(QLatin1String(kParametersContactors))) {
+            if (!isSafetyControllerSettingAvailable(
+                    availableSettings, QLatin1String(kSafetyControllerSettingContactors))) {
+                filledParameters.remove(parameterKey);
+                continue;
+            }
+
             const QString indexString =
                 parameterKey.mid(QLatin1String(kParametersContactors).size());
             const int index = indexString.toInt();
@@ -307,6 +370,12 @@ QJsonObject readRequestedParametersFromYaml(const QJsonObject &requestParameters
         }
 
         if (parameterKey.startsWith(QLatin1String(kParametersEstops))) {
+            if (!isSafetyControllerSettingAvailable(
+                    availableSettings, QLatin1String(kSafetyControllerSettingEstops))) {
+                filledParameters.remove(parameterKey);
+                continue;
+            }
+
             const QString indexString = parameterKey.mid(QLatin1String(kParametersEstops).size());
             const int index = indexString.toInt();
             if (index >= 0 && index < estopEntries.size()) {
@@ -360,6 +429,7 @@ QJsonValue updateEstopParametersInYaml(const QJsonObject &requestBlock) {
 QJsonObject updateRequestParametersInYaml(const QJsonObject &requestParameters,
                                           const QJsonObject &yamlRoot) {
     QJsonObject updatedYamlRoot = yamlRoot;
+    const QStringList availableSettings = loadAvailableSafetyControllerSettings();
     QJsonArray pt1000Entries = updatedYamlRoot.value(QLatin1String(kSftyCtrlrParamPt1000S)).toArray();
     QJsonArray contactorEntries = updatedYamlRoot.value(QLatin1String(kSftyCtrlrParamContactors)).toArray();
     QJsonArray estopEntries = updatedYamlRoot.value(QLatin1String(kSftyCtrlrParamEstops)).toArray();
@@ -368,6 +438,11 @@ QJsonObject updateRequestParametersInYaml(const QJsonObject &requestParameters,
     for (const QString &parameterKey : parameterKeys) {
         const QJsonObject requestBlock = requestParameters.value(parameterKey).toObject();
         if (parameterKey.startsWith(QLatin1String(kParametersPt1000))) {
+            if (!isSafetyControllerSettingAvailable(
+                    availableSettings, QLatin1String(kSafetyControllerSettingPt1000))) {
+                continue;
+            }
+
             const QString indexString = parameterKey.mid(QLatin1String(kParametersPt1000).size());
             const int index = indexString.toInt();
             if (index >= 0 && index < pt1000Entries.size()) {
@@ -378,6 +453,11 @@ QJsonObject updateRequestParametersInYaml(const QJsonObject &requestParameters,
         }
 
         if (parameterKey.startsWith(QLatin1String(kParametersContactors))) {
+            if (!isSafetyControllerSettingAvailable(
+                    availableSettings, QLatin1String(kSafetyControllerSettingContactors))) {
+                continue;
+            }
+
             const QString indexString = parameterKey.mid(QLatin1String(kParametersContactors).size());
             const int index = indexString.toInt();
             if (index >= 0 && index < contactorEntries.size()) {
@@ -388,6 +468,11 @@ QJsonObject updateRequestParametersInYaml(const QJsonObject &requestParameters,
         }
 
         if (parameterKey.startsWith(QLatin1String(kParametersEstops))) {
+            if (!isSafetyControllerSettingAvailable(
+                    availableSettings, QLatin1String(kSafetyControllerSettingEstops))) {
+                continue;
+            }
+
             const QString indexString = parameterKey.mid(QLatin1String(kParametersEstops).size());
             const int index = indexString.toInt();
             if (index >= 0 && index < estopEntries.size()) {

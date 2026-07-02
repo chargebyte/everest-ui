@@ -27,6 +27,10 @@ export function renderSafetyPage(container, {
   const settingsMatrix = renderSettingsMatrixBlock(settingsMatrixBlock, {
     buttonLabel: 'Save Configuration'
   });
+  settingsMatrix.element.hidden = true;
+
+  const loadingElement = createSafetyLoadingElement();
+  pageElement.appendChild(loadingElement);
 
   settingsMatrix.bindSubmit(() => {
     const values = settingsMatrix.getValues(settingsMatrix.requestResponseObject);
@@ -51,9 +55,13 @@ export function renderSafetyPage(container, {
     onMessage(message) {
       if (message.type === 'safety.read_settings.result') {
         addLog('safety.read_settings.result received');
+        settingsMatrix.applyAvailableParameters(message.parameters);
         settingsMatrix.setValues(
           mapResponse('settings_matrix', settingsMatrix.requestResponseObject, message)
         );
+        loadingElement.hidden = true;
+        setSafetyLoadingPending(loadingElement, false);
+        settingsMatrix.element.hidden = false;
         return;
       }
 
@@ -62,8 +70,10 @@ export function renderSafetyPage(container, {
       }
 
       if (message.type === 'safety.read_settings.error') {
-        const error = message.parameters.error
+        const error = message.parameters.error;
         addLog(`safety.read_settings.error: ${error}`);
+        setSafetyLoadingMessage(loadingElement, `Unable to load safety controller settings: ${error}`);
+        setSafetyLoadingPending(loadingElement, false);
       }
 
       if (message.type === 'safety.write_settings.error') {
@@ -74,6 +84,9 @@ export function renderSafetyPage(container, {
     onConnectionChange(connected) {
       // request current Safety configuration after page is loaded and WS is connected
       if (connected === true) {
+        loadingElement.hidden = false;
+        setSafetyLoadingPending(loadingElement, true);
+        setSafetyLoadingMessage(loadingElement, 'Loading safety controller settings...');
         const values = settingsMatrix.getValues(settingsMatrix.requestResponseObject);
         const readSafetySettingsRequest = buildRequest(
           pageConfig.actions.read_settings.group,
@@ -91,6 +104,30 @@ export function renderSafetyPage(container, {
     },
     destroy() {}
   };
+}
+
+function createSafetyLoadingElement() {
+  const loadingElement = document.createElement('section');
+  loadingElement.className = 'section loading-state';
+  loadingElement.innerHTML = `
+    <span class="loading-spinner" aria-hidden="true"></span>
+    <span class="loading-message">Loading safety controller settings...</span>
+  `;
+  return loadingElement;
+}
+
+function setSafetyLoadingMessage(loadingElement, message) {
+  const messageElement = loadingElement.querySelector('.loading-message');
+  if (messageElement) {
+    messageElement.textContent = message;
+  }
+}
+
+function setSafetyLoadingPending(loadingElement, pending) {
+  const spinnerElement = loadingElement.querySelector('.loading-spinner');
+  if (spinnerElement) {
+    spinnerElement.hidden = !pending;
+  }
 }
 
 function sendSafetyRequest(sendPayload, addLog, request, group, action) {

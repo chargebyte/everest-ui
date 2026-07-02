@@ -17,7 +17,7 @@ export function renderSettingsMatrixBlock(blockConfig, options) {
   element.className = 'section';
   const sectionElements = renderSettingsMatrixSections(blockConfig.sections, fieldMap);
 
-  sectionElements.forEach((sectionElement) => {
+  sectionElements.forEach(({ element: sectionElement }) => {
     element.appendChild(sectionElement);
   });
 
@@ -37,6 +37,14 @@ export function renderSettingsMatrixBlock(blockConfig, options) {
     },
     setValues(requestResponseObject) {
       setSettingsMatrixValues(requestResponseObject, fieldMap);
+    },
+    applyAvailableParameters(backendParameters) {
+      applySettingsMatrixAvailability(
+        backendParameters,
+        sectionElements,
+        requestResponseObject,
+        fieldMap
+      );
     }
   };
 }
@@ -71,7 +79,10 @@ function renderSettingsMatrixSections(sections, fieldMap) {
 
     renderSettingsMatrixSectionTitle(sectionElement, section.title);
     renderSettingsMatrixSection(sectionElement, section, fieldMap);
-    return sectionElement;
+    return {
+      section,
+      element: sectionElement
+    };
   });
 }
 
@@ -237,6 +248,40 @@ function buildSettingsMatrixParameterId(sectionId, instanceId, fieldId) {
 
 function resolveSettingsMatrixBackendPath(field, instanceId) {
   return field.backend_path.replace('{instance}', instanceId);
+}
+
+function resolveSettingsMatrixBackendRoot(field, instanceId) {
+  return resolveSettingsMatrixBackendPath(field, instanceId).split('.')[0];
+}
+
+function applySettingsMatrixAvailability(
+  backendParameters,
+  sectionElements,
+  requestResponseObject,
+  fieldMap
+) {
+  const availableBackendRoots = new Set(Object.keys(backendParameters || {}));
+
+  sectionElements.forEach(({ section, element }) => {
+    const sectionAvailable = (section.instances || []).some((instance) => {
+      return (section.fields || []).some((field) => {
+        return availableBackendRoots.has(resolveSettingsMatrixBackendRoot(field, instance.id));
+      });
+    });
+
+    element.hidden = !sectionAvailable;
+    if (sectionAvailable) {
+      return;
+    }
+
+    (section.instances || []).forEach((instance) => {
+      (section.fields || []).forEach((field) => {
+        const parameterId = buildSettingsMatrixParameterId(section.id, instance.id, field.id);
+        delete requestResponseObject[parameterId];
+        fieldMap.delete(parameterId);
+      });
+    });
+  });
 }
 
 function createSettingsMatrixApplyButton(options) {
