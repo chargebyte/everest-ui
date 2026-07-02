@@ -177,7 +177,7 @@
           {
             "id": "update_time",
             "display_name": "Update Time",
-            "description": "Time period	 for Profinet periodical data update, in ms",
+            "description": "Time period for Profinet periodical data update, in ms",
             "value_type": "integer",
             "unit": "s",
             "backend_path": "Profinet.update_time"
