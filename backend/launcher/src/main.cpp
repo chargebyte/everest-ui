@@ -8,13 +8,130 @@
 #include <QFileInfo>
 #include <QHostAddress>
 #include <QProcess>
+#include <QSocketNotifier>
 #include <QTcpSocket>
 #include <QTextStream>
 #include <QTimer>
 
+#ifdef Q_OS_UNIX
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
 namespace {
 constexpr int kBackendPollIntervalMs = 200;
 constexpr int kBackendStartupTimeoutMs = 10000;
+
+#ifdef Q_OS_UNIX
+int g_signalSockets[2] = {-1, -1};
+
+void handleUnixSignal(int signalNumber) {
+    const char signalByte = static_cast<char>(signalNumber);
+    if (g_signalSockets[0] != -1) {
+        const ssize_t bytesWritten = ::write(g_signalSockets[0], &signalByte, sizeof(signalByte));
+        Q_UNUSED(bytesWritten);
+    }
+}
+
+QString unixSignalName(int signalNumber) {
+    switch (signalNumber) {
+    case SIGINT:
+        return QStringLiteral("SIGINT");
+    case SIGQUIT:
+        return QStringLiteral("SIGQUIT");
+    default:
+        return QStringLiteral("signal %1").arg(signalNumber);
+    }
+}
+
+bool setNonBlocking(int fd) {
+    const int flags = ::fcntl(fd, F_GETFL, 0);
+    if (flags == -1) {
+        return false;
+    }
+
+    return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) != -1;
+}
+
+bool installUnixSignalHandler(int signalNumber) {
+    struct sigaction action = {};
+    action.sa_handler = handleUnixSignal;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = 0;
+    return ::sigaction(signalNumber, &action, nullptr) == 0;
+}
+
+class UnixSignalHandler final : public QObject {
+    Q_OBJECT
+
+public:
+    explicit UnixSignalHandler(QObject *parent = nullptr)
+        : QObject(parent) {
+        if (::socketpair(AF_UNIX, SOCK_STREAM, 0, g_signalSockets) != 0) {
+            QTextStream(stderr) << "Failed to create signal socket pair.\n";
+            return;
+        }
+
+        if (!setNonBlocking(g_signalSockets[0]) || !setNonBlocking(g_signalSockets[1])) {
+            QTextStream(stderr) << "Failed to configure signal socket pair.\n";
+            closeSignalSockets();
+            return;
+        }
+
+        m_signalNotifier = new QSocketNotifier(g_signalSockets[1],
+                                               QSocketNotifier::Read,
+                                               this);
+        connect(m_signalNotifier, &QSocketNotifier::activated, this,
+                [this]() {
+                    handleSignalNotification();
+                });
+
+        if (!installUnixSignalHandler(SIGINT) || !installUnixSignalHandler(SIGQUIT)) {
+            QTextStream(stderr) << "Failed to install Unix signal handlers.\n";
+        }
+    }
+
+    ~UnixSignalHandler() override {
+        closeSignalSockets();
+    }
+
+signals:
+    void shutdownSignalReceived(int signalNumber);
+
+private slots:
+    void handleSignalNotification() {
+        m_signalNotifier->setEnabled(false);
+
+        char signalByte = 0;
+        if (::read(g_signalSockets[1], &signalByte, sizeof(signalByte)) > 0) {
+            emit shutdownSignalReceived(static_cast<unsigned char>(signalByte));
+        }
+
+        m_signalNotifier->setEnabled(true);
+    }
+
+private:
+    void closeSignalSockets() {
+        if (m_signalNotifier) {
+            m_signalNotifier->setEnabled(false);
+        }
+
+        if (g_signalSockets[0] != -1) {
+            ::close(g_signalSockets[0]);
+            g_signalSockets[0] = -1;
+        }
+
+        if (g_signalSockets[1] != -1) {
+            ::close(g_signalSockets[1]);
+            g_signalSockets[1] = -1;
+        }
+    }
+
+    QSocketNotifier *m_signalNotifier = nullptr;
+};
+#endif
 
 QString resolveInstallPath(const QString &relativePath) {
     return QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(relativePath);
@@ -244,6 +361,17 @@ private:
 int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("webui"));
+
+#ifdef Q_OS_UNIX
+    UnixSignalHandler unixSignalHandler;
+    QObject::connect(&unixSignalHandler, &UnixSignalHandler::shutdownSignalReceived,
+                     &app, [](int signalNumber) {
+                         QTextStream(stderr)
+                             << "Received " << unixSignalName(signalNumber)
+                             << ", shutting down.\n";
+                         QCoreApplication::quit();
+                     });
+#endif
 
     WebUiLauncher launcher;
     const int startResult = launcher.start();
