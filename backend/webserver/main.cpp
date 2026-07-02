@@ -4,6 +4,7 @@
 
 #include "ServerConfig.hpp"
 #include "StaticServer.hpp"
+#include "AuthManager.hpp"
 #include "WebSocketProxySession.hpp"
 
 #include <QCoreApplication>
@@ -44,7 +45,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    StaticServer server(cfg);
+    AuthManager authManager(cfg.canonicalAuthFile);
+    QString authError;
+    if (!authManager.initialize(authError)) {
+        QTextStream(stderr) << authError << "\n";
+        return 1;
+    }
+
+    StaticServer server(cfg, &authManager);
     QWebSocketServer wsServer(QStringLiteral("webui-ws"), QWebSocketServer::NonSecureMode);
 
     QObject::connect(&server, &StaticServer::webSocketUpgradeRequested,
@@ -87,6 +95,7 @@ int main(int argc, char *argv[]) {
                         << " on http://" << cfg.bind << ":" << cfg.port << "\n"
                         << "WS endpoint: " << cfg.normalizedWsPath << "\n"
                         << "WS backend: " << cfg.backendUrl.toString() << "\n"
+                        << "Auth file: " << cfg.canonicalAuthFile << "\n"
                         << "Max request bytes: " << cfg.maxRequestBytes << "\n"
                         << "Log level: " << cfg.logLevel << "\n";
     if (cfg.enforceOrigin) {

@@ -6,6 +6,8 @@
 #define STATIC_RESPONSE_HPP
 
 #include <QByteArray>
+#include <QList>
+#include <QPair>
 #include <QString>
 
 struct StaticResponse {
@@ -13,6 +15,7 @@ struct StaticResponse {
     QString statusText = QStringLiteral("Internal Server Error");
     QByteArray body;
     QString mime = QStringLiteral("text/plain");
+    QList<QPair<QByteArray, QByteArray>> headers;
 
     QByteArray toHttpWire() const;
 };

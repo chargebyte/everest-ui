@@ -10,6 +10,8 @@
 
 #include <QTcpServer>
 
+class AuthManager;
+struct ParsedRequest;
 class QTcpSocket;
 class QTimer;
 
@@ -17,7 +19,7 @@ class StaticServer final : public QTcpServer {
     Q_OBJECT
 
 public:
-    explicit StaticServer(const ServerConfig &cfg, QObject *parent = nullptr);
+    explicit StaticServer(const ServerConfig &cfg, AuthManager *authManager, QObject *parent = nullptr);
 
 signals:
     void webSocketUpgradeRequested(QTcpSocket *socket);
@@ -27,8 +29,13 @@ protected:
 
 private:
     void handleRequest(QTcpSocket *socket, QTimer *headerTimer);
+    bool isAuthEndpoint(const QByteArray &path) const;
+    bool isPublicFrontendAsset(const ParsedRequest &request) const;
+    bool isAuthenticated(const ParsedRequest &request);
+    StaticResponse handleAuthRequest(const ParsedRequest &request);
     static void sendResponseAndClose(QTcpSocket *socket, const StaticResponse &response);
 
+    AuthManager *m_authManager = nullptr;
     QString m_rootDir;
     QByteArray m_wsPath;
     int m_maxRequestBytes = 8192;

@@ -1,5 +1,7 @@
 add_executable(webserver
     main.cpp
+    auth/AuthManager.cpp
+    auth/AuthManager.hpp
     config/ServerConfig.cpp
     config/ServerConfig.hpp
     http/RequestParsing.cpp
@@ -21,6 +23,7 @@ target_link_libraries(webserver PRIVATE
 )
 
 target_include_directories(webserver PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/auth"
     "${CMAKE_CURRENT_SOURCE_DIR}/config"
     "${CMAKE_CURRENT_SOURCE_DIR}/http"
     "${CMAKE_CURRENT_SOURCE_DIR}/ws"

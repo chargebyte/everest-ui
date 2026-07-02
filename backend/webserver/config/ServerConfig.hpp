@@ -19,6 +19,7 @@ struct ServerConfig {
     int maxRequestBytes = 0;
     QString logLevel;
     QString allowOrigin;
+    QString authFile;
 
     // Derived/finalized parameters for consumer components.
     QHostAddress bindAddress = QHostAddress::Any;
@@ -28,6 +29,7 @@ struct ServerConfig {
     QString normalizedWsPath;
     bool enforceOrigin = false;
     QUrl allowOriginUrl;
+    QString canonicalAuthFile;
 };
 
 bool loadAndValidateServerConfig(const QString &configPath,

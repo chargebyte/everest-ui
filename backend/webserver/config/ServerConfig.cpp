@@ -55,6 +55,7 @@ bool validateAndReadConfigLines(const QString &path,
         QStringLiteral("max_request_bytes"),
         QStringLiteral("log_level"),
         QStringLiteral("allow_origin"),
+        QStringLiteral("auth_file"),
     };
 
     rawParams.clear();
@@ -110,6 +111,7 @@ bool applyDirectParameters(const RawConfigMap &rawParams,
         QStringLiteral("backend_ws"),
         QStringLiteral("max_request_bytes"),
         QStringLiteral("log_level"),
+        QStringLiteral("auth_file"),
     };
 
     cfg = ServerConfig{};
@@ -180,6 +182,15 @@ bool applyDirectParameters(const RawConfigMap &rawParams,
         }
     }
 
+    cfg.authFile = rawParams.value(QStringLiteral("auth_file"));
+    if (cfg.authFile.isEmpty()) {
+        errorMessage = QStringLiteral("auth_file must not be empty");
+        return false;
+    }
+    if (QDir::isRelativePath(cfg.authFile)) {
+        cfg.authFile = QDir(baseDir).absoluteFilePath(cfg.authFile);
+    }
+
     return true;
 }
 
@@ -211,6 +222,8 @@ bool deriveFinalParameters(ServerConfig &cfg, QString &errorMessage) {
     if (!cfg.normalizedWsPath.startsWith('/')) {
         cfg.normalizedWsPath.prepend('/');
     }
+
+    cfg.canonicalAuthFile = QFileInfo(cfg.authFile).absoluteFilePath();
 
     cfg.enforceOrigin = false;
     cfg.allowOriginUrl = QUrl();

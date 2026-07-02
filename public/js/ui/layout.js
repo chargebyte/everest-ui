@@ -22,6 +22,7 @@ export function renderLayout(root) {
 
   return {
     pageOutlet: root.querySelector('#page-outlet'),
+    logoutButton: root.querySelector('#logout-button'),
     systemLog: root.querySelector('#system-log'),
     systemLogResizeHandle: root.querySelector('#system-log-resize-handle'),
     navItems: root.querySelectorAll('.nav-item')

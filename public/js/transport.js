@@ -11,6 +11,7 @@ export function createTransport({
 }) {
   let ws = null;
   let retryTimer = null;
+  let manualClose = false;
   const kPendingRequestTimeoutMs = 50000;
   const pendingRequests = new Map();
 
@@ -97,6 +98,9 @@ export function createTransport({
   }
 
   function scheduleReconnect() {
+    if (manualClose) {
+      return;
+    }
     if (retryTimer) {
       return;
     }
@@ -107,6 +111,7 @@ export function createTransport({
   }
 
   function connect() {
+    manualClose = false;
     if (isOpen()) {
       return;
     }
@@ -176,8 +181,24 @@ export function createTransport({
     };
   }
 
+  function close() {
+    manualClose = true;
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+    pendingRequests.forEach((_, requestIdKey) => {
+      clearPendingRequest(requestIdKey);
+    });
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
+  }
+
   return {
     connect,
+    close,
     sendPayload,
     isOpen
   };

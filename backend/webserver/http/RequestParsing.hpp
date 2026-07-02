@@ -8,6 +8,7 @@
 #include "StaticResponse.hpp"
 
 #include <QByteArray>
+#include <QHash>
 #include <QList>
 #include <QUrl>
 
@@ -15,9 +16,14 @@ struct ParsedRequest {
     QList<QByteArray> lines;
     QByteArray method;
     QByteArray path;
+    QByteArray normalizedPath;
+    QHash<QByteArray, QByteArray> headers;
+    QHash<QByteArray, QByteArray> cookies;
+    QByteArray body;
 };
 
 bool isHeaderComplete(const QByteArray &peek, int maxRequestBytes, StaticResponse *errorResponse);
+bool isRequestComplete(const QByteArray &peek, int maxRequestBytes, StaticResponse *errorResponse);
 bool isRequestValid(const QByteArray &peek,
                     ParsedRequest &request,
                     StaticResponse *errorResponse);

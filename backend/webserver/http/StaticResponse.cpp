@@ -18,7 +18,11 @@ QByteArray StaticResponse::toHttpWire() const {
     resp += "Date: " + httpDate().toUtf8() + "\r\n";
     resp += "Connection: close\r\n";
     resp += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
-    resp += "Content-Type: " + mime.toUtf8() + "\r\n\r\n";
+    resp += "Content-Type: " + mime.toUtf8() + "\r\n";
+    for (const auto &header : headers) {
+        resp += header.first + ": " + header.second + "\r\n";
+    }
+    resp += "\r\n";
     resp += body;
     return resp;
 }

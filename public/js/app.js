@@ -14,12 +14,25 @@ import { renderFirmwarePage } from './pages/firmware.js';
 import { renderErrorLogsPage } from './pages/errorLogs.js';
 
 async function init() {
-  const appContext = await initializeApp();
+  const appRoot = createAppRoot();
+  const status = await readAuthStatus();
+  if (status.setupRequired) {
+    renderAuthGate(appRoot, 'setup');
+    return;
+  }
+  if (!status.authenticated) {
+    renderAuthGate(appRoot, 'login');
+    return;
+  }
+  await startAuthenticatedApp(appRoot);
+}
+
+async function startAuthenticatedApp(appRoot) {
+  const appContext = await initializeApp(appRoot);
   startAppRuntime(appContext);
 }
 
-async function initializeApp() {
-  const appRoot = createAppRoot();
+async function initializeApp(appRoot) {
   const appLayout = createLayout(appRoot);
   bindSystemLogResize(appLayout.systemLogResizeHandle, appLayout.systemLog);
 
@@ -38,6 +51,104 @@ async function initializeApp() {
 
 function createAppRoot() {
   return document.getElementById('app');
+}
+
+async function readAuthStatus() {
+  const response = await fetch('/auth/status', {
+    cache: 'no-cache',
+    credentials: 'same-origin'
+  });
+  if (!response.ok) {
+    throw new Error(`Auth status failed: HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+function renderAuthGate(appRoot, mode, message = '') {
+  const title = mode === 'setup' ? 'Create EVerest WebUI user' : 'EVerest WebUI Login';
+  const button = mode === 'setup' ? 'Create user' : 'Login';
+  appRoot.innerHTML = `
+    <div class="auth-shell">
+      <div class="auth-frame">
+        <form class="auth-panel" id="auth-form">
+          <div class="auth-brand">
+            <img class="auth-logo" src="assets/chargebyte_logo.jpg" alt="chargebyte logo" />
+          </div>
+          <div class="auth-heading">
+            <h1>${title}</h1>
+          </div>
+          <div class="auth-field">
+            <label for="auth-username">Username</label>
+            <input id="auth-username" name="username" autocomplete="username" required />
+          </div>
+          <div class="auth-field">
+            <label for="auth-password">Password</label>
+            <input id="auth-password" name="password" type="password" autocomplete="${mode === 'setup' ? 'new-password' : 'current-password'}" required />
+          </div>
+          <p class="auth-error" id="auth-error"></p>
+          <button class="auth-button" type="submit">${button}</button>
+        </form>
+      </div>
+    </div>
+  `;
+
+  const errorNode = appRoot.querySelector('#auth-error');
+  errorNode.textContent = message;
+  appRoot.querySelector('#auth-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    errorNode.textContent = '';
+    const form = event.currentTarget;
+    const username = form.elements.username.value.trim();
+    const password = form.elements.password.value;
+    try {
+      if (mode === 'setup') {
+        await sendAuthRequest('/auth/setup', { username, password });
+      }
+      await sendAuthRequest('/auth/login', { username, password });
+      await startAuthenticatedApp(appRoot);
+    } catch (error) {
+      errorNode.textContent = formatAuthError(error.message);
+    }
+  });
+}
+
+function formatAuthError(error) {
+  const messages = {
+    invalid_credentials: 'Username or password is incorrect.',
+    missing_credentials: 'Enter a username and password.',
+    invalid_json: 'The login request could not be processed.',
+    setup_not_required: 'A WebUI user already exists.',
+    setup_required: 'Create the WebUI user before logging in.',
+    'Invalid username': 'Use only letters, numbers, dots, dashes, or underscores for the username.',
+    'Invalid password': 'Use a password with at least 8 characters.'
+  };
+
+  return messages[error] || error || 'Authentication failed.';
+}
+
+async function sendAuthRequest(path, payload) {
+  const response = await fetch(path, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+  if (response.ok) {
+    return response.json();
+  }
+
+  let error = `HTTP ${response.status}`;
+  try {
+    const body = await response.json();
+    if (typeof body.error === 'string' && body.error.trim() !== '') {
+      error = body.error;
+    }
+  } catch (_) {
+    // Keep the HTTP status fallback.
+  }
+  throw new Error(error);
 }
 
 function createLayout(appRoot) {
@@ -65,7 +176,10 @@ function createAppTransport(appContext) {
 }
 
 async function readParameterCatalog() {
-  const response = await fetch('/config/parameter_catalog.json', { cache: 'no-cache' });
+  const response = await fetch('/config/parameter_catalog.json', {
+    cache: 'no-cache',
+    credentials: 'same-origin'
+  });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
@@ -85,9 +199,21 @@ function createRoutes() {
 
 function startAppRuntime(appContext) {
   appContext.transport = createAppTransport(appContext);
+  bindLogout(appContext);
   setupNavTracking(appContext);
   handleInitialRender(appContext);
   connectTransport(appContext);
+}
+
+function bindLogout(appContext) {
+  appContext.layout.logoutButton?.addEventListener('click', async () => {
+    appContext.transport?.close();
+    await fetch('/auth/logout', {
+      method: 'POST',
+      credentials: 'same-origin'
+    });
+    renderAuthGate(createAppRoot(), 'login');
+  });
 }
 
 function setupNavTracking(appContext) {
