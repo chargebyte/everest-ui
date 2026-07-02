@@ -1,0 +1,13 @@
+[Unit]
+Description=EVerest Web UI
+Wants=everest.service
+After=network.target everest.service
+
+[Service]
+Type=simple
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/webui
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target

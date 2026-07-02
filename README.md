@@ -88,6 +88,12 @@ If you use the default install prefix, that is:
 ./install/bin/webui
 ```
 
+If the systemd service was installed and is not started automatically, it can be started with:
+
+```bash
+systemctl start webui.service
+```
+
 ## Access the UI
 
 The UI is accessed via the browser using the IP address of the device together with the port specified in `frontend.conf`.
