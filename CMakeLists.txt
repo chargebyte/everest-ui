@@ -23,13 +23,17 @@ elseif(EVEREST_UI_QT_VERSION STREQUAL "5")
     find_package(Qt5 REQUIRED COMPONENTS Core Network WebSockets DBus)
     set(QT_PACKAGE_NAME Qt5)
 elseif(EVEREST_UI_QT_VERSION STREQUAL "AUTO")
-    find_package(Qt6 QUIET COMPONENTS Core Network WebSockets DBus)
+    find_package(Qt6 COMPONENTS Core Network WebSockets DBus)
+    find_package(Qt5 COMPONENTS Core Network WebSockets DBus)
 
     if(Qt6_FOUND)
         set(QT_PACKAGE_NAME Qt6)
-    else()
-        find_package(Qt5 REQUIRED COMPONENTS Core Network WebSockets DBus)
+    elseif(Qt5_FOUND)
         set(QT_PACKAGE_NAME Qt5)
+    else()
+        message(FATAL_ERROR
+            "Neither Qt6 nor Qt5 with components Core, Network, WebSockets, and DBus was found"
+        )
     endif()
 else()
     message(FATAL_ERROR
