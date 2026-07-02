@@ -1,0 +1,52 @@
+name: Build Tests (Ubuntu 22 gcc)
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  compile:
+    name: Test compilation
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        # Available versions can be listed using
+        # $ aqt list-qt linux desktop
+        # and the corresponding arch(s) to use with
+        # $ aqt list-qt linux desktop --arch <version>
+        # and the names of extra modules with
+        # $ aqt list-qt linux desktop --modules <version> <arch>
+        # and the names of extra archives with
+        # $ aqt list-qt linux desktop --archives <version> <arch>
+        #
+        # Note the change of arch from `gcc_64` to `linux_gcc_64` starting with 6.7.0.
+        qt-config:
+          - version: '5.15.*'
+            arch: gcc_64
+            archives: qtwebsockets
+          - version: '5.13.*'
+            arch: gcc_64
+            archives: qtwebsockets
+          - version: '6.*'
+            arch: linux_gcc_64
+            modules: qtwebsockets
+          - version: '6.5.*'
+            arch: gcc_64
+            modules: qtwebsockets
+    steps:
+      - id: install_deps
+        name: Install dependencies using apt
+        run: sudo apt-get install -y libyaml-cpp-dev
+      - id: install_qt
+        name: Install Qt using GHA
+        uses: jurplel/install-qt-action@v4
+        with:
+          arch: ${{ matrix.qt-config.arch }}
+          version: ${{ matrix.qt-config.version }}
+          modules: ${{ matrix.qt-config.modules }}
+      - uses: actions/checkout@v6
+      - id: make
+        name: Build with cmake and make
+        run: cmake -B build-test && make -C build-test -j$(nproc)
+      - id: show_binary
+        name: Show details of the final binaries
+        run: |
+          cd build-test
+          ls -l backend/launcher/webui backend/webserver/webserver backend/api/api
+          ldd -r backend/launcher/webui backend/webserver/webserver backend/api/api
