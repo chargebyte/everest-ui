@@ -210,6 +210,17 @@ private:
             return;
         }
 
+        QString command = process.program();
+        const QString arguments = process.arguments().join(QStringLiteral(" "));
+        if (!arguments.isEmpty()) {
+            command += QStringLiteral(" ") + arguments;
+        }
+
+        QTextStream(stderr)
+            << "Terminating sibling process "
+            << command
+            << " pid=" << process.processId()
+            << ".\n";
         process.terminate();
         if (!process.waitForFinished(3000)) {
             process.kill();
