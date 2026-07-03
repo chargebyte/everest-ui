@@ -15,7 +15,7 @@
 
 namespace {
 constexpr int kApiHelloRequestId = 1;
-constexpr int kReconnectTimeoutMs = 2000;
+constexpr int kReconnectTimeoutMs = 500;
 constexpr int kPendingRequestTimeoutMs = 2000;
 }
 
