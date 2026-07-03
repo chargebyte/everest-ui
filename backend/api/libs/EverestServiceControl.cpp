@@ -11,12 +11,19 @@
 
 #include <QEventLoop>
 #include <QTimer>
+#include <QtGlobal>
 
 namespace {
 constexpr int kEverestRestartWaitTimeoutMs = 10000;
 constexpr int kEverestRestartPollIntervalMs = 200;
 constexpr int kEverestErrorPresentMonitorTimeoutMs = 10000;
 constexpr int kEverestErrorPresentMonitorPollIntervalMs = 200;
+
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+constexpr auto kSkipEmptyParts = Qt::SkipEmptyParts;
+#else
+constexpr auto kSkipEmptyParts = QString::SkipEmptyParts;
+#endif
 }
 
 namespace EverestServiceControl {
@@ -48,7 +55,7 @@ EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient *rpcApiClient, i
         };
     }
 
-    QStringList allowedStates = whitelistValue.split(QLatin1Char(','), Qt::SkipEmptyParts);
+    QStringList allowedStates = whitelistValue.split(QLatin1Char(','), kSkipEmptyParts);
     for (QString &allowedState : allowedStates) {
         allowedState = allowedState.trimmed();
     }

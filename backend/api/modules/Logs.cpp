@@ -15,6 +15,7 @@
 #include <QProcess>
 #include <QSet>
 #include <QTemporaryDir>
+#include <QtGlobal>
 
 LogsAction toLogsAction(const QString &action) {
     if (action == QLatin1String(kActionRead)) {
@@ -40,6 +41,12 @@ constexpr char kFileDefaultName[] = "logs_bundle.tar.gz";
 constexpr char kCmdFlafCzf[] = "-czf";
 constexpr char kCmdFlagC[] = "-C";
 constexpr char kCmdFlagTar[] = "tar";
+
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+constexpr auto kSkipEmptyParts = Qt::SkipEmptyParts;
+#else
+constexpr auto kSkipEmptyParts = QString::SkipEmptyParts;
+#endif
 
 ModuleResponse handleRequest(const ModuleRequest &request) {
     switch (toLogsAction(request.action)) {
@@ -135,7 +142,7 @@ LogsReadResult readLogFilesInformation(const QString &logPaths) {
     QJsonObject files = {};
     
     QList<QString> logPathsList;
-    for (const QString &entry : logPaths.split(',', Qt::SkipEmptyParts)) {
+    for (const QString &entry : logPaths.split(',', kSkipEmptyParts)) {
         logPathsList.append(entry.trimmed());
     }
 

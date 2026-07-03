@@ -9,11 +9,80 @@
 #include <QTimer>
 #include <QStringList>
 #include <QString>
+#include <QtGlobal>
 
 #ifdef Q_OS_UNIX
 #include <signal.h>
 #include <unistd.h>
 #endif
+
+namespace {
+QStringList splitCommandCompat(const QString &command) {
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+    return QProcess::splitCommand(command);
+#else
+    QStringList parts;
+    QString currentPart;
+    QChar quoteChar;
+    bool escaping = false;
+    bool tokenStarted = false;
+
+    for (const QChar &ch : command) {
+        if (escaping) {
+            currentPart.append(ch);
+            escaping = false;
+            tokenStarted = true;
+            continue;
+        }
+
+        if (ch == QLatin1Char('\\')) {
+            escaping = true;
+            tokenStarted = true;
+            continue;
+        }
+
+        if (!quoteChar.isNull()) {
+            if (ch == quoteChar) {
+                quoteChar = QChar();
+                continue;
+            }
+
+            currentPart.append(ch);
+            tokenStarted = true;
+            continue;
+        }
+
+        if (ch == QLatin1Char('"') || ch == QLatin1Char('\'')) {
+            quoteChar = ch;
+            tokenStarted = true;
+            continue;
+        }
+
+        if (ch.isSpace()) {
+            if (tokenStarted) {
+                parts.append(currentPart);
+                currentPart.clear();
+                tokenStarted = false;
+            }
+            continue;
+        }
+
+        currentPart.append(ch);
+        tokenStarted = true;
+    }
+
+    if (escaping) {
+        currentPart.append(QLatin1Char('\\'));
+    }
+
+    if (tokenStarted) {
+        parts.append(currentPart);
+    }
+
+    return parts;
+#endif
+}
+} // namespace
 
 ConsoleConnector::ConsoleConnector(QObject *parent)
     : QObject(parent) {}
@@ -106,7 +175,7 @@ ConsoleConnector::CommandSpec ConsoleConnector::renderTemplate(
     for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
         command.replace(it.key(), it.value());
     }
-    const QStringList parts = QProcess::splitCommand(command);
+    const QStringList parts = splitCommandCompat(command);
     if (parts.isEmpty()) {
         return {};
     }
