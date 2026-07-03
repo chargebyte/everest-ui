@@ -43,6 +43,7 @@ inline constexpr const char kGroupSafety[] = "safety";
 inline constexpr const char kGroupOcpp[] = "ocpp";
 inline constexpr const char kGroupFirmware[] = "firmware";
 inline constexpr const char kGroupLogs[] = "logs";
+inline constexpr const char kGroupSystem[] = "system";
 
 inline constexpr const char kActionRead[] = "read";
 inline constexpr const char kActionWrite[] = "write";
@@ -61,6 +62,7 @@ inline constexpr const char kActionUploadImageChunk[] = "upload_image.chunk";
 inline constexpr const char kActionUploadImageFinish[] = "upload_image.finish";
 inline constexpr const char kActionDownload[] = "download";
 inline constexpr const char kActionProgress[] = "progress";
+inline constexpr const char kActionReadAppTitle[] = "read_app_title";
 
 // Parameter keys
 inline constexpr const char kKeyGeneral[] = "general";

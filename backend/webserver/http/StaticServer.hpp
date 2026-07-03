@@ -11,6 +11,7 @@
 #include <QTcpServer>
 
 class AuthManager;
+class AppTitleResolver;
 struct ParsedRequest;
 class QTcpSocket;
 class QTimer;
@@ -19,7 +20,10 @@ class StaticServer final : public QTcpServer {
     Q_OBJECT
 
 public:
-    explicit StaticServer(const ServerConfig &cfg, AuthManager *authManager, QObject *parent = nullptr);
+    explicit StaticServer(const ServerConfig &cfg,
+                          AuthManager *authManager,
+                          AppTitleResolver *appTitleResolver,
+                          QObject *parent = nullptr);
 
 signals:
     void webSocketUpgradeRequested(QTcpSocket *socket);
@@ -36,6 +40,7 @@ private:
     static void sendResponseAndClose(QTcpSocket *socket, const StaticResponse &response);
 
     AuthManager *m_authManager = nullptr;
+    AppTitleResolver *m_appTitleResolver = nullptr;
     QString m_rootDir;
     QByteArray m_wsPath;
     int m_maxRequestBytes = 8192;

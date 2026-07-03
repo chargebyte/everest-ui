@@ -56,6 +56,7 @@ bool validateAndReadConfigLines(const QString &path,
         QStringLiteral("log_level"),
         QStringLiteral("allow_origin"),
         QStringLiteral("auth_file"),
+        QStringLiteral("app_title"),
     };
 
     rawParams.clear();
@@ -190,6 +191,8 @@ bool applyDirectParameters(const RawConfigMap &rawParams,
     if (QDir::isRelativePath(cfg.authFile)) {
         cfg.authFile = QDir(baseDir).absoluteFilePath(cfg.authFile);
     }
+
+    cfg.appTitle = rawParams.value(QStringLiteral("app_title")).trimmed();
 
     return true;
 }
