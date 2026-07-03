@@ -62,6 +62,7 @@ public:
     explicit RpcApiClient(QObject *parent = nullptr);
     void start();
     bool isReady() const;
+    QString appTitle() const;
     RpcApiEvseStateResult getEvseState(int evseIndex);
     RpcApiEvseErrorPresentResult getEvseErrorPresent(int evseIndex);
 
@@ -89,6 +90,7 @@ private:
     QString m_everestConfigPath;
     QJsonObject m_everestConfigRoot;
     QString m_configurationError;
+    QString m_appTitle;
     QUrl m_rpcApiUrl;
     QJsonObject m_lastRpcResponse;
     QHash<int, PendingRpcRequest> m_pendingRequests;

@@ -72,6 +72,10 @@ bool RpcApiClient::isReady() const {
            m_handshakeComplete;
 }
 
+QString RpcApiClient::appTitle() const {
+    return m_appTitle;
+}
+
 RpcApiEvseStatusResult RpcApiClient::getEvseStatus(int evseIndex) {
     if (!m_rpcApiConfigured) {
         return RpcApiEvseStatusResult{
@@ -490,6 +494,16 @@ void RpcApiClient::onHelloResponse(const QJsonObject &response) {
         response.value(QLatin1String(kTypeResult)).isObject();
 
     if (isValidHelloResponse) {
+        const QJsonObject resultObject = response.value(QLatin1String(kTypeResult)).toObject();
+        const QJsonObject chargerInfoObject =
+            resultObject.value(QStringLiteral("charger_info")).toObject();
+        const QString model = chargerInfoObject.value(QStringLiteral("model")).toString().trimmed();
+        if (!model.isEmpty() &&
+            model.compare(QStringLiteral("unknown"), Qt::CaseInsensitive) != 0) {
+            m_appTitle = model;
+        } else {
+            m_appTitle.clear();
+        }
         m_handshakeComplete = true;
         return;
     }

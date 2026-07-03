@@ -4,6 +4,7 @@
 
 #include "ServerConfig.hpp"
 #include "StaticServer.hpp"
+#include "AppTitleResolver.hpp"
 #include "AuthManager.hpp"
 #include "WebSocketProxySession.hpp"
 
@@ -52,7 +53,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    StaticServer server(cfg, &authManager);
+    AppTitleResolver appTitleResolver(cfg.appTitle, cfg.backendUrl);
+    StaticServer server(cfg, &authManager, &appTitleResolver);
     QWebSocketServer wsServer(QStringLiteral("webui-ws"), QWebSocketServer::NonSecureMode);
 
     QObject::connect(&server, &StaticServer::webSocketUpgradeRequested,

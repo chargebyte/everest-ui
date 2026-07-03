@@ -3,6 +3,7 @@
 // Copyright 2026 chargebyte GmbH
 
 #include "StaticServer.hpp"
+#include "AppTitleResolver.hpp"
 #include "AuthManager.hpp"
 #include "RequestParsing.hpp"
 #include "StaticContent.hpp"
@@ -57,9 +58,13 @@ QByteArray clearSessionCookieHeader() {
 
 } // namespace
 
-StaticServer::StaticServer(const ServerConfig &cfg, AuthManager *authManager, QObject *parent)
+StaticServer::StaticServer(const ServerConfig &cfg,
+                           AuthManager *authManager,
+                           AppTitleResolver *appTitleResolver,
+                           QObject *parent)
     : QTcpServer(parent),
       m_authManager(authManager),
+      m_appTitleResolver(appTitleResolver),
       m_rootDir(cfg.canonicalRoot),
       m_wsPath(cfg.normalizedWsPath.toUtf8()),
       m_maxRequestBytes(cfg.maxRequestBytes),
@@ -206,7 +211,11 @@ StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request) {
                                 QJsonObject{{QStringLiteral("setupRequired"),
                                              m_authManager->setupRequired()},
                                             {QStringLiteral("authenticated"),
-                                             isAuthenticated(request)}});
+                                             isAuthenticated(request)},
+                                            {QStringLiteral("appTitle"),
+                                             m_appTitleResolver
+                                                 ? m_appTitleResolver->title()
+                                                 : QStringLiteral("EVerest WebUI")}});
     }
 
     if (request.method != "POST") {

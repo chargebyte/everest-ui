@@ -12,6 +12,8 @@ add_executable(webserver
     http/StaticResponse.hpp
     http/StaticServer.cpp
     http/StaticServer.hpp
+    ui/AppTitleResolver.cpp
+    ui/AppTitleResolver.hpp
     ws/WebSocketProxySession.cpp
     ws/WebSocketProxySession.hpp
 )
@@ -26,6 +28,7 @@ target_include_directories(webserver PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/auth"
     "${CMAKE_CURRENT_SOURCE_DIR}/config"
     "${CMAKE_CURRENT_SOURCE_DIR}/http"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui"
     "${CMAKE_CURRENT_SOURCE_DIR}/ws"
 )
 

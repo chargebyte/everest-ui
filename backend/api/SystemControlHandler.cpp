@@ -19,7 +19,8 @@
 #include <stdexcept>
 
 SystemControl::SystemControl(RpcApiClient *rpcApiClient, QObject *parent)
-    : QObject(parent) {
+    : QObject(parent),
+      m_rpcApiClient(rpcApiClient) {
     EverestConfig::setRpcApiClient(rpcApiClient);
     SafetyController::setRpcApiClient(rpcApiClient);
     OCPPConfig::setRpcApiClient(rpcApiClient);
@@ -75,11 +76,42 @@ void SystemControl::startRequest(const ModuleRequest &request) {
         handleModuleResponse(response);
         return;
     }
+    case ModuleGroup::System: {
+        const ModuleResponse response = handleSystemRequest(request);
+        handleModuleResponse(response);
+        return;
+    }
     case ModuleGroup::Unknown:
         throw std::runtime_error("SystemControl::startRequest got unsupported group");
     }
 
     throw std::runtime_error("SystemControl::startRequest reached unreachable code");
+}
+
+ModuleResponse SystemControl::handleSystemRequest(const ModuleRequest &request) const {
+    if (request.action != QLatin1String(kActionReadAppTitle)) {
+        return ModuleResponse{
+            .requestId = request.requestId,
+            .group = QLatin1String(kGroupSystem),
+            .action = request.action,
+            .parameters = QJsonObject{
+                {QLatin1String(kError), QStringLiteral("unsupported_action")},
+            },
+            .success = false,
+            .final = true,
+        };
+    }
+
+    return ModuleResponse{
+        .requestId = request.requestId,
+        .group = QLatin1String(kGroupSystem),
+        .action = request.action,
+        .parameters = QJsonObject{
+            {QStringLiteral("appTitle"), m_rpcApiClient ? m_rpcApiClient->appTitle() : QString()},
+        },
+        .success = true,
+        .final = true,
+    };
 }
 
 void SystemControl::handleModuleResponse(const ModuleResponse &response) {
@@ -140,6 +172,9 @@ ModuleGroup SystemControl::toModuleGroup(const QString &group) const {
     }
     if (group == QLatin1String(kGroupLogs)) {
         return ModuleGroup::Logs;
+    }
+    if (group == QLatin1String(kGroupSystem)) {
+        return ModuleGroup::System;
     }
 
     return ModuleGroup::Unknown;

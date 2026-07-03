@@ -20,6 +20,7 @@ struct ServerConfig {
     QString logLevel;
     QString allowOrigin;
     QString authFile;
+    QString appTitle;
 
     // Derived/finalized parameters for consumer components.
     QHostAddress bindAddress = QHostAddress::Any;

@@ -27,6 +27,7 @@ signals:
     void responseReady(const QJsonObject &response);
 
 private:
+    ModuleResponse handleSystemRequest(const ModuleRequest &request) const;
     void handleAsyncFirmwareResponse(const ModuleResponse &response);
     bool isFirmwareUpdateStartAccepted(const ModuleResponse &response) const;
     bool isMatchingAsyncFirmwareResponse(const ModuleResponse &response,
@@ -39,6 +40,7 @@ private:
     void emitResponse(const ModuleResponse &response);
     ModuleGroup toModuleGroup(const QString &group) const;
 
+    class RpcApiClient *m_rpcApiClient = nullptr;
     QQueue<ModuleRequest> m_queue;
     std::optional<ModuleRequest> m_pendingRequest;
 };

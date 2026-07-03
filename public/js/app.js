@@ -16,23 +16,25 @@ import { renderErrorLogsPage } from './pages/errorLogs.js';
 async function init() {
   const appRoot = createAppRoot();
   const status = await readAuthStatus();
+  const appTitle = normalizeAppTitle(status.appTitle);
   if (status.setupRequired) {
-    renderAuthGate(appRoot, 'setup');
+    renderAuthGate(appRoot, 'setup', appTitle);
     return;
   }
   if (!status.authenticated) {
-    renderAuthGate(appRoot, 'login');
+    renderAuthGate(appRoot, 'login', appTitle);
     return;
   }
-  await startAuthenticatedApp(appRoot);
+  await startAuthenticatedApp(appRoot, appTitle);
 }
 
-async function startAuthenticatedApp(appRoot) {
-  const appContext = await initializeApp(appRoot);
+async function startAuthenticatedApp(appRoot, appTitle) {
+  document.title = appTitle;
+  const appContext = await initializeApp(appRoot, appTitle);
   startAppRuntime(appContext);
 }
 
-async function initializeApp(appRoot) {
+async function initializeApp(appRoot, appTitle) {
   const appLayout = createLayout(appRoot);
   bindSystemLogResize(appLayout.systemLogResizeHandle, appLayout.systemLog);
 
@@ -41,6 +43,7 @@ async function initializeApp(appRoot) {
     transport: null,
     parameterCatalog: await readParameterCatalog(),
     routes: createRoutes(),
+    appTitle,
     state: {
       activeRoute: 'everest',
       initialRoute: 'everest',
@@ -64,9 +67,26 @@ async function readAuthStatus() {
   return response.json();
 }
 
-function renderAuthGate(appRoot, mode, message = '') {
-  const title = mode === 'setup' ? 'Create EVerest WebUI user' : 'EVerest WebUI Login';
+function normalizeAppTitle(appTitle) {
+  return typeof appTitle === 'string' && appTitle.trim() !== ''
+    ? appTitle.trim()
+    : 'EVerest WebUI';
+}
+
+function escapeHtml(value) {
+  return value.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[character]));
+}
+
+function renderAuthGate(appRoot, mode, appTitle = 'EVerest WebUI', message = '') {
+  const title = mode === 'setup' ? `Create ${appTitle} user` : `${appTitle} Login`;
   const button = mode === 'setup' ? 'Create user' : 'Login';
+  document.title = title;
   appRoot.innerHTML = `
     <div class="auth-shell">
       <div class="auth-frame">
@@ -75,7 +95,7 @@ function renderAuthGate(appRoot, mode, message = '') {
             <img class="auth-logo" src="assets/chargebyte_logo.jpg" alt="chargebyte logo" />
           </div>
           <div class="auth-heading">
-            <h1>${title}</h1>
+            <h1>${escapeHtml(title)}</h1>
           </div>
           <div class="auth-field">
             <label for="auth-username">Username</label>
@@ -105,7 +125,7 @@ function renderAuthGate(appRoot, mode, message = '') {
         await sendAuthRequest('/auth/setup', { username, password });
       }
       await sendAuthRequest('/auth/login', { username, password });
-      await startAuthenticatedApp(appRoot);
+      await startAuthenticatedApp(appRoot, appTitle);
     } catch (error) {
       errorNode.textContent = formatAuthError(error.message);
     }
@@ -212,7 +232,7 @@ function bindLogout(appContext) {
       method: 'POST',
       credentials: 'same-origin'
     });
-    renderAuthGate(createAppRoot(), 'login');
+    renderAuthGate(createAppRoot(), 'login', appContext.appTitle);
   });
 }
 
