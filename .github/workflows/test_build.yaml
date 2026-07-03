@@ -19,10 +19,8 @@ jobs:
         qt-config:
           - version: '5.15.*'
             arch: gcc_64
-            archives: qtwebsockets
           - version: '5.13.*'
             arch: gcc_64
-            archives: qtwebsockets
           - version: '6.*'
             arch: linux_gcc_64
             modules: qtwebsockets
@@ -34,13 +32,13 @@ jobs:
         name: Install dependencies using apt
         run: sudo apt-get install -y libyaml-cpp-dev
       - id: install_qt
-        name: Install Qt using GHA
+        name: Install Qt using aqt via GHA jurplel/install-qt-action
         uses: jurplel/install-qt-action@v4
         with:
           arch: ${{ matrix.qt-config.arch }}
           version: ${{ matrix.qt-config.version }}
           modules: ${{ matrix.qt-config.modules }}
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: make
         name: Build with cmake and make
         run: cmake -B build-test && make -C build-test -j$(nproc)
