@@ -6,6 +6,7 @@
 #define REQUEST_RESPONSE_TYPES_HPP
 
 #include <QJsonObject>
+#include <QMetaType>
 #include <QString>
 #include <QtGlobal>
 
@@ -35,7 +36,7 @@ struct ModuleResponse {
     bool final = true;
 };
 
-Q_DECLARE_METATYPE(ModuleRequest)
-Q_DECLARE_METATYPE(ModuleResponse)
+Q_DECLARE_METATYPE(ModuleRequest);
+Q_DECLARE_METATYPE(ModuleResponse);
 
 #endif // REQUEST_RESPONSE_TYPES_HPP
