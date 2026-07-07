@@ -14,6 +14,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QStringList>
 #include <QTemporaryFile>
 #include <QTimer>
 
@@ -34,6 +36,9 @@ constexpr char kErrorEverestBaseConfigVerificationFailed[] = "everest_base_confi
 constexpr char kErrorEverestConfOverlayWriteFailed[] = "everest_config_overlay_write_failed";
 constexpr char kErrorEverestConfSymlinkCreateFailed[] = "everest_config_symlink_create_failed";
 constexpr char kErrorEverestConfSymlinkVerificationFailed[] = "everest_config_symlink_verification_failed";
+constexpr char kAvailableModules[] = "_available_modules";
+constexpr char kErrorEverestRequiredModuleMissing[] = "everest_required_module_missing";
+constexpr char kModuleEvseManager[] = "EvseManager";
 
 EverestAction toEverestAction(const QString &action) {
     if (action == QLatin1String(kActionReadConfigParameters)) {
@@ -65,6 +70,32 @@ QJsonObject findActiveModuleConfig(const QJsonObject &yamlRoot, const QString &m
     }
 
     return QJsonObject{};
+}
+
+QStringList findAvailableModules(const QJsonObject &yamlRoot) {
+    QStringList availableModules;
+    const QJsonObject activeModules = yamlRoot.value(QLatin1String(kEverestConfActiveModules)).toObject();
+    const auto activeModuleKeys = activeModules.keys();
+    for (const QString &activeModuleKey : activeModuleKeys) {
+        const QJsonObject activeModule = activeModules.value(activeModuleKey).toObject();
+        const QString moduleName = activeModule.value(QLatin1String(kEverestConfModule)).toString();
+        if (moduleName.isEmpty() || availableModules.contains(moduleName)) {
+            continue;
+        }
+
+        availableModules.append(moduleName);
+    }
+
+    return availableModules;
+}
+
+QJsonArray availableModulesToJsonArray(const QStringList &availableModules) {
+    QJsonArray modules;
+    for (const QString &moduleName : availableModules) {
+        modules.append(moduleName);
+    }
+
+    return modules;
 }
 } // namespace
 
@@ -489,8 +520,18 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
         return response;
     }
 
+    const QStringList availableModules = findAvailableModules(yamlLoadResult.yamlRoot);
+    if (!availableModules.contains(QString::fromLatin1(kModuleEvseManager))) {
+        response.parameters = QJsonObject{
+            {QLatin1String(kError), QLatin1String(kErrorEverestRequiredModuleMissing)},
+        };
+        return response;
+    }
+
     response.parameters =
         fillRequestedReadParameters(request.parameters, yamlLoadResult.yamlRoot);
+    response.parameters.insert(
+        QLatin1String(kAvailableModules), availableModulesToJsonArray(availableModules));
     response.success = true;
     return response;
 }

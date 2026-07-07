@@ -13,13 +13,14 @@ const kSettingsTableFields = {
 
 export function renderSettingsTableBlock(blockConfig, options) {
   const fieldMap = new Map();
+  const unavailableParameterIds = new Set();
 
   const element = document.createElement('section');
   element.className = 'section';
   const sectionElements = renderSettingsTableSections(blockConfig.sections, fieldMap);
 
   sectionElements.forEach((sectionElement) => {
-    element.appendChild(sectionElement);
+    element.appendChild(sectionElement.element);
   });
 
   const applyButtonElement = createSettingsTableApplyButton(options);
@@ -33,8 +34,11 @@ export function renderSettingsTableBlock(blockConfig, options) {
     bindSubmit(handler) {
       applyButtonElement.addEventListener('click', handler);
     },
+    applyAvailableModules(availableModules) {
+      applySettingsTableAvailableModules(sectionElements, unavailableParameterIds, availableModules);
+    },
     getValues(requestResponseObject) {
-      return getSettingsTableValues(requestResponseObject, fieldMap);
+      return getSettingsTableValues(requestResponseObject, fieldMap, unavailableParameterIds);
     },
     setValues(requestResponseObject) {
       setSettingsTableValues(requestResponseObject, fieldMap);
@@ -68,8 +72,16 @@ function renderSettingsTableSections(sections, fieldMap) {
     sectionElement.className = 'section';
 
     renderSettingsTableSectionTitle(sectionElement, section.title);
-    renderSettingsTableSectionRows(sectionElement, section, fieldMap);
-    return sectionElement;
+    const noteElement = createSettingsTableMissingNote();
+    sectionElement.appendChild(noteElement);
+    const { gridElement, rows } = renderSettingsTableSectionRows(sectionElement, section, fieldMap);
+    return {
+      section,
+      element: sectionElement,
+      gridElement,
+      noteElement,
+      rows
+    };
   });
 }
 
@@ -83,6 +95,7 @@ function renderSettingsTableSectionRows(sectionElement, section, fieldMap) {
   const gridElement = document.createElement('div');
   gridElement.className = 'form-grid';
   const sectionRadioGroups = new Map();
+  const rows = [];
 
   (section.parameters || []).forEach((parameter) => {
     const labelElement = createSettingsTableRowLabel(parameter);
@@ -98,9 +111,99 @@ function renderSettingsTableSectionRows(sectionElement, section, fieldMap) {
 
     gridElement.appendChild(labelElement);
     gridElement.appendChild(inputElement);
+    rows.push({
+      parameter,
+      labelElement,
+      inputElement
+    });
   });
 
   sectionElement.appendChild(gridElement);
+  return {
+    gridElement,
+    rows
+  };
+}
+
+function createSettingsTableMissingNote() {
+  const noteElement = document.createElement('p');
+  noteElement.className = 'settings-missing-note';
+  noteElement.hidden = true;
+  return noteElement;
+}
+
+function applySettingsTableAvailableModules(sectionElements, unavailableParameterIds, availableModules) {
+  unavailableParameterIds.clear();
+
+  if (!Array.isArray(availableModules)) {
+    sectionElements.forEach((sectionElement) => {
+      sectionElement.gridElement.hidden = false;
+      sectionElement.noteElement.hidden = true;
+      sectionElement.rows.forEach((row) => {
+        row.labelElement.hidden = false;
+        row.inputElement.hidden = false;
+      });
+    });
+    return;
+  }
+
+  const availableModuleNames = new Set(
+    availableModules.filter((moduleName) => typeof moduleName === 'string')
+  );
+
+  sectionElements.forEach((sectionElement) => {
+    const missingModuleNames = new Set();
+    let visibleRowCount = 0;
+
+    sectionElement.rows.forEach((row) => {
+      const moduleName = getSettingsTableBackendModule(row.parameter.backend_path);
+      const available = moduleName === '' || availableModuleNames.has(moduleName);
+
+      row.labelElement.hidden = !available;
+      row.inputElement.hidden = !available;
+
+      if (available) {
+        visibleRowCount += 1;
+        return;
+      }
+
+      unavailableParameterIds.add(row.parameter.id);
+      missingModuleNames.add(moduleName);
+    });
+
+    sectionElement.gridElement.hidden = visibleRowCount === 0;
+    renderSettingsTableMissingNote(
+      sectionElement.noteElement,
+      sectionElement.section.title,
+      Array.from(missingModuleNames),
+      visibleRowCount === 0
+    );
+  });
+}
+
+function getSettingsTableBackendModule(backendPath) {
+  const pathParts = String(backendPath || '').split('.');
+  return pathParts[0] || '';
+}
+
+function renderSettingsTableMissingNote(noteElement, sectionTitle, missingModuleNames, sectionHidden) {
+  if (missingModuleNames.length === 0) {
+    noteElement.hidden = true;
+    noteElement.textContent = '';
+    return;
+  }
+
+  const moduleList = missingModuleNames.join(', ');
+  if (sectionHidden) {
+    noteElement.textContent =
+      `${sectionTitle} is not available in the current EVerest base configuration. ` +
+      `Use Direct config to upload or create a base config that includes ${moduleList}.`;
+  } else {
+    noteElement.textContent =
+      `Some options are not available because ${moduleList} is missing from ` +
+      'the current EVerest base configuration. Use Direct config to update the base config.';
+  }
+  noteElement.hidden = false;
 }
 
 function createSettingsTableRowLabel(parameter) {
@@ -226,10 +329,15 @@ function setSettingsTableValues(requestResponseObject, fieldMap) {
   });
 }
 
-function getSettingsTableValues(requestResponseObject, fieldMap) {
+function getSettingsTableValues(requestResponseObject, fieldMap, unavailableParameterIds = new Set()) {
   const updatedRequestResponseObject = structuredClone(requestResponseObject);
 
   Object.entries(updatedRequestResponseObject || {}).forEach(([parameterId, parameterEntry]) => {
+    if (unavailableParameterIds.has(parameterId)) {
+      delete updatedRequestResponseObject[parameterId];
+      return;
+    }
+
     const fieldElement = fieldMap.get(parameterId);
     if (!fieldElement) {
       return;
