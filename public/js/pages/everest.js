@@ -10,6 +10,7 @@ import { buildRequest } from '../protocol/requestBuilder.js';
 import { mapResponse } from '../protocol/responseMapper.js';
 
 export function renderEverestPage(container, {
+  appTitle,
   parameterCatalog,
   sendPayload,
   addLog
@@ -24,7 +25,11 @@ export function renderEverestPage(container, {
 
   const pageElement = document.createElement('div');
   pageElement.className = 'page';
-  pageElement.innerHTML = `<h1>${pageConfig.title}</h1>`;
+  const pageTitle =
+    typeof appTitle === 'string' && appTitle.trim() !== ''
+      ? `${appTitle.trim()} Configuration`
+      : pageConfig.title;
+  pageElement.innerHTML = `<h1>${pageTitle}</h1>`;
 
   const settingsTable = renderSettingsTableBlock(settingsTableBlock, {
     buttonLabel: 'Save Configuration'

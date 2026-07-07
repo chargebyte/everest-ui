@@ -277,6 +277,7 @@ function renderRoute(appContext, route) {
 
   appContext.state.page = renderPage(appContext.layout.pageOutlet, {
     parameterCatalog: appContext.parameterCatalog,
+    appTitle: appContext.appTitle,
     sendPayload(payload) {
       return appContext.transport.sendPayload(payload).ok;
     },
