@@ -321,15 +321,18 @@ bool writeEverestConfigOverlay(const QString &overlayPath, const QJsonObject &ov
         return false;
     }
 
+    // This is implemented in plain C++/Qt for the time being.
+    // For more complex configurations, a proper YAML emitter is required.
     QTextStream stream(&overlayFile);
-    stream << QLatin1String(kEverestConfActiveModules) << "\n";
+    stream << QLatin1String(kEverestConfActiveModules) << ":\n";
 
     const QJsonObject activeModules = overlayObject.value(QLatin1String(kEverestConfActiveModules)).toObject();
     const auto activeModuleKeys = activeModules.keys();
     for (const QString &activeModuleKey : activeModuleKeys) {
         const QJsonObject activeModule = activeModules.value(activeModuleKey).toObject();
         stream << "  " << activeModuleKey << ":\n";
-        stream << "    " << QLatin1String(kEverestConfModule) << formatYamlScalar(activeModule.value(QLatin1String(kEverestConfModule))) << "\n";
+        stream << "    " << QLatin1String(kEverestConfModule) << ": "
+               << formatYamlScalar(activeModule.value(QLatin1String(kEverestConfModule))) << "\n";
         stream << "    " << QLatin1String(kEverestConfConfigModule) << ":\n";
 
         const QJsonObject configModule = activeModule.value(QLatin1String(kEverestConfConfigModule)).toObject();
@@ -375,6 +378,14 @@ ModuleResponse ensureEverestConfigOverlay(const ModuleRequest &request, ModuleRe
     if (!writeEverestConfigOverlay(overlayConfigPathResult.path, overlayObject)) {
         response.parameters = QJsonObject{
             {QLatin1String(kError), QLatin1String(kErrorEverestConfOverlayWriteFailed)},
+        };
+        return response;
+    }
+
+    const YamlLoadResult overlayYamlLoadResult = loadYamlFile(overlayConfigPathResult.path);
+    if (!overlayYamlLoadResult.success) {
+        response.parameters = QJsonObject{
+            {QLatin1String(kError), overlayYamlLoadResult.error},
         };
         return response;
     }
