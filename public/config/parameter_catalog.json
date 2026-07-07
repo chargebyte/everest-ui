@@ -147,7 +147,6 @@
             "display_name": "Scheduled Mode",
             "description": "Whether the EVSE should support scheduled mode",
             "value_type": "boolean",
-            "radio_group": 1,
             "backend_path": "Evse15118D20.supported_scheduled_mode"
           },
           {
@@ -155,7 +154,6 @@
             "display_name": "Dynamic Mode",
             "description": "Whether the EVSE should support dynamic mode",
             "value_type": "boolean",
-            "radio_group": 1,
             "backend_path": "Evse15118D20.supported_dynamic_mode"
           },
           {
