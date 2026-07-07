@@ -3,8 +3,8 @@
 // Copyright 2026 chargebyte GmbH
 
 const kNavEntries = [
-  { page: 'safety', label: 'Safety Controller' },
   { page: 'everest', label: 'EVerest Config' },
+  { page: 'safety', label: 'Safety Controller' },
   { page: 'ocpp', label: 'OCPP Config' },
   { page: 'pcap', label: 'PCAP Trace' },
   { page: 'firmware', label: 'Firmware Update' },
