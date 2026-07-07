@@ -157,6 +157,39 @@
   line-height: 1.4;
 }
 
+.settings-section-unavailable {
+  position: relative;
+}
+
+.settings-section-unavailable .form-grid {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.settings-section-unavailable .settings-missing-note {
+  position: absolute;
+  top: 52px;
+  left: 14px;
+  right: 14px;
+  z-index: 1;
+  margin: 0;
+  box-shadow: 0 8px 24px rgba(33, 47, 76, 0.16);
+}
+
+.settings-section-partial-unavailable .settings-missing-note {
+  margin-bottom: 12px;
+}
+
+.settings-unavailable-row,
+.settings-unavailable-control {
+  opacity: 0.45;
+}
+
+.settings-section-unavailable .settings-unavailable-row,
+.settings-section-unavailable .settings-unavailable-control {
+  opacity: 1;
+}
+
 .input {
   width: 100%;
   padding: 9px 10px;

@@ -139,9 +139,12 @@ function applySettingsTableAvailableModules(sectionElements, unavailableParamete
     sectionElements.forEach((sectionElement) => {
       sectionElement.gridElement.hidden = false;
       sectionElement.noteElement.hidden = true;
+      sectionElement.element.classList.remove(
+        'settings-section-unavailable',
+        'settings-section-partial-unavailable'
+      );
       sectionElement.rows.forEach((row) => {
-        row.labelElement.hidden = false;
-        row.inputElement.hidden = false;
+        setSettingsTableRowAvailable(row, true);
       });
     });
     return;
@@ -154,30 +157,56 @@ function applySettingsTableAvailableModules(sectionElements, unavailableParamete
   sectionElements.forEach((sectionElement) => {
     const missingModuleNames = new Set();
     let visibleRowCount = 0;
+    let unavailableRowCount = 0;
 
     sectionElement.rows.forEach((row) => {
       const moduleName = getSettingsTableBackendModule(row.parameter.backend_path);
       const available = moduleName === '' || availableModuleNames.has(moduleName);
 
-      row.labelElement.hidden = !available;
-      row.inputElement.hidden = !available;
+      setSettingsTableRowAvailable(row, available);
 
       if (available) {
         visibleRowCount += 1;
         return;
       }
 
+      unavailableRowCount += 1;
       unavailableParameterIds.add(row.parameter.id);
       missingModuleNames.add(moduleName);
     });
 
-    sectionElement.gridElement.hidden = visibleRowCount === 0;
+    const sectionUnavailable = unavailableRowCount > 0 && visibleRowCount === 0;
+    sectionElement.gridElement.hidden = false;
+    sectionElement.element.classList.toggle('settings-section-unavailable', sectionUnavailable);
+    sectionElement.element.classList.toggle(
+      'settings-section-partial-unavailable',
+      unavailableRowCount > 0 && !sectionUnavailable
+    );
     renderSettingsTableMissingNote(
       sectionElement.noteElement,
       sectionElement.section.title,
       Array.from(missingModuleNames),
-      visibleRowCount === 0
+      sectionUnavailable
     );
+  });
+}
+
+function setSettingsTableRowAvailable(row, available) {
+  row.labelElement.hidden = false;
+  row.inputElement.hidden = false;
+  row.labelElement.classList.toggle('settings-unavailable-row', !available);
+  row.inputElement.classList.toggle('settings-unavailable-control', !available);
+  setSettingsTableInteractiveElementsDisabled(row.labelElement, !available);
+  setSettingsTableInteractiveElementsDisabled(row.inputElement, !available);
+}
+
+function setSettingsTableInteractiveElementsDisabled(element, disabled) {
+  if ('disabled' in element) {
+    element.disabled = disabled;
+  }
+
+  element.querySelectorAll('input, button, select, textarea').forEach((controlElement) => {
+    controlElement.disabled = disabled;
   });
 }
 
