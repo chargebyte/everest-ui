@@ -31,8 +31,6 @@ constexpr char kConfEverestBaseConfPath[] = "everest_base_config_path";
 constexpr char kConfEverestOverlayConfPath[] = "everest_config_overlay_path";
 constexpr char kErrorEverestBaseConfigCopyFailed[] = "everest_base_config_copy_failed";
 constexpr char kErrorEverestBaseConfigVerificationFailed[] = "everest_base_config_verification_failed";
-constexpr char kEverestConfGenerateModule[] = "module_";
-constexpr char kEverestConfGenerateModuleGenerated[] = "module_generated";
 constexpr char kErrorEverestConfOverlayWriteFailed[] = "everest_config_overlay_write_failed";
 constexpr char kErrorEverestConfSymlinkCreateFailed[] = "everest_config_symlink_create_failed";
 constexpr char kErrorEverestConfSymlinkVerificationFailed[] = "everest_config_symlink_verification_failed";
@@ -256,32 +254,6 @@ ModuleResponse ensureEverestBaseConfig(ModuleResponse response) {
     return response;
 }
 
-QString generateActiveModuleKey(const QString &moduleName,
-                                const QJsonObject &activeModulesObject) {
-    QString sanitizedModuleName = moduleName.toLower();
-    sanitizedModuleName.replace(QLatin1Char(' '), QLatin1Char('_'));
-
-    QString baseKey = QLatin1String(kEverestConfGenerateModule);
-    for (const QChar character : sanitizedModuleName) {
-        if (character.isLetterOrNumber() || character == QLatin1Char('_')) {
-            baseKey.append(character);
-        }
-    }
-
-    if (baseKey == QLatin1String(kEverestConfGenerateModule)) {
-        baseKey = QLatin1String(kEverestConfGenerateModuleGenerated);
-    }
-
-    QString candidateKey = baseKey;
-    int suffix = 2;
-    while (activeModulesObject.contains(candidateKey)) {
-        candidateKey = baseKey + QLatin1Char('_') + QString::number(suffix);
-        suffix += 1;
-    }
-
-    return candidateKey;
-}
-
 QString resolveActiveModuleKey(const QString &moduleName, const QJsonObject &baseYamlRoot) {
     const QJsonObject activeModules = baseYamlRoot.value(QLatin1String(kEverestConfActiveModules)).toObject();
     const auto activeModuleKeys = activeModules.keys();
@@ -292,7 +264,7 @@ QString resolveActiveModuleKey(const QString &moduleName, const QJsonObject &bas
         }
     }
 
-    return generateActiveModuleKey(moduleName, activeModules);
+    return QString();
 }
 
 QJsonObject buildEverestConfigOverlayObject(const QJsonObject &requestParameters,
@@ -302,6 +274,9 @@ QJsonObject buildEverestConfigOverlayObject(const QJsonObject &requestParameters
     for (const QString &requestedModuleName : requestedModuleNames) {
         const QString activeModuleKey =
             resolveActiveModuleKey(requestedModuleName, baseYamlRoot);
+        if (activeModuleKey.isEmpty()) {
+            continue;
+        }
 
         overlayActiveModules.insert(activeModuleKey, QJsonObject{
                                                        {QLatin1String(kEverestConfModule), requestedModuleName},
@@ -324,9 +299,14 @@ bool writeEverestConfigOverlay(const QString &overlayPath, const QJsonObject &ov
     // This is implemented in plain C++/Qt for the time being.
     // For more complex configurations, a proper YAML emitter is required.
     QTextStream stream(&overlayFile);
+    const QJsonObject activeModules = overlayObject.value(QLatin1String(kEverestConfActiveModules)).toObject();
+    if (activeModules.isEmpty()) {
+        stream << QLatin1String(kEverestConfActiveModules) << ": {}\n";
+        return stream.status() == QTextStream::Ok;
+    }
+
     stream << QLatin1String(kEverestConfActiveModules) << ":\n";
 
-    const QJsonObject activeModules = overlayObject.value(QLatin1String(kEverestConfActiveModules)).toObject();
     const auto activeModuleKeys = activeModules.keys();
     for (const QString &activeModuleKey : activeModuleKeys) {
         const QJsonObject activeModule = activeModules.value(activeModuleKey).toObject();
