@@ -58,8 +58,6 @@ constexpr char kSafetyControllerSettingNone[] = "none";
 constexpr char kSafetyControllerSettingPt1000[] = "pt1000";
 constexpr char kSafetyControllerSettingContactors[] = "contactors";
 constexpr char kSafetyControllerSettingEstops[] = "estops";
-constexpr char kUnitCelsius[] = " \u00b0C";
-constexpr char kUnitOhm[] = " \u03a9";
 constexpr char kUnitMs[] = " ms";
 constexpr char kConfSafetyControllerSettingsBin[] = "safety_controller_settings_bin";
 constexpr char kConfSafetyControllerSettingsYaml[] = "safety_controller_settings_yaml";
@@ -77,8 +75,18 @@ SafetyControllerAction toSafetyControllerAction(const QString &action) {
 }
 
 QString stripUnitSuffix(const QJsonValue &value) {
-    const QString text = value.toString().trimmed();
+    QString text = value.toString().trimmed();
+    text.replace(QStringLiteral("Â°C"), QStringLiteral("\u00b0C"));
+    text.replace(QStringLiteral("Î©"), QStringLiteral("\u03a9"));
     return text.section(QLatin1Char(' '), 0, 0);
+}
+
+QString unitCelsius() {
+    return QStringLiteral(" \u00b0C");
+}
+
+QString unitOhm() {
+    return QStringLiteral(" \u03a9");
 }
 
 QString jsonValueToText(const QJsonValue &value) {
@@ -398,10 +406,10 @@ QJsonValue updatePt1000ParametersInYaml(const QJsonObject &requestBlock) {
     return QJsonObject{
         {QLatin1String(kSftyCtrlrParamAbortTemp),
          jsonValueToText(requestBlock.value(QLatin1String(kSftyCtrlrParamAbortTemp))) +
-             QLatin1String(kUnitCelsius)},
+             unitCelsius()},
         {QLatin1String(kSftyCtrlrParamResistanceOffset),
          jsonValueToText(requestBlock.value(QLatin1String(kSftyCtrlrParamResistanceOffset))) +
-             QLatin1String(kUnitOhm)},
+             unitOhm()},
     };
 }
 
@@ -546,8 +554,10 @@ ModuleResponse convertSafetyControllerYamlToBin(const QString &yamlPath,
                                                 ModuleResponse response) {
     ConsoleConnector console;
     ConsoleConnector::ExecOptions options;
+
+    const auto command = QLatin1String(kCmdRaPbCreate) + QStringLiteral(" ") + QLatin1String(kCmdFlagI) + QStringLiteral(" ") + QLatin1String(kCmdYamlPath) + QStringLiteral(" ") + QLatin1String(kCmdFlagO) + QStringLiteral(" ") + QLatin1String(kCmdBinPath);
     const ConsoleConnector::RunResult result = console.executeTemplate(
-        QLatin1String(kCmdRaPbCreate) + QStringLiteral(" ") + QLatin1String(kCmdFlagI) + QLatin1String(kCmdYamlPath) + QStringLiteral(" ") + QLatin1String(kCmdFlagO) + QLatin1String(kCmdBinPath),
+        command,
         {
             {QLatin1String(kCmdYamlPath), yamlPath},
             {QLatin1String(kCmdBinPath), binPath},

@@ -12,6 +12,13 @@
 #include <yaml-cpp/yaml.h>
 
 namespace {
+QString normalizeLegacyYamlUnits(const QString &value) {
+    QString normalizedValue = value;
+    normalizedValue.replace(QStringLiteral("Â°C"), QStringLiteral("\u00b0C"));
+    normalizedValue.replace(QStringLiteral("Î©"), QStringLiteral("\u03a9"));
+    return normalizedValue;
+}
+
 QJsonValue yamlNodeToJsonValue(const YAML::Node &node) {
     if (!node || node.IsNull()) {
         return QJsonValue();
@@ -38,7 +45,7 @@ QJsonValue yamlNodeToJsonValue(const YAML::Node &node) {
             return QJsonValue(doubleValue);
         }
 
-        return QJsonValue(QString::fromStdString(scalar));
+        return QJsonValue(normalizeLegacyYamlUnits(QString::fromStdString(scalar)));
     }
 
     if (node.IsSequence()) {
