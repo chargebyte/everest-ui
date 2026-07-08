@@ -43,6 +43,11 @@ export function renderUpdateBlock(blockConfig, options = {}) {
   uploaderHost.className = `${scopeName}-update-uploader`;
   element.appendChild(uploaderHost);
 
+  const warningElement = document.createElement('p');
+  warningElement.className = `${scopeName}-update-warning update-warning`;
+  warningElement.hidden = true;
+  element.appendChild(warningElement);
+
   const controlsElement = document.createElement('div');
   controlsElement.className = 'controls';
 
@@ -77,7 +82,8 @@ export function renderUpdateBlock(blockConfig, options = {}) {
   const state = {
     progressText: options.progressPlaceholder || 'Idle',
     rebootRequired: false,
-    updating: false
+    updating: false,
+    warningText: ''
   };
 
   let updateHandler = () => {};
@@ -100,6 +106,7 @@ export function renderUpdateBlock(blockConfig, options = {}) {
     if (!state.rebootRequired) {
       state.progressText = options.progressPlaceholder || 'Idle';
     }
+    state.warningText = '';
 
     syncView();
   });
@@ -230,6 +237,10 @@ export function renderUpdateBlock(blockConfig, options = {}) {
 
       syncView();
     },
+    setWarning(text) {
+      state.warningText = normalizeText(text, '');
+      syncView();
+    },
     destroy() {}
   };
 
@@ -242,6 +253,8 @@ export function renderUpdateBlock(blockConfig, options = {}) {
     rebootValue.textContent = state.rebootRequired
       ? (options.rebootRequiredText || 'Reboot required')
       : (options.rebootPlaceholder || 'Not required');
+    warningElement.textContent = state.warningText;
+    warningElement.hidden = state.warningText === '';
 
     updateButton.disabled =
       state.updating ||

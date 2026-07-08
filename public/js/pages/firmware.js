@@ -70,6 +70,7 @@ export function renderFirmwarePage(container, {
     firmwareState.updateStarted = false;
 
     updateBlock.setRebootRequired(false);
+    updateBlock.setWarning('');
     updateBlock.setProgress('Starting upload...');
 
     const startRequest = buildRequestFromUpdateBlock(updateBlock, pageConfig.actions['upload_image.start']);
@@ -131,6 +132,7 @@ export function renderFirmwarePage(container, {
 
       if (message.type === 'firmware.upload_image.start.ack' && message.ok === true) {
         addLog('firmware.upload_image.start.ack received');
+        updateBlock.setWarning('');
         firmwareState.uploadStarted = true;
         firmwareState.awaitingChunkAck = false;
         updateBlock.setProgress('Uploading chunk 1 of ' + firmwareState.chunkCount);
@@ -276,7 +278,15 @@ export function renderFirmwarePage(container, {
 
       if (isFirmwareUploadError(message.type)) {
         const error = message.parameters?.error;
-        addLog(`${message.type}: ${error}`);
+        if (message.type === 'firmware.upload_image.start.error' &&
+            error === 'firmware_image_dir_insufficient_space') {
+          const warningText = buildFirmwareSpaceWarning(message.parameters);
+          updateBlock.setWarning(warningText);
+          addLog(`${message.type}: ${warningText}`);
+        } else {
+          updateBlock.setWarning('');
+          addLog(`${message.type}: ${error}`);
+        }
         resetUploadState(firmwareState);
         firmwareState.rebootRequired = false;
         updateBlock.setRebootRequired(false);
@@ -286,6 +296,7 @@ export function renderFirmwarePage(container, {
 
       if (message.type === 'firmware.update_image.error') {
         const error = message.parameters?.error;
+        updateBlock.setWarning('');
         addLog(`firmware.update_image.error: ${error}`);
         resetUploadState(firmwareState);
         firmwareState.rebootRequired = false;
@@ -295,6 +306,7 @@ export function renderFirmwarePage(container, {
 
       if (message.type === 'firmware.reboot.error') {
         const error = message.parameters?.error;
+        updateBlock.setWarning('');
         addLog(`firmware.reboot.error: ${error}`);
         updateBlock.setRebootRequired(true);
         updateBlock.setProgress('Reboot failed');
@@ -303,6 +315,7 @@ export function renderFirmwarePage(container, {
 
       if (message.ok === false) {
         const error = message.parameters?.error || message.error || 'unknown_error';
+        updateBlock.setWarning('');
         addLog(`firmware backend error: ${error}`);
         resetUploadState(firmwareState);
         firmwareState.rebootRequired = false;
@@ -332,6 +345,46 @@ export function renderFirmwarePage(container, {
     },
     destroy() {}
   };
+}
+
+function buildFirmwareSpaceWarning(parameters) {
+  const requiredBytes = normalizeFiniteNumber(parameters?.required_bytes);
+  const availableBytes = normalizeFiniteNumber(parameters?.available_bytes);
+
+  if (requiredBytes === null || availableBytes === null) {
+    return 'Not enough free space in firmware target directory.';
+  }
+
+  return `Not enough free space in firmware target directory: need ${formatBytes(requiredBytes)}, available ${formatBytes(availableBytes)}.`;
+}
+
+function normalizeFiniteNumber(value) {
+  if (Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function formatBytes(value) {
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let size = value;
+  let unitIndex = 0;
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+
+  const decimals = unitIndex === 0 ? 0 : 1;
+  return `${size.toFixed(decimals)} ${units[unitIndex]}`;
 }
 
 async function sendNextUploadChunk({

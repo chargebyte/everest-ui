@@ -14,6 +14,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QStorageInfo>
 
 #include <stdexcept>
 
@@ -36,6 +37,7 @@ constexpr char kErrorFirmwareImageDirNotWritable[] = "firmware_image_dir_not_wri
 constexpr char kErrorFirmwareImageBase64Invalid[] = "invalid_image";
 constexpr char kErrorFirmwareImageWriteFailed[] = "firmware_image_write_failed";
 constexpr char kErrorFirmwareImageCleanupFailed[] = "firmware_image_cleanup_failed";
+constexpr char kErrorFirmwareImageDirInsufficientSpace[] = "firmware_image_dir_insufficient_space";
 constexpr char kParametersVersion[] = "version";
 
 } // namespace
@@ -348,7 +350,7 @@ FirmwareImageCleanupResult cleanOldFirmwareImages(const QString &keepFilePath) {
     const QDir imageDir(imageDirResult.path);
     const QString keepPath = keepFilePath.isEmpty() ? QString() : QDir::cleanPath(keepFilePath);
     const QFileInfoList fileInfos = imageDir.entryInfoList(
-        QDir::Files | QDir::NoSymLinks | QDir::Readable | QDir::Writable,
+        QDir::Files | QDir::Hidden | QDir::NoSymLinks,
         QDir::Time | QDir::Reversed);
 
     for (const QFileInfo &fileInfo : fileInfos) {
@@ -367,6 +369,44 @@ FirmwareImageCleanupResult cleanOldFirmwareImages(const QString &keepFilePath) {
 
     return FirmwareImageCleanupResult{
         .success = true,
+        .error = QString(),
+    };
+}
+
+FirmwareImageSpaceResult checkFirmwareImageSpace(const QString &imageDirPath, qint64 requiredBytes) {
+    if (requiredBytes <= 0) {
+        return FirmwareImageSpaceResult{
+            .success = false,
+            .availableBytes = 0,
+            .requiredBytes = requiredBytes,
+            .error = QString::fromLatin1(kErrorInvalidParams),
+        };
+    }
+
+    const QStorageInfo storageInfo(imageDirPath);
+    if (!storageInfo.isValid() || !storageInfo.isReady()) {
+        return FirmwareImageSpaceResult{
+            .success = false,
+            .availableBytes = 0,
+            .requiredBytes = requiredBytes,
+            .error = QString::fromLatin1(kErrorFirmwareImageDirInsufficientSpace),
+        };
+    }
+
+    const qint64 availableBytes = storageInfo.bytesAvailable();
+    if (availableBytes < requiredBytes) {
+        return FirmwareImageSpaceResult{
+            .success = false,
+            .availableBytes = availableBytes,
+            .requiredBytes = requiredBytes,
+            .error = QString::fromLatin1(kErrorFirmwareImageDirInsufficientSpace),
+        };
+    }
+
+    return FirmwareImageSpaceResult{
+        .success = true,
+        .availableBytes = availableBytes,
+        .requiredBytes = requiredBytes,
         .error = QString(),
     };
 }
