@@ -19,7 +19,7 @@ The project installs three binaries:
 - `webserver`
 - `webui`
 
-It also installs the runtime configuration files into `config/` and the browser assets into `public/`.
+It installs the runtime configuration files into `/etc/everest-ui/`, the browser assets into `/usr/share/everest-ui/public/`, and the auth store is created at `/var/lib/everest/everest-ui/auth.json`.
 
 Example build and install flow:
 
@@ -45,6 +45,19 @@ If `CMAKE_INSTALL_PREFIX` is not set explicitly, the default install path is:
 
 ## Configure the UI
 
+### UI configuration files
+
+The UI installs its own configuration files to `/etc/everest-ui/`:
+
+- `/etc/everest-ui/backend.conf`
+- `/etc/everest-ui/frontend.conf`
+
+The browser assets are installed to `/usr/share/everest-ui/public/`.
+
+The authentication database is created on first setup at:
+
+- `/var/lib/everest/everest-ui/auth.json`
+
 ### EVerest configuration paths
 
 The EVerest paths are configured in [`backend.conf`](./backend/api/config/backend.conf).
@@ -68,7 +81,7 @@ The port for the UI websocket connection is configured in [`backend.conf`](./bac
 
 In `frontend.conf`, it needs to be ensured that the same backend port is used in the entry `backend_ws`.
 
-The template for that file is [`backend/webserver/config/frontend.conf.in`](./backend/webserver/config/frontend.conf.in). The installed file is created during `cmake`/`make install`.
+The template for that file is [`backend/webserver/config/frontend.conf.in`](./backend/webserver/config/frontend.conf.in). The installed file is created during `cmake`/`make install` and placed in `/etc/everest-ui/frontend.conf`.
 
 The entry `port` in `frontend.conf` defines on which port the UI is accessible from the browser.
 
@@ -79,7 +92,7 @@ The UI is started by running the `webui` binary.
 Example:
 
 ```bash
-[install path]/bin/webui
+${prefix}/bin/webui
 ```
 
 If you use the default install prefix, that is:
@@ -87,6 +100,8 @@ If you use the default install prefix, that is:
 ```bash
 ./install/bin/webui
 ```
+
+The launcher `webui` starts the helper binaries from `${prefix}/libexec/everest-ui/`.
 
 If the systemd service was installed and is not started automatically, it can be started with:
 
@@ -96,7 +111,7 @@ systemctl start webui.service
 
 ## Access the UI
 
-The UI is accessed via the browser using the IP address of the device together with the port specified in `frontend.conf`.
+The UI is accessed via the browser using the IP address of the device together with the port specified in `/etc/everest-ui/frontend.conf`.
 
 Example:
 

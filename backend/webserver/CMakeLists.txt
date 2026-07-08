@@ -25,6 +25,7 @@ target_link_libraries(webserver PRIVATE
 )
 
 target_include_directories(webserver PRIVATE
+    "${CMAKE_BINARY_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/auth"
     "${CMAKE_CURRENT_SOURCE_DIR}/config"
     "${CMAKE_CURRENT_SOURCE_DIR}/http"
@@ -32,7 +33,7 @@ target_include_directories(webserver PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/ws"
 )
 
-set(WEBSERVER_INSTALL_ROOT "../public")
+set(WEBSERVER_INSTALL_ROOT "${EVEREST_UI_INSTALL_PUBLIC_DIR}")
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/config/frontend.conf.in"
     "${CMAKE_CURRENT_BINARY_DIR}/frontend.conf"
@@ -40,13 +41,13 @@ configure_file(
 )
 
 install(TARGETS webserver
-    RUNTIME DESTINATION bin
+    RUNTIME DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/everest-ui"
 )
 
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/frontend.conf"
-    DESTINATION config
+    DESTINATION "/etc/everest-ui"
 )
 
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/public/"
-    DESTINATION public
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/everest-ui/public"
 )

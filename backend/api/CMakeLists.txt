@@ -29,15 +29,16 @@ target_link_libraries(api
 )
 
 target_include_directories(api PRIVATE
+    "${CMAKE_BINARY_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/modules"
     "${CMAKE_CURRENT_SOURCE_DIR}/libs"
 )
 
 install(TARGETS api
-    RUNTIME DESTINATION bin
+    RUNTIME DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/everest-ui"
 )
 
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/config/backend.conf"
-    DESTINATION config
+    DESTINATION "/etc/everest-ui"
 )

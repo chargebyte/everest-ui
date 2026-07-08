@@ -2,6 +2,8 @@
 
 // Copyright 2026 chargebyte GmbH
 
+#include "InstallPaths.hpp"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -133,8 +135,39 @@ private:
 };
 #endif
 
-QString resolveInstallPath(const QString &relativePath) {
-    return QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(relativePath);
+QString resolveFirstExistingPath(const QStringList &candidates) {
+    for (const QString &candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            return QDir::cleanPath(candidate);
+        }
+    }
+
+    return candidates.isEmpty() ? QString() : QDir::cleanPath(candidates.constFirst());
+}
+
+QString resolveBackendBinaryPath() {
+    const QString applicationDir = QCoreApplication::applicationDirPath();
+    return resolveFirstExistingPath({
+        QStringLiteral(EVEREST_UI_INSTALL_API_BINARY),
+        QDir(applicationDir).absoluteFilePath(QStringLiteral("api")),
+    });
+}
+
+QString resolveFrontendBinaryPath() {
+    const QString applicationDir = QCoreApplication::applicationDirPath();
+    return resolveFirstExistingPath({
+        QStringLiteral(EVEREST_UI_INSTALL_WEBSERVER_BINARY),
+        QDir(applicationDir).absoluteFilePath(QStringLiteral("webserver")),
+    });
+}
+
+QString resolveBackendConfigPath() {
+    const QString applicationDir = QCoreApplication::applicationDirPath();
+    return resolveFirstExistingPath({
+        QStringLiteral(EVEREST_UI_INSTALL_BACKEND_CONFIG),
+        QDir(applicationDir).absoluteFilePath(QStringLiteral("../config/backend.conf")),
+        QDir(applicationDir).absoluteFilePath(QStringLiteral("backend.conf")),
+    });
 }
 
 QString readConfigValue(const QString &configPath, const QString &configKey) {
@@ -190,9 +223,9 @@ public:
     }
 
     int start() {
-        m_backendBinaryPath = resolveInstallPath(QStringLiteral("api"));
-        m_frontendBinaryPath = resolveInstallPath(QStringLiteral("webserver"));
-        m_backendConfigPath = resolveInstallPath(QStringLiteral("../config/backend.conf"));
+        m_backendBinaryPath = resolveBackendBinaryPath();
+        m_frontendBinaryPath = resolveFrontendBinaryPath();
+        m_backendConfigPath = resolveBackendConfigPath();
 
         if (!QFileInfo::exists(m_backendBinaryPath)) {
             QTextStream(stderr) << "Missing api binary: " << m_backendBinaryPath << "\n";

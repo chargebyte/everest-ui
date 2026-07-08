@@ -3,6 +3,7 @@
 // Copyright 2026 chargebyte GmbH
 
 #include "BackendConfig.hpp"
+#include "InstallPaths.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -14,6 +15,7 @@ namespace {
 QStringList backendConfigCandidates() {
     const QString applicationDir = QCoreApplication::applicationDirPath();
     return {
+        QStringLiteral(EVEREST_UI_INSTALL_BACKEND_CONFIG),
         QDir(applicationDir).filePath(QStringLiteral("../config/backend.conf")),
         QDir(applicationDir).filePath(QStringLiteral("backend.conf")),
     };
