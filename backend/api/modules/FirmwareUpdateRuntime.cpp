@@ -380,6 +380,15 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadFinishRequest(const ModuleRequ
     return response;
 }
 
+void FirmwareUpdateRuntime::handleClientDisconnected() {
+    if (!m_uploadRunning) {
+        return;
+    }
+
+    qInfo() << "Aborting firmware upload because client disconnected";
+    abortUploadAndRemovePartialFile();
+}
+
 void FirmwareUpdateRuntime::processStdoutChunk(const QByteArray &chunk) {
     m_stdoutLineBuffer.append(chunk);
 

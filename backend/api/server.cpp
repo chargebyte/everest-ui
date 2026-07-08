@@ -5,6 +5,8 @@
 #include "server.hpp"
 
 #include "BackendConfig.hpp"
+#include "modules/FirmwareUpdate.hpp"
+#include "modules/FirmwareUpdateRuntime.hpp"
 #include "modules/PCAP.hpp"
 #include "RequestHandler.hpp"
 #include "RpcApiClient.hpp"
@@ -123,6 +125,8 @@ void MinimalWebSocketServer::handleNewConnection() {
 
 void MinimalWebSocketServer::handleDisconnected() {
     qInfo() << "Client disconnected";
+
+    FirmwareUpdate::runtime().handleClientDisconnected();
 
     if (m_handler) {
         QObject::disconnect(m_client, nullptr, m_handler, nullptr);
