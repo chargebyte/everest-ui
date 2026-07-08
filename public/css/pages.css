@@ -317,6 +317,17 @@
   margin-bottom: 12px;
 }
 
+.update-warning {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #e2c48d;
+  border-radius: 6px;
+  background: #fff5df;
+  color: #7a4b00;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
 .firmware-upload-slot {
   margin-bottom: 12px;
 }

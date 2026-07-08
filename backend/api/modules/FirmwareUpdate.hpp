@@ -51,11 +51,19 @@ struct FirmwareImageCleanupResult {
     QString error;
 };
 
+struct FirmwareImageSpaceResult {
+    bool success = false;
+    qint64 availableBytes = 0;
+    qint64 requiredBytes = 0;
+    QString error;
+};
+
 namespace FirmwareUpdate {
     ModuleResponse handleRequest(const ModuleRequest &request);
     FirmwareImageDirResult loadFirmwareImageDir(const QString &configKey);
     QString loadBackendConfigValue(const QString &configKey);
     FirmwareImageCleanupResult cleanOldFirmwareImages(const QString &keepFilePath = QString());
+    FirmwareImageSpaceResult checkFirmwareImageSpace(const QString &imageDirPath, qint64 requiredBytes);
     FirmwareUpdateRuntime &runtime();
 }
 

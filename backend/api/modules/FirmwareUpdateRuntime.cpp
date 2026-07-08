@@ -36,12 +36,15 @@ constexpr char kFirmwareUploadSizeExceeded[] = "upload_size_exceeded";
 constexpr char kFirmwareUploadIncomplete[] = "upload_incomplete";
 constexpr char kFirmwareUploadFinishFailed[] = "firmware_upload_finish_failed";
 constexpr char kFirmwareUploadChecksumMismatch[] = "checksum_mismatch";
+constexpr char kFirmwareImageDirInsufficientSpace[] = "firmware_image_dir_insufficient_space";
 constexpr char kParametersChunkCount[] = "chunk_count";
 constexpr char kParametersChunkSizeBytes[] = "chunk_size_bytes";
 constexpr char kParametersChunkIndex[] = "chunk_index";
 constexpr char kParametersSha256[] = "sha256";
 constexpr char kParametersStage[] = "stage";
 constexpr char kParametersRestartRequired[] = "restart_required";
+constexpr char kParametersAvailableBytes[] = "available_bytes";
+constexpr char kParametersRequiredBytes[] = "required_bytes";
 
 }
 
@@ -178,6 +181,21 @@ ModuleResponse FirmwareUpdateRuntime::handleUploadStartRequest(const ModuleReque
         response.parameters = QJsonObject{
             {QLatin1String(kError), cleanupResult.error},
         };
+        return response;
+    }
+
+    const FirmwareImageSpaceResult spaceResult =
+        FirmwareUpdate::checkFirmwareImageSpace(imageDirResult.path, sizeBytes);
+    if (!spaceResult.success) {
+        response.parameters = QJsonObject{
+            {QLatin1String(kError), spaceResult.error},
+        };
+        if (spaceResult.error == QLatin1String(kFirmwareImageDirInsufficientSpace)) {
+            response.parameters.insert(
+                QLatin1String(kParametersAvailableBytes), spaceResult.availableBytes);
+            response.parameters.insert(
+                QLatin1String(kParametersRequiredBytes), spaceResult.requiredBytes);
+        }
         return response;
     }
 
