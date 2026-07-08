@@ -10,6 +10,7 @@ target_link_libraries(webui PRIVATE
 )
 
 target_include_directories(webui PRIVATE
+    "${CMAKE_BINARY_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 

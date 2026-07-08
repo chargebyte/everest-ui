@@ -6,6 +6,7 @@
 #include "StaticServer.hpp"
 #include "AppTitleResolver.hpp"
 #include "AuthManager.hpp"
+#include "InstallPaths.hpp"
 #include "WebSocketProxySession.hpp"
 
 #include <QCoreApplication>
@@ -20,6 +21,7 @@ namespace {
 QString resolveFrontendConfigPath() {
     const QString applicationDir = QCoreApplication::applicationDirPath();
     const QStringList candidates = {
+        QStringLiteral(EVEREST_UI_INSTALL_FRONTEND_CONFIG),
         QDir(applicationDir).absoluteFilePath(QStringLiteral("../config/frontend.conf")),
         QDir(applicationDir).absoluteFilePath(QStringLiteral("../frontend.conf")),
     };
