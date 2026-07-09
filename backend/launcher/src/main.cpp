@@ -41,8 +41,8 @@ QString unixSignalName(int signalNumber) {
     switch (signalNumber) {
     case SIGINT:
         return QStringLiteral("SIGINT");
-    case SIGQUIT:
-        return QStringLiteral("SIGQUIT");
+    case SIGTERM:
+        return QStringLiteral("SIGTERM");
     default:
         return QStringLiteral("signal %1").arg(signalNumber);
     }
@@ -90,7 +90,7 @@ public:
                     handleSignalNotification();
                 });
 
-        if (!installUnixSignalHandler(SIGINT) || !installUnixSignalHandler(SIGQUIT)) {
+        if (!installUnixSignalHandler(SIGINT) || !installUnixSignalHandler(SIGTERM)) {
             QTextStream(stderr) << "Failed to install Unix signal handlers.\n";
         }
     }
