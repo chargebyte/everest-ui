@@ -3,18 +3,44 @@
 // Copyright 2026 chargebyte GmbH
 
 #include "WebSocketProxySession.hpp"
+#include "UiOccupancyTracker.hpp"
 
 #include <QAbstractSocket>
 #include <QtGlobal>
+#include <QTextStream>
 #include <QWebSocket>
 #include <QWebSocketProtocol>
 
 WebSocketProxySession::WebSocketProxySession(QWebSocket *clientSocket,
                                              const QUrl &backendUrl,
+                                             const QString &sessionId,
+                                             const QString &peerAddress,
+                                             UiOccupancyTracker *uiOccupancyTracker,
                                              QObject *parent)
     : QObject(parent),
       m_client(clientSocket),
+      m_uiOccupancyTracker(uiOccupancyTracker),
+      m_sessionId(sessionId),
+      m_peerAddress(peerAddress),
       m_backend(new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this)) {
+    if (m_uiOccupancyTracker && !m_uiOccupancyTracker->tryClaim(m_sessionId, m_peerAddress)) {
+        QTextStream(stdout) << "Rejecting UI session from " << m_peerAddress;
+        if (m_uiOccupancyTracker->hasOwner()) {
+            QTextStream(stdout) << " while active UI session is held by "
+                                << m_uiOccupancyTracker->ownerPeerAddress();
+        }
+        QTextStream(stdout) << "\n";
+        m_client->close(QWebSocketProtocol::CloseCodePolicyViolated,
+                        QStringLiteral("ui already in use"));
+        deleteLater();
+        return;
+    }
+
+    m_ownsOccupancy = m_uiOccupancyTracker != nullptr;
+    if (m_ownsOccupancy) {
+        QTextStream(stdout) << "Active UI session claimed by " << m_peerAddress << "\n";
+    }
+
     // WebSocket-upgrade flow, Step 3:
     // Once the backend WS is connected, flush browser messages queued during
     // backend connection setup.
@@ -67,6 +93,7 @@ WebSocketProxySession::WebSocketProxySession(QWebSocket *clientSocket,
 
     // Close propagation: browser side closed -> close backend side.
     connect(m_client, &QWebSocket::disconnected, this, [this]() {
+        releaseOccupancy();
         if (m_backend->state() == QAbstractSocket::ConnectedState ||
             m_backend->state() == QAbstractSocket::ConnectingState) {
             m_backend->close(QWebSocketProtocol::CloseCodeGoingAway,
@@ -77,6 +104,7 @@ WebSocketProxySession::WebSocketProxySession(QWebSocket *clientSocket,
 
     // Close propagation: backend side closed -> close browser side.
     connect(m_backend, &QWebSocket::disconnected, this, [this]() {
+        releaseOccupancy();
         if (m_client->state() == QAbstractSocket::ConnectedState) {
             m_client->close(m_backend->closeCode(), m_backend->closeReason());
         }
@@ -115,6 +143,7 @@ bool WebSocketProxySession::canQueueMessage(qint64 messageBytes) const {
 }
 
 void WebSocketProxySession::closeDueToQueueOverflow() {
+    releaseOccupancy();
     if (m_client->state() == QAbstractSocket::ConnectedState) {
         m_client->close(QWebSocketProtocol::CloseCodeTooMuchData,
                         QStringLiteral("proxy pending queue overflow"));
@@ -125,4 +154,14 @@ void WebSocketProxySession::closeDueToQueueOverflow() {
                          QStringLiteral("proxy pending queue overflow"));
     }
     deleteLater();
+}
+
+void WebSocketProxySession::releaseOccupancy() {
+    if (!m_ownsOccupancy || !m_uiOccupancyTracker) {
+        return;
+    }
+
+    m_uiOccupancyTracker->release(m_sessionId);
+    QTextStream(stdout) << "Active UI session released for " << m_peerAddress << "\n";
+    m_ownsOccupancy = false;
 }

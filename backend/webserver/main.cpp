@@ -7,14 +7,17 @@
 #include "AppTitleResolver.hpp"
 #include "AuthManager.hpp"
 #include "InstallPaths.hpp"
+#include "UiOccupancyTracker.hpp"
 #include "WebSocketProxySession.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QQueue>
 #include <QTcpSocket>
 #include <QTextStream>
 #include <QWebSocket>
+#include <QWebSocketProtocol>
 #include <QWebSocketServer>
 
 namespace {
@@ -34,6 +37,11 @@ QString resolveFrontendConfigPath() {
 
     return candidates.constFirst();
 }
+
+struct PendingWebSocketUpgrade {
+    QString sessionId;
+    QString peerAddress;
+};
 }
 
 int main(int argc, char *argv[]) {
@@ -56,14 +64,20 @@ int main(int argc, char *argv[]) {
     }
 
     AppTitleResolver appTitleResolver(cfg.appTitle, cfg.backendUrl);
-    StaticServer server(cfg, &authManager, &appTitleResolver);
+    UiOccupancyTracker uiOccupancyTracker;
+    StaticServer server(cfg, &authManager, &appTitleResolver, &uiOccupancyTracker);
     QWebSocketServer wsServer(QStringLiteral("webui-ws"), QWebSocketServer::NonSecureMode);
+    QQueue<PendingWebSocketUpgrade> pendingUpgrades;
 
     QObject::connect(&server, &StaticServer::webSocketUpgradeRequested,
-                     &server, [&server, &wsServer](QTcpSocket *socket) {
+                     &server, [&server, &wsServer, &pendingUpgrades](
+                                  QTcpSocket *socket,
+                                  const QString &sessionId,
+                                  const QString &peerAddress) {
                          if (!socket) {
                             return;
                          }
+                         pendingUpgrades.enqueue({sessionId, peerAddress});
                          // WebSocket-upgrade flow, Step 2:
                          // Pass the same TCP socket to QWebSocketServer so Qt completes
                          // the HTTP->WebSocket upgrade handshake (HTTP 101).
@@ -75,11 +89,20 @@ int main(int argc, char *argv[]) {
                      });
 
     QObject::connect(&wsServer, &QWebSocketServer::newConnection, &wsServer,
-                     [&wsServer, &cfg]() {
+                     [&wsServer, &cfg, &pendingUpgrades, &uiOccupancyTracker]() {
                          QWebSocket *client = wsServer.nextPendingConnection();
                          if (!client) {
                              return;
                          }
+                         if (pendingUpgrades.isEmpty()) {
+                             QTextStream(stdout) << "WS client accepted without upgrade metadata\n";
+                             client->close(QWebSocketProtocol::CloseCodeProtocolError,
+                                           QStringLiteral("missing upgrade metadata"));
+                             client->deleteLater();
+                             return;
+                         }
+
+                         const PendingWebSocketUpgrade pendingUpgrade = pendingUpgrades.dequeue();
                          if (cfg.debugLog) {
                              QTextStream(stdout) << "WS client accepted, proxying to "
                                                  << cfg.backendUrl.toString() << "\n";
@@ -87,7 +110,10 @@ int main(int argc, char *argv[]) {
                          // WebSocket-upgrade flow, Step 3 + Step 4:
                          // For this upgraded browser socket, create a proxy session that
                          // connects to backend WS and then bridges traffic both ways.
-                         new WebSocketProxySession(client, cfg.backendUrl, client);
+                         new WebSocketProxySession(client, cfg.backendUrl,
+                                                   pendingUpgrade.sessionId,
+                                                   pendingUpgrade.peerAddress,
+                                                   &uiOccupancyTracker, client);
                      });
 
     if (!server.listen(cfg.bindAddress, cfg.port)) {

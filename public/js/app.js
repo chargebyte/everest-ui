@@ -25,6 +25,10 @@ async function init() {
     renderAuthGate(appRoot, 'login', appTitle);
     return;
   }
+  if (status.uiBusy) {
+    renderBusyGate(appRoot, appTitle);
+    return;
+  }
   await startAuthenticatedApp(appRoot, appTitle);
 }
 
@@ -125,10 +129,45 @@ function renderAuthGate(appRoot, mode, appTitle = 'EVerest WebUI', message = '')
         await sendAuthRequest('/auth/setup', { username, password });
       }
       await sendAuthRequest('/auth/login', { username, password });
-      await startAuthenticatedApp(appRoot, appTitle);
+      const status = await readAuthStatus();
+      const effectiveTitle = normalizeAppTitle(status.appTitle || appTitle);
+      if (status.uiBusy) {
+        renderBusyGate(appRoot, effectiveTitle);
+        return;
+      }
+      await startAuthenticatedApp(appRoot, effectiveTitle);
     } catch (error) {
       errorNode.textContent = formatAuthError(error.message);
     }
+  });
+}
+
+function renderBusyGate(appRoot, appTitle = 'EVerest WebUI') {
+  document.title = `${appTitle} Busy`;
+  appRoot.innerHTML = `
+    <div class="auth-shell">
+      <div class="auth-frame">
+        <div class="auth-panel auth-panel--info">
+          <div class="auth-brand">
+            <img class="auth-logo" src="assets/chargebyte_logo.jpg" alt="chargebyte logo" />
+          </div>
+          <div class="auth-heading">
+            <h1>${escapeHtml(appTitle)}</h1>
+          </div>
+          <p class="auth-info">
+            This Web UI is currently in use from another browser session.
+          </p>
+          <p class="auth-info auth-info-soft">
+            Close the active session or reload this page later.
+          </p>
+          <button class="auth-button" id="busy-reload-button" type="button">Reload</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  appRoot.querySelector('#busy-reload-button')?.addEventListener('click', () => {
+    window.location.reload();
   });
 }
 
@@ -182,9 +221,12 @@ function createAppTransport(appContext) {
       state.connection.connected = true;
       appContext.state.page?.onConnectionChange?.(true);
     },
-    onClose() {
+    onClose(event) {
       state.connection.connected = false;
       appContext.state.page?.onConnectionChange?.(false);
+      if (event?.reason === 'ui already in use') {
+        renderBusyGate(createAppRoot(), appContext.appTitle);
+      }
     },
     onMessage(message) {
       appContext.state.page?.onMessage?.(message);
