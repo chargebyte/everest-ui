@@ -105,16 +105,17 @@ void MinimalWebSocketServer::handleNewConnection() {
         return;
     }
 
+    const QString peer_addr_port{incoming->peerAddress().toString() + ":" + QString::number(incoming->peerPort())};
     // reject all incoming connections if one connection is already established
     if (m_client) {
-        qWarning() << "Rejecting additional client connection";
+        qWarning() << "Rejecting additional client connection from" << peer_addr_port;
         incoming->close();
         incoming->deleteLater();
         return;
     }
 
     m_client = incoming;
-    qInfo() << "Client connected";
+    qInfo() << "Client connected from" << peer_addr_port;
 
     m_handler->setSocket(m_client);
     connect(m_client, &QWebSocket::textMessageReceived, m_handler,
