@@ -41,7 +41,7 @@ private:
     bool isPublicFrontendAsset(const ParsedRequest &request) const;
     bool isAuthenticated(const ParsedRequest &request);
     QString sessionIdFromRequest(const ParsedRequest &request) const;
-    StaticResponse handleAuthRequest(const ParsedRequest &request);
+    StaticResponse handleAuthRequest(const ParsedRequest &request, const QString &peerAddress);
     static void sendResponseAndClose(QTcpSocket *socket, const StaticResponse &response);
 
     AuthManager *m_authManager = nullptr;

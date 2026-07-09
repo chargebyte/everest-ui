@@ -12,6 +12,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QHostAddress>
+#include <QTextStream>
 #include <QTcpSocket>
 #include <QTimer>
 
@@ -137,7 +138,8 @@ void StaticServer::handleRequest(QTcpSocket *socket, QTimer *headerTimer) {
 
     if (isAuthEndpoint(request.normalizedPath)) {
         socket->readAll();
-        response = handleAuthRequest(request);
+        response = handleAuthRequest(request,
+                                     formatPeerAddress(socket->peerAddress(), socket->peerPort()));
         sendResponseAndClose(socket, response);
         return;
     }
@@ -211,7 +213,8 @@ QString StaticServer::sessionIdFromRequest(const ParsedRequest &request) const {
     return QString::fromUtf8(request.cookies.value(QByteArray(AuthManager::kSessionCookieName)));
 }
 
-StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request) {
+StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request,
+                                               const QString &peerAddress) {
     if (!m_authManager) {
         return makeJsonResponse(500, QStringLiteral("Internal Server Error"),
                                 QJsonObject{{QStringLiteral("error"), QStringLiteral("auth_unavailable")}});
@@ -227,6 +230,11 @@ StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request) {
         const QString sessionId = authenticated ? sessionIdFromRequest(request) : QString();
         const bool uiBusy =
             authenticated && m_uiOccupancyTracker && m_uiOccupancyTracker->isBusyForSession(sessionId);
+        if (uiBusy) {
+            QTextStream(stdout) << "Blocked UI access from " << peerAddress
+                                << " while active UI session is held by "
+                                << m_uiOccupancyTracker->ownerPeerAddress() << "\n";
+        }
 
         return makeJsonResponse(200, QStringLiteral("OK"),
                                 QJsonObject{{QStringLiteral("setupRequired"),
