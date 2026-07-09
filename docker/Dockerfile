@@ -46,7 +46,8 @@ RUN echo "export CPM_SOURCE_CACHE=/home/${USER_NAME}/.cache/CPM" >> /home/${USER
 # mount with
 # docker run -it --rm --volume ~/Development/EVerest/everest-workspace/everest-ui:/everest-ui --volume /mnt2:/sysroot:ro --volume ~/Development/bitbucket/EVerest/tooling:/tooling:ro
 RUN echo 'cmake -B build-cross-docker -DCMAKE_TOOLCHAIN_FILE=/tooling/EVerest_toolchain/toolchain.cmake -DCMAKE_SYSROOT=/sysroot -DOE_QMAKE_PATH_EXTERNAL_HOST_BINS:STRING="/usr/bin"' >> /home/${USER_NAME}/.bash_history
-RUN echo 'make -C build-cross-docker -j4' >> /home/${USER_NAME}/.bash_history
+RUN echo 'make -C build-cross-docker -j$(nproc)' >> /home/${USER_NAME}/.bash_history
+RUN echo 'make -C build-cross-docker -j$(nproc) install DESTDIR=install' >> /home/${USER_NAME}/.bash_history
 RUN echo '# mount volumes: --volume <everest-ui source dir>:/everest-ui --volume <Charge SOM sysroot>:/sysroot:ro --volume <tooling repo>:/tooling:ro' >> /home/${USER_NAME}/.bash_history
 
 # RUN mkdir -p /workdir
