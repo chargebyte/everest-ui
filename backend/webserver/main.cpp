@@ -7,6 +7,7 @@
 #include "AppTitleResolver.hpp"
 #include "AuthManager.hpp"
 #include "InstallPaths.hpp"
+#include "UiOccupancyTracker.hpp"
 #include "WebSocketProxySession.hpp"
 
 #include <QCoreApplication>
@@ -15,6 +16,7 @@
 #include <QTcpSocket>
 #include <QTextStream>
 #include <QWebSocket>
+#include <QWebSocketProtocol>
 #include <QWebSocketServer>
 
 namespace {
@@ -56,7 +58,8 @@ int main(int argc, char *argv[]) {
     }
 
     AppTitleResolver appTitleResolver(cfg.appTitle, cfg.backendUrl);
-    StaticServer server(cfg, &authManager, &appTitleResolver);
+    UiOccupancyTracker uiOccupancyTracker;
+    StaticServer server(cfg, &authManager, &appTitleResolver, &uiOccupancyTracker);
     QWebSocketServer wsServer(QStringLiteral("webui-ws"), QWebSocketServer::NonSecureMode);
 
     QObject::connect(&server, &StaticServer::webSocketUpgradeRequested,
@@ -75,7 +78,7 @@ int main(int argc, char *argv[]) {
                      });
 
     QObject::connect(&wsServer, &QWebSocketServer::newConnection, &wsServer,
-                     [&wsServer, &cfg]() {
+                     [&wsServer, &cfg, &uiOccupancyTracker]() {
                          QWebSocket *client = wsServer.nextPendingConnection();
                          if (!client) {
                              return;
@@ -87,7 +90,8 @@ int main(int argc, char *argv[]) {
                          // WebSocket-upgrade flow, Step 3 + Step 4:
                          // For this upgraded browser socket, create a proxy session that
                          // connects to backend WS and then bridges traffic both ways.
-                         new WebSocketProxySession(client, cfg.backendUrl, client);
+                         new WebSocketProxySession(client, cfg.backendUrl,
+                                                   &uiOccupancyTracker, client);
                      });
 
     if (!server.listen(cfg.bindAddress, cfg.port)) {

@@ -14,6 +14,8 @@ add_executable(webserver
     http/StaticServer.hpp
     ui/AppTitleResolver.cpp
     ui/AppTitleResolver.hpp
+    ui/UiOccupancyTracker.cpp
+    ui/UiOccupancyTracker.hpp
     ws/WebSocketProxySession.cpp
     ws/WebSocketProxySession.hpp
 )

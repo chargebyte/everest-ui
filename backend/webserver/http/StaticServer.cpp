@@ -7,9 +7,12 @@
 #include "AuthManager.hpp"
 #include "RequestParsing.hpp"
 #include "StaticContent.hpp"
+#include "UiOccupancyTracker.hpp"
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QHostAddress>
+#include <QTextStream>
 #include <QTcpSocket>
 #include <QTimer>
 
@@ -56,15 +59,25 @@ QByteArray clearSessionCookieHeader() {
            QByteArrayLiteral("=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
 }
 
+QString formatPeerAddress(const QHostAddress &address, quint16 port) {
+    const QString addressText = address.toString();
+    if (address.protocol() == QAbstractSocket::IPv6Protocol) {
+        return QStringLiteral("[%1]:%2").arg(addressText).arg(port);
+    }
+    return QStringLiteral("%1:%2").arg(addressText).arg(port);
+}
+
 } // namespace
 
 StaticServer::StaticServer(const ServerConfig &cfg,
                            AuthManager *authManager,
                            AppTitleResolver *appTitleResolver,
+                           UiOccupancyTracker *uiOccupancyTracker,
                            QObject *parent)
     : QTcpServer(parent),
       m_authManager(authManager),
       m_appTitleResolver(appTitleResolver),
+      m_uiOccupancyTracker(uiOccupancyTracker),
       m_rootDir(cfg.canonicalRoot),
       m_wsPath(cfg.normalizedWsPath.toUtf8()),
       m_maxRequestBytes(cfg.maxRequestBytes),
@@ -125,7 +138,8 @@ void StaticServer::handleRequest(QTcpSocket *socket, QTimer *headerTimer) {
 
     if (isAuthEndpoint(request.normalizedPath)) {
         socket->readAll();
-        response = handleAuthRequest(request);
+        response = handleAuthRequest(request,
+                                     formatPeerAddress(socket->peerAddress(), socket->peerPort()));
         sendResponseAndClose(socket, response);
         return;
     }
@@ -190,12 +204,15 @@ bool StaticServer::isAuthenticated(const ParsedRequest &request) {
         return false;
     }
 
-    const QByteArray cookieValue =
-        request.cookies.value(QByteArray(AuthManager::kSessionCookieName));
-    return m_authManager->validateSession(QString::fromUtf8(cookieValue));
+    return m_authManager->validateSession(sessionIdFromRequest(request));
 }
 
-StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request) {
+QString StaticServer::sessionIdFromRequest(const ParsedRequest &request) const {
+    return QString::fromUtf8(request.cookies.value(QByteArray(AuthManager::kSessionCookieName)));
+}
+
+StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request,
+                                               const QString &peerAddress) {
     if (!m_authManager) {
         return makeJsonResponse(500, QStringLiteral("Internal Server Error"),
                                 QJsonObject{{QStringLiteral("error"), QStringLiteral("auth_unavailable")}});
@@ -207,11 +224,20 @@ StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request) {
                                     QByteArrayLiteral("Method Not Allowed"));
         }
 
+        const bool authenticated = isAuthenticated(request);
+        const bool uiBusy = authenticated && m_uiOccupancyTracker && m_uiOccupancyTracker->isBusy();
+        if (uiBusy) {
+            QTextStream(stdout) << "Blocked UI access from " << peerAddress
+                                << " while active UI session is held by "
+                                << m_uiOccupancyTracker->ownerPeerAddress() << "\n";
+        }
+
         return makeJsonResponse(200, QStringLiteral("OK"),
                                 QJsonObject{{QStringLiteral("setupRequired"),
                                              m_authManager->setupRequired()},
                                             {QStringLiteral("authenticated"),
-                                             isAuthenticated(request)},
+                                             authenticated},
+                                            {QStringLiteral("uiBusy"), uiBusy},
                                             {QStringLiteral("appTitle"),
                                              m_appTitleResolver
                                                  ? m_appTitleResolver->title()

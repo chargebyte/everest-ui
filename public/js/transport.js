@@ -128,12 +128,18 @@ export function createTransport({
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       pendingRequests.forEach((_, requestIdKey) => {
         clearPendingRequest(requestIdKey);
       });
-      onClose();
-      scheduleReconnect();
+      onClose({
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean
+      });
+      if (event.reason !== 'ui already in use') {
+        scheduleReconnect();
+      }
     };
 
     ws.onmessage = (event) => {

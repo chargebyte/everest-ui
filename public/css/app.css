@@ -151,6 +151,21 @@ body {
   margin: 0;
 }
 
+.auth-panel--info {
+  display: grid;
+  gap: 12px;
+}
+
+.auth-info {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.auth-info-soft {
+  color: var(--cb-text-soft);
+}
+
 .sidebar {
   grid-area: sidebar;
   padding: 16px 12px;

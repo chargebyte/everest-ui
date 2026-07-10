@@ -3,18 +3,65 @@
 // Copyright 2026 chargebyte GmbH
 
 #include "WebSocketProxySession.hpp"
+#include "UiOccupancyTracker.hpp"
 
 #include <QAbstractSocket>
-#include <QtGlobal>
+#include <QHostAddress>
+#include <QTextStream>
+#include <QTimer>
 #include <QWebSocket>
 #include <QWebSocketProtocol>
 
+namespace {
+QString formatPeerAddress(const QHostAddress &address, quint16 port) {
+    const QString addressText = address.toString();
+    if (address.protocol() == QAbstractSocket::IPv6Protocol) {
+        return QStringLiteral("[%1]:%2").arg(addressText).arg(port);
+    }
+    return QStringLiteral("%1:%2").arg(addressText).arg(port);
+}
+}
+
 WebSocketProxySession::WebSocketProxySession(QWebSocket *clientSocket,
                                              const QUrl &backendUrl,
+                                             UiOccupancyTracker *uiOccupancyTracker,
                                              QObject *parent)
     : QObject(parent),
       m_client(clientSocket),
+      m_uiOccupancyTracker(uiOccupancyTracker),
+      m_heartbeatTimer(new QTimer(this)),
+      m_heartbeatTimeoutTimer(new QTimer(this)),
       m_backend(new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this)) {
+    if (m_uiOccupancyTracker && !m_uiOccupancyTracker->tryClaim(peerAddress())) {
+        QTextStream(stdout) << "Rejecting UI session from " << peerAddress();
+        if (m_uiOccupancyTracker->hasOwner()) {
+            QTextStream(stdout) << " while active UI session is held by "
+                                << m_uiOccupancyTracker->ownerPeerAddress();
+        }
+        QTextStream(stdout) << "\n";
+        m_client->close(QWebSocketProtocol::CloseCodePolicyViolated,
+                        QStringLiteral("ui already in use"));
+        deleteLater();
+        return;
+    }
+
+    m_ownsOccupancy = m_uiOccupancyTracker != nullptr;
+    if (m_ownsOccupancy) {
+        QTextStream(stdout) << "Active UI session claimed by " << peerAddress() << "\n";
+    }
+
+    m_heartbeatTimer->setInterval(kHeartbeatIntervalMs);
+    m_heartbeatTimeoutTimer->setSingleShot(true);
+    m_heartbeatTimeoutTimer->setInterval(kHeartbeatTimeoutMs);
+    connect(m_heartbeatTimer, &QTimer::timeout, this, &WebSocketProxySession::sendHeartbeatPing);
+    connect(m_heartbeatTimeoutTimer, &QTimer::timeout, this,
+            &WebSocketProxySession::closeDueToHeartbeatTimeout);
+    connect(m_client, &QWebSocket::pong, this, [this](quint64, const QByteArray &) {
+        m_waitingForHeartbeatPong = false;
+        m_heartbeatTimeoutTimer->stop();
+    });
+    m_heartbeatTimer->start();
+
     // WebSocket-upgrade flow, Step 3:
     // Once the backend WS is connected, flush browser messages queued during
     // backend connection setup.
@@ -67,6 +114,7 @@ WebSocketProxySession::WebSocketProxySession(QWebSocket *clientSocket,
 
     // Close propagation: browser side closed -> close backend side.
     connect(m_client, &QWebSocket::disconnected, this, [this]() {
+        releaseOccupancy();
         if (m_backend->state() == QAbstractSocket::ConnectedState ||
             m_backend->state() == QAbstractSocket::ConnectingState) {
             m_backend->close(QWebSocketProtocol::CloseCodeGoingAway,
@@ -77,6 +125,7 @@ WebSocketProxySession::WebSocketProxySession(QWebSocket *clientSocket,
 
     // Close propagation: backend side closed -> close browser side.
     connect(m_backend, &QWebSocket::disconnected, this, [this]() {
+        releaseOccupancy();
         if (m_client->state() == QAbstractSocket::ConnectedState) {
             m_client->close(m_backend->closeCode(), m_backend->closeReason());
         }
@@ -115,6 +164,9 @@ bool WebSocketProxySession::canQueueMessage(qint64 messageBytes) const {
 }
 
 void WebSocketProxySession::closeDueToQueueOverflow() {
+    releaseOccupancy();
+    m_heartbeatTimer->stop();
+    m_heartbeatTimeoutTimer->stop();
     if (m_client->state() == QAbstractSocket::ConnectedState) {
         m_client->close(QWebSocketProtocol::CloseCodeTooMuchData,
                         QStringLiteral("proxy pending queue overflow"));
@@ -125,4 +177,48 @@ void WebSocketProxySession::closeDueToQueueOverflow() {
                          QStringLiteral("proxy pending queue overflow"));
     }
     deleteLater();
+}
+
+void WebSocketProxySession::closeDueToHeartbeatTimeout() {
+    releaseOccupancy();
+    m_heartbeatTimer->stop();
+    m_heartbeatTimeoutTimer->stop();
+    if (m_client->state() == QAbstractSocket::ConnectedState) {
+        m_client->close(QWebSocketProtocol::CloseCodeGoingAway,
+                        QStringLiteral("client heartbeat timeout"));
+    }
+    if (m_backend->state() == QAbstractSocket::ConnectedState ||
+        m_backend->state() == QAbstractSocket::ConnectingState) {
+        m_backend->close(QWebSocketProtocol::CloseCodeGoingAway,
+                         QStringLiteral("client heartbeat timeout"));
+    }
+    deleteLater();
+}
+
+void WebSocketProxySession::releaseOccupancy() {
+    if (!m_ownsOccupancy || !m_uiOccupancyTracker) {
+        return;
+    }
+
+    m_uiOccupancyTracker->release();
+    QTextStream(stdout) << "Active UI session released for " << peerAddress() << "\n";
+    m_ownsOccupancy = false;
+}
+
+QString WebSocketProxySession::peerAddress() const {
+    return formatPeerAddress(m_client->peerAddress(), m_client->peerPort());
+}
+
+void WebSocketProxySession::sendHeartbeatPing() {
+    if (m_client->state() != QAbstractSocket::ConnectedState) {
+        return;
+    }
+
+    if (m_waitingForHeartbeatPong) {
+        return;
+    }
+
+    m_waitingForHeartbeatPong = true;
+    m_client->ping();
+    m_heartbeatTimeoutTimer->start();
 }

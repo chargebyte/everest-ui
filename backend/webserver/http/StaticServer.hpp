@@ -12,6 +12,7 @@
 
 class AuthManager;
 class AppTitleResolver;
+class UiOccupancyTracker;
 struct ParsedRequest;
 class QTcpSocket;
 class QTimer;
@@ -23,6 +24,7 @@ public:
     explicit StaticServer(const ServerConfig &cfg,
                           AuthManager *authManager,
                           AppTitleResolver *appTitleResolver,
+                          UiOccupancyTracker *uiOccupancyTracker,
                           QObject *parent = nullptr);
 
 signals:
@@ -36,11 +38,13 @@ private:
     bool isAuthEndpoint(const QByteArray &path) const;
     bool isPublicFrontendAsset(const ParsedRequest &request) const;
     bool isAuthenticated(const ParsedRequest &request);
-    StaticResponse handleAuthRequest(const ParsedRequest &request);
+    QString sessionIdFromRequest(const ParsedRequest &request) const;
+    StaticResponse handleAuthRequest(const ParsedRequest &request, const QString &peerAddress);
     static void sendResponseAndClose(QTcpSocket *socket, const StaticResponse &response);
 
     AuthManager *m_authManager = nullptr;
     AppTitleResolver *m_appTitleResolver = nullptr;
+    UiOccupancyTracker *m_uiOccupancyTracker = nullptr;
     QString m_rootDir;
     QByteArray m_wsPath;
     int m_maxRequestBytes = 8192;
