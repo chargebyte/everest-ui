@@ -8,18 +8,23 @@ import { buildRequest } from '../protocol/requestBuilder.js';
 import { renderUpdateBlock } from '../ui/update.js';
 
 export function renderFirmwarePage(container, {
+  appTitle,
   parameterCatalog,
   sendPayload,
   addLog
 }) {
   const pageConfig = loadPageConfig(MODULE_IDS.FIRMWARE, parameterCatalog);
   const updaterBlock = pageConfig.blocks.find((block) => block.kind === 'updater');
+  const pageTitle =
+    typeof appTitle === 'string' && appTitle.trim() !== ''
+      ? `${appTitle.trim()} Firmware Update`
+      : pageConfig.title;
 
   container.innerHTML = '';
 
   const pageElement = document.createElement('div');
   pageElement.className = 'page';
-  pageElement.innerHTML = `<h1>${pageConfig.title}</h1>`;
+  pageElement.innerHTML = `<h1>${pageTitle}</h1>`;
 
   const firmwareState = {
     connected: false,
@@ -35,7 +40,7 @@ export function renderFirmwarePage(container, {
 
   const updateBlock = renderUpdateBlock(updaterBlock, {
     namePrefix: 'firmware',
-    title: pageConfig.title,
+    title: pageTitle,
     buttonLabel: 'Start Update',
     rebootButtonLabel: 'Reboot',
     onFileError(errorMessage) {
