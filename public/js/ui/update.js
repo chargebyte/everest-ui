@@ -23,7 +23,7 @@ export function renderUpdateBlock(blockConfig, options = {}) {
   const versionValue = document.createElement('span');
   versionValue.className = `${scopeName}-update-version value-text`;
 
-  const progressLabel = createLabel(options.progressLabel || 'Progress:');
+  const progressLabel = createLabel(options.progressLabel || 'Update Progress:');
   const progressValue = document.createElement('span');
   progressValue.className = `${scopeName}-update-progress value-text`;
 
