@@ -177,22 +177,22 @@
             "display_name": "Update Time",
             "description": "Time period for Profinet periodical data update, in ms",
             "value_type": "integer",
-            "unit": "s",
+            "unit": "ms",
             "backend_path": "Profinet.update_time"
           },
           {
             "id": "bidirectional_enable",
             "display_name": "Bidirectional Enable",
-            "description": "fill in later",
+            "description": "Enable bidirectional charging for power supply",
             "value_type": "boolean",
             "backend_path": "Profinet.bidirectional_enable"
           },
           {
             "id": "profinet_timeout",
             "display_name": "Profinet Timeout",
-            "description": "When the Profinet connection interrupts and this timeout expires, a hlc_stop_transaction is sent to EV",
+            "description": "Timeout for sending hlc_stop_transaction to the EV when the Profinet connection interrupts, in s",
             "value_type": "integer",
-            "unit": "ms",
+            "unit": "s",
             "backend_path": "Profinet.profinet_timeout"
           },
           {
@@ -205,7 +205,7 @@
           {
             "id": "debug_mode",
             "display_name": "Debug Mode",
-            "description": "Enables debug mode and provides PLC relevant data to EVerest manager",
+            "description": "Enables debug mode (PLC simulation) and provides PLC relevant data to EVerest manager",
             "value_type": "boolean",
             "overwrite_value": false,
             "backend_path": "Profinet.debug_mode"
