@@ -17,8 +17,6 @@ class WebSocketProxySession final : public QObject {
 public:
     WebSocketProxySession(QWebSocket *clientSocket,
                           const QUrl &backendUrl,
-                          const QString &sessionId,
-                          const QString &peerAddress,
                           UiOccupancyTracker *uiOccupancyTracker,
                           QObject *parent = nullptr);
 
@@ -29,12 +27,11 @@ private:
     bool canQueueMessage(qint64 messageBytes) const;
     void closeDueToQueueOverflow();
     void releaseOccupancy();
+    QString peerAddress() const;
 
     QWebSocket *m_client = nullptr;
     QWebSocket *m_backend = nullptr;
     UiOccupancyTracker *m_uiOccupancyTracker = nullptr;
-    QString m_sessionId;
-    QString m_peerAddress;
     bool m_ownsOccupancy = false;
     bool m_backendConnected = false;
     qint64 m_pendingBytes = 0;

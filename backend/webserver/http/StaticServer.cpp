@@ -155,9 +155,7 @@ void StaticServer::handleRequest(QTcpSocket *socket, QTimer *headerTimer) {
             sendResponseAndClose(socket, response);
             return;
         }
-        emit webSocketUpgradeRequested(socket, sessionIdFromRequest(request),
-                                       formatPeerAddress(socket->peerAddress(),
-                                                         socket->peerPort()));
+        emit webSocketUpgradeRequested(socket);
         if (socket->parent() == this) {
             response.statusCode = 501;
             response.statusText = QStringLiteral("Not Implemented");
@@ -227,9 +225,7 @@ StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request,
         }
 
         const bool authenticated = isAuthenticated(request);
-        const QString sessionId = authenticated ? sessionIdFromRequest(request) : QString();
-        const bool uiBusy =
-            authenticated && m_uiOccupancyTracker && m_uiOccupancyTracker->isBusyForSession(sessionId);
+        const bool uiBusy = authenticated && m_uiOccupancyTracker && m_uiOccupancyTracker->isBusy();
         if (uiBusy) {
             QTextStream(stdout) << "Blocked UI access from " << peerAddress
                                 << " while active UI session is held by "

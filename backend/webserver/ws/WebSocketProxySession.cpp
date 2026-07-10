@@ -6,25 +6,31 @@
 #include "UiOccupancyTracker.hpp"
 
 #include <QAbstractSocket>
-#include <QtGlobal>
+#include <QHostAddress>
 #include <QTextStream>
 #include <QWebSocket>
 #include <QWebSocketProtocol>
 
+namespace {
+QString formatPeerAddress(const QHostAddress &address, quint16 port) {
+    const QString addressText = address.toString();
+    if (address.protocol() == QAbstractSocket::IPv6Protocol) {
+        return QStringLiteral("[%1]:%2").arg(addressText).arg(port);
+    }
+    return QStringLiteral("%1:%2").arg(addressText).arg(port);
+}
+}
+
 WebSocketProxySession::WebSocketProxySession(QWebSocket *clientSocket,
                                              const QUrl &backendUrl,
-                                             const QString &sessionId,
-                                             const QString &peerAddress,
                                              UiOccupancyTracker *uiOccupancyTracker,
                                              QObject *parent)
     : QObject(parent),
       m_client(clientSocket),
       m_uiOccupancyTracker(uiOccupancyTracker),
-      m_sessionId(sessionId),
-      m_peerAddress(peerAddress),
       m_backend(new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this)) {
-    if (m_uiOccupancyTracker && !m_uiOccupancyTracker->tryClaim(m_sessionId, m_peerAddress)) {
-        QTextStream(stdout) << "Rejecting UI session from " << m_peerAddress;
+    if (m_uiOccupancyTracker && !m_uiOccupancyTracker->tryClaim(peerAddress())) {
+        QTextStream(stdout) << "Rejecting UI session from " << peerAddress();
         if (m_uiOccupancyTracker->hasOwner()) {
             QTextStream(stdout) << " while active UI session is held by "
                                 << m_uiOccupancyTracker->ownerPeerAddress();
@@ -38,7 +44,7 @@ WebSocketProxySession::WebSocketProxySession(QWebSocket *clientSocket,
 
     m_ownsOccupancy = m_uiOccupancyTracker != nullptr;
     if (m_ownsOccupancy) {
-        QTextStream(stdout) << "Active UI session claimed by " << m_peerAddress << "\n";
+        QTextStream(stdout) << "Active UI session claimed by " << peerAddress() << "\n";
     }
 
     // WebSocket-upgrade flow, Step 3:
@@ -161,7 +167,11 @@ void WebSocketProxySession::releaseOccupancy() {
         return;
     }
 
-    m_uiOccupancyTracker->release(m_sessionId);
-    QTextStream(stdout) << "Active UI session released for " << m_peerAddress << "\n";
+    m_uiOccupancyTracker->release();
+    QTextStream(stdout) << "Active UI session released for " << peerAddress() << "\n";
     m_ownsOccupancy = false;
+}
+
+QString WebSocketProxySession::peerAddress() const {
+    return formatPeerAddress(m_client->peerAddress(), m_client->peerPort());
 }

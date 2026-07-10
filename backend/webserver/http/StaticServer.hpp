@@ -28,9 +28,7 @@ public:
                           QObject *parent = nullptr);
 
 signals:
-    void webSocketUpgradeRequested(QTcpSocket *socket,
-                                   const QString &sessionId,
-                                   const QString &peerAddress);
+    void webSocketUpgradeRequested(QTcpSocket *socket);
 
 protected:
     void incomingConnection(qintptr handle) override;
