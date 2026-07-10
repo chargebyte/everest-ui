@@ -8,6 +8,7 @@
 #include <QAbstractSocket>
 #include <QHostAddress>
 #include <QTextStream>
+#include <QTimer>
 #include <QWebSocket>
 #include <QWebSocketProtocol>
 
@@ -28,6 +29,8 @@ WebSocketProxySession::WebSocketProxySession(QWebSocket *clientSocket,
     : QObject(parent),
       m_client(clientSocket),
       m_uiOccupancyTracker(uiOccupancyTracker),
+      m_heartbeatTimer(new QTimer(this)),
+      m_heartbeatTimeoutTimer(new QTimer(this)),
       m_backend(new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this)) {
     if (m_uiOccupancyTracker && !m_uiOccupancyTracker->tryClaim(peerAddress())) {
         QTextStream(stdout) << "Rejecting UI session from " << peerAddress();
@@ -46,6 +49,18 @@ WebSocketProxySession::WebSocketProxySession(QWebSocket *clientSocket,
     if (m_ownsOccupancy) {
         QTextStream(stdout) << "Active UI session claimed by " << peerAddress() << "\n";
     }
+
+    m_heartbeatTimer->setInterval(kHeartbeatIntervalMs);
+    m_heartbeatTimeoutTimer->setSingleShot(true);
+    m_heartbeatTimeoutTimer->setInterval(kHeartbeatTimeoutMs);
+    connect(m_heartbeatTimer, &QTimer::timeout, this, &WebSocketProxySession::sendHeartbeatPing);
+    connect(m_heartbeatTimeoutTimer, &QTimer::timeout, this,
+            &WebSocketProxySession::closeDueToHeartbeatTimeout);
+    connect(m_client, &QWebSocket::pong, this, [this](quint64, const QByteArray &) {
+        m_waitingForHeartbeatPong = false;
+        m_heartbeatTimeoutTimer->stop();
+    });
+    m_heartbeatTimer->start();
 
     // WebSocket-upgrade flow, Step 3:
     // Once the backend WS is connected, flush browser messages queued during
@@ -150,6 +165,8 @@ bool WebSocketProxySession::canQueueMessage(qint64 messageBytes) const {
 
 void WebSocketProxySession::closeDueToQueueOverflow() {
     releaseOccupancy();
+    m_heartbeatTimer->stop();
+    m_heartbeatTimeoutTimer->stop();
     if (m_client->state() == QAbstractSocket::ConnectedState) {
         m_client->close(QWebSocketProtocol::CloseCodeTooMuchData,
                         QStringLiteral("proxy pending queue overflow"));
@@ -158,6 +175,22 @@ void WebSocketProxySession::closeDueToQueueOverflow() {
         m_backend->state() == QAbstractSocket::ConnectingState) {
         m_backend->close(QWebSocketProtocol::CloseCodeGoingAway,
                          QStringLiteral("proxy pending queue overflow"));
+    }
+    deleteLater();
+}
+
+void WebSocketProxySession::closeDueToHeartbeatTimeout() {
+    releaseOccupancy();
+    m_heartbeatTimer->stop();
+    m_heartbeatTimeoutTimer->stop();
+    if (m_client->state() == QAbstractSocket::ConnectedState) {
+        m_client->close(QWebSocketProtocol::CloseCodeGoingAway,
+                        QStringLiteral("client heartbeat timeout"));
+    }
+    if (m_backend->state() == QAbstractSocket::ConnectedState ||
+        m_backend->state() == QAbstractSocket::ConnectingState) {
+        m_backend->close(QWebSocketProtocol::CloseCodeGoingAway,
+                         QStringLiteral("client heartbeat timeout"));
     }
     deleteLater();
 }
@@ -174,4 +207,18 @@ void WebSocketProxySession::releaseOccupancy() {
 
 QString WebSocketProxySession::peerAddress() const {
     return formatPeerAddress(m_client->peerAddress(), m_client->peerPort());
+}
+
+void WebSocketProxySession::sendHeartbeatPing() {
+    if (m_client->state() != QAbstractSocket::ConnectedState) {
+        return;
+    }
+
+    if (m_waitingForHeartbeatPong) {
+        return;
+    }
+
+    m_waitingForHeartbeatPong = true;
+    m_client->ping();
+    m_heartbeatTimeoutTimer->start();
 }

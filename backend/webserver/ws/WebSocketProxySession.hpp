@@ -10,6 +10,7 @@
 
 class QWebSocket;
 class UiOccupancyTracker;
+class QTimer;
 
 class WebSocketProxySession final : public QObject {
     Q_OBJECT
@@ -23,17 +24,24 @@ public:
 private:
     static constexpr int kMaxPendingMessages = 256;
     static constexpr qint64 kMaxPendingBytes = 2 * 1024 * 1024;
+    static constexpr int kHeartbeatIntervalMs = 5000;
+    static constexpr int kHeartbeatTimeoutMs = 15000;
 
     bool canQueueMessage(qint64 messageBytes) const;
     void closeDueToQueueOverflow();
+    void closeDueToHeartbeatTimeout();
     void releaseOccupancy();
+    void sendHeartbeatPing();
     QString peerAddress() const;
 
     QWebSocket *m_client = nullptr;
     QWebSocket *m_backend = nullptr;
     UiOccupancyTracker *m_uiOccupancyTracker = nullptr;
+    QTimer *m_heartbeatTimer = nullptr;
+    QTimer *m_heartbeatTimeoutTimer = nullptr;
     bool m_ownsOccupancy = false;
     bool m_backendConnected = false;
+    bool m_waitingForHeartbeatPong = false;
     qint64 m_pendingBytes = 0;
     QList<QString> m_pendingText;
     QList<QByteArray> m_pendingBinary;
