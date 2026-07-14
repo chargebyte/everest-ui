@@ -238,32 +238,32 @@
       "settings_table": {
         "general": [
           {
-            "id": "user_id",
-            "display_name": "User ID",
-            "description": "fill in later",
-            "value_type": "string",
-            "backend_path": "InternalCtrlr.NetworkConnectionProfiles.connectionData.ocppCsmsUrl.userId"
-          },
-          {
             "id": "csms_server_address",
-            "display_name": "CSMS Server Address",
-            "description": "fill in later",
+            "display_name": "CSMS Endpoint URL",
+            "description": "The endpoint URL of the CSMS, without Charging Station Identifier and trailing \"/\"",
             "value_type": "string",
             "backend_path": "InternalCtrlr.NetworkConnectionProfiles.connectionData.ocppCsmsUrl.csmsServerAddress"
           },
           {
-            "id": "energy_consumption_point",
-            "display_name": "Energy Consumption Point",
-            "description": "fill in later",
+            "id": "charge_point_id",
+            "display_name": "Charge Point ID",
+            "description": "The operational name of the station. It is the ID appended to the CSMS endpoint URL path.",
             "value_type": "string",
-            "backend_path": "InternalCtrlr.NetworkConnectionProfiles.connectionData.ocppCsmsUrl.energyConsumptionPoint"
+            "backend_path": "InternalCtrlr.ChargePointId"
+          },
+          {
+            "id": "identity",
+            "display_name": "Security Controller Identity",
+            "description": "The Common Name (CN) or Subject Alternative Name (SAN) expected to match the TLS Client Certificate or the HTTP Basic Authentication credentials. If in doubt, keep this identical to \"Charge Point ID\"",
+            "value_type": "string",
+            "backend_path": "SecurityCtrlr.SecurityCtrlrIdentity"
           }
         ],
         "security": [
           {
             "id": "password",
             "display_name": "Password",
-            "description": "fill in later",
+            "description": "The HTTP Basic Authentication password for Security Profiles 1 and 2 (please repeat)",
             "value_type": "secret_string",
             "backend_path": "SecurityCtrlr.BasicAuthPassword"
           },

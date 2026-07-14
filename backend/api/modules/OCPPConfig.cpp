@@ -31,9 +31,8 @@ constexpr char kValueKey[] = "value";
 constexpr char kConfigurationSlotKey[] = "configurationSlot";
 constexpr char kConnectionDataKey[] = "connectionData";
 constexpr char kOcppCsmsUrlKey[] = "ocppCsmsUrl";
-constexpr char kOcppCsmsUrlUserIdKey[] = "userId";
 constexpr char kOcppCsmsUrlCsmsServerAddressKey[] = "csmsServerAddress";
-constexpr char kOcppCsmsUrlEnergyConsumptionPointKey[] = "energyConsumptionPoint";
+constexpr char kChargePointIdKey[] = "ChargePointId";
 
 constexpr char kErrorOcppBaseConfigMissing[] = "ocpp_base_config_path_missing";
 constexpr char kErrorOcppBaseConfigNotFound[] = "ocpp_base_config_path_not_found";
@@ -90,8 +89,6 @@ struct OcppBackendPathResult {
 struct OcppCsmsUrlParts {
     bool success = false;
     QString csmsServerAddress;
-    QString energyConsumptionPoint;
-    QString userId;
 };
 
 OCPPAction toOcppAction(const QString &action) {
@@ -303,116 +300,7 @@ bool isOcppCsmsUrlPartPath(const QStringList &pathSegments) {
         return false;
     }
 
-    const QString partName = pathSegments.at(2);
-    return partName == QLatin1String(kOcppCsmsUrlUserIdKey) ||
-           partName == QLatin1String(kOcppCsmsUrlCsmsServerAddressKey) ||
-           partName == QLatin1String(kOcppCsmsUrlEnergyConsumptionPointKey);
-}
-
-OcppCsmsUrlParts splitOcppCsmsUrl(const QString &ocppCsmsUrl) {
-    const QString normalizedUrl = ocppCsmsUrl.trimmed();
-    if (normalizedUrl.isEmpty()) {
-        return OcppCsmsUrlParts{
-            .success = true,
-            .csmsServerAddress = QString(),
-            .energyConsumptionPoint = QString(),
-            .userId = QString(),
-        };
-    }
-
-    const int schemeSeparatorIndex = normalizedUrl.indexOf(QStringLiteral("://"));
-    const int firstSplitCandidateIndex =
-        schemeSeparatorIndex >= 0 ? schemeSeparatorIndex + 3 : 0;
-
-    const int userIdSeparatorIndex = normalizedUrl.lastIndexOf(QLatin1Char('/'));
-    if (userIdSeparatorIndex < firstSplitCandidateIndex ||
-        userIdSeparatorIndex >= normalizedUrl.size() - 1) {
-        return OcppCsmsUrlParts{
-            .success = true,
-            .csmsServerAddress = normalizedUrl,
-            .energyConsumptionPoint = QString(),
-            .userId = QString(),
-        };
-    }
-
-    const int energyPointSeparatorIndex =
-        normalizedUrl.lastIndexOf(QLatin1Char('/'), userIdSeparatorIndex - 1);
-    if (energyPointSeparatorIndex < firstSplitCandidateIndex ||
-        energyPointSeparatorIndex >= userIdSeparatorIndex - 1) {
-        return OcppCsmsUrlParts{
-            .success = true,
-            .csmsServerAddress = normalizedUrl,
-            .energyConsumptionPoint = QString(),
-            .userId = QString(),
-        };
-    }
-
-    return OcppCsmsUrlParts{
-        .success = true,
-        .csmsServerAddress = normalizedUrl.left(energyPointSeparatorIndex),
-        .energyConsumptionPoint = normalizedUrl.mid(
-            energyPointSeparatorIndex + 1,
-            userIdSeparatorIndex - energyPointSeparatorIndex - 1),
-        .userId = normalizedUrl.mid(userIdSeparatorIndex + 1),
-    };
-}
-
-OcppReadValueResult extractOcppCsmsUrlPart(const QJsonObject &profileObject,
-                                           const QStringList &pathSegments) {
-    const OcppReadValueResult ocppCsmsUrlValue =
-        navigateJsonObject(profileObject, {
-                                             QString::fromLatin1(kConnectionDataKey),
-                                             QString::fromLatin1(kOcppCsmsUrlKey),
-                                         });
-    if (!ocppCsmsUrlValue.success || !ocppCsmsUrlValue.found ||
-        !ocppCsmsUrlValue.value.isString()) {
-        return ocppCsmsUrlValue;
-    }
-
-    const OcppCsmsUrlParts urlParts = splitOcppCsmsUrl(ocppCsmsUrlValue.value.toString());
-    if (!urlParts.success) {
-        return OcppReadValueResult{
-            .success = true,
-            .found = false,
-            .value = QJsonValue(),
-            .error = QString(),
-        };
-    }
-
-    const QString partName = pathSegments.at(2);
-    if (partName == QLatin1String(kOcppCsmsUrlUserIdKey)) {
-        return OcppReadValueResult{
-            .success = true,
-            .found = true,
-            .value = urlParts.userId,
-            .error = QString(),
-        };
-    }
-
-    if (partName == QLatin1String(kOcppCsmsUrlCsmsServerAddressKey)) {
-        return OcppReadValueResult{
-            .success = true,
-            .found = true,
-            .value = urlParts.csmsServerAddress,
-            .error = QString(),
-        };
-    }
-
-    if (partName == QLatin1String(kOcppCsmsUrlEnergyConsumptionPointKey)) {
-        return OcppReadValueResult{
-            .success = true,
-            .found = true,
-            .value = urlParts.energyConsumptionPoint,
-            .error = QString(),
-        };
-    }
-
-    return OcppReadValueResult{
-        .success = true,
-        .found = false,
-        .value = QJsonValue(),
-        .error = QString(),
-    };
+    return pathSegments.at(2) == QLatin1String(kOcppCsmsUrlCsmsServerAddressKey);
 }
 
 QString trimLeadingSlashes(QString value) {
@@ -435,37 +323,91 @@ QString trimBoundarySlashes(QString value) {
     return trimLeadingSlashes(trimTrailingSlashes(value));
 }
 
-QString composeOcppCsmsUrl(const QJsonObject &ocppCsmsUrlParts) {
+OcppCsmsUrlParts splitOcppCsmsUrl(const QString &ocppCsmsUrl, const QString &chargePointId) {
+    const QString normalizedUrl = trimTrailingSlashes(ocppCsmsUrl.trimmed());
+    const QString normalizedChargePointId = trimBoundarySlashes(chargePointId.trimmed());
+
+    if (normalizedUrl.isEmpty() || normalizedChargePointId.isEmpty()) {
+        return OcppCsmsUrlParts{
+            .success = true,
+            .csmsServerAddress = normalizedUrl,
+        };
+    }
+
+    const QString suffix = QLatin1Char('/') + normalizedChargePointId;
+    if (!normalizedUrl.endsWith(suffix)) {
+        return OcppCsmsUrlParts{
+            .success = true,
+            .csmsServerAddress = normalizedUrl,
+        };
+    }
+
+    return OcppCsmsUrlParts{
+        .success = true,
+        .csmsServerAddress = normalizedUrl.left(normalizedUrl.size() - suffix.size()),
+    };
+}
+
+OcppReadValueResult extractOcppCsmsUrlPart(const QJsonObject &profileObject,
+                                           const QStringList &pathSegments,
+                                           const QString &chargePointId) {
+    const OcppReadValueResult ocppCsmsUrlValue =
+        navigateJsonObject(profileObject, {
+                                             QString::fromLatin1(kConnectionDataKey),
+                                             QString::fromLatin1(kOcppCsmsUrlKey),
+                                         });
+    if (!ocppCsmsUrlValue.success || !ocppCsmsUrlValue.found ||
+        !ocppCsmsUrlValue.value.isString()) {
+        return ocppCsmsUrlValue;
+    }
+
+    const OcppCsmsUrlParts urlParts =
+        splitOcppCsmsUrl(ocppCsmsUrlValue.value.toString(), chargePointId);
+    if (!urlParts.success) {
+        return OcppReadValueResult{
+            .success = true,
+            .found = false,
+            .value = QJsonValue(),
+            .error = QString(),
+        };
+    }
+
+    const QString partName = pathSegments.at(2);
+    if (partName == QLatin1String(kOcppCsmsUrlCsmsServerAddressKey)) {
+        return OcppReadValueResult{
+            .success = true,
+            .found = true,
+            .value = urlParts.csmsServerAddress,
+            .error = QString(),
+        };
+    }
+
+    return OcppReadValueResult{
+        .success = true,
+        .found = false,
+        .value = QJsonValue(),
+        .error = QString(),
+    };
+}
+
+QString composeOcppCsmsUrl(const QJsonObject &ocppCsmsUrlParts, const QString &chargePointId) {
     const QString csmsServerAddress = trimTrailingSlashes(
         ocppCsmsUrlParts
             .value(QString::fromLatin1(kOcppCsmsUrlCsmsServerAddressKey))
             .toString()
             .trimmed());
-    const QString energyConsumptionPoint = trimBoundarySlashes(
-        ocppCsmsUrlParts
-            .value(QString::fromLatin1(kOcppCsmsUrlEnergyConsumptionPointKey))
-            .toString()
-            .trimmed());
-    const QString userId = trimLeadingSlashes(
-        ocppCsmsUrlParts
-            .value(QString::fromLatin1(kOcppCsmsUrlUserIdKey))
-            .toString()
-            .trimmed());
+    const QString normalizedChargePointId = trimBoundarySlashes(chargePointId.trimmed());
 
-    if (energyConsumptionPoint.isEmpty() && userId.isEmpty()) {
+    if (normalizedChargePointId.isEmpty()) {
         return csmsServerAddress;
     }
 
-    if (userId.isEmpty()) {
-        return csmsServerAddress + QLatin1Char('/') + energyConsumptionPoint;
+    const QString suffix = QLatin1Char('/') + normalizedChargePointId;
+    if (csmsServerAddress.endsWith(suffix)) {
+        return csmsServerAddress;
     }
 
-    if (energyConsumptionPoint.isEmpty()) {
-        return csmsServerAddress + QLatin1Char('/') + userId;
-    }
-
-    return csmsServerAddress + QLatin1Char('/') + energyConsumptionPoint +
-           QLatin1Char('/') + userId;
+    return csmsServerAddress + suffix;
 }
 
 QJsonObject normalizeOcppWriteParameters(const QJsonObject &requestParameters) {
@@ -477,6 +419,8 @@ QJsonObject normalizeOcppWriteParameters(const QJsonObject &requestParameters) {
         internalCtrlr.value(QString::fromLatin1(kNetworkConnectionProfiles)).toObject();
     QJsonObject connectionData =
         networkConnectionProfiles.value(QString::fromLatin1(kConnectionDataKey)).toObject();
+    const QString chargePointId =
+        internalCtrlr.value(QString::fromLatin1(kChargePointIdKey)).toString();
     const QJsonValue ocppCsmsUrlValue =
         connectionData.value(QString::fromLatin1(kOcppCsmsUrlKey));
 
@@ -485,7 +429,7 @@ QJsonObject normalizeOcppWriteParameters(const QJsonObject &requestParameters) {
     }
 
     connectionData.insert(QString::fromLatin1(kOcppCsmsUrlKey),
-                          composeOcppCsmsUrl(ocppCsmsUrlValue.toObject()));
+                          composeOcppCsmsUrl(ocppCsmsUrlValue.toObject(), chargePointId));
     networkConnectionProfiles.insert(QString::fromLatin1(kConnectionDataKey), connectionData);
     internalCtrlr.insert(QString::fromLatin1(kNetworkConnectionProfiles),
                          networkConnectionProfiles);
@@ -602,9 +546,16 @@ OcppReadValueResult extractNetworkConnectionProfilesValue(const QJsonObject &con
         return slotOneProfile;
     }
 
+    const OcppReadValueResult chargePointIdValue =
+        extractStandardPropertyValue(controllerRoot, QString::fromLatin1(kChargePointIdKey));
+    const QString chargePointId =
+        chargePointIdValue.success && chargePointIdValue.found && chargePointIdValue.value.isString()
+            ? chargePointIdValue.value.toString()
+            : QString();
+
     const QJsonObject profileObject = slotOneProfile.value.toObject();
     if (isOcppCsmsUrlPartPath(pathSegments)) {
-        return extractOcppCsmsUrlPart(profileObject, pathSegments);
+        return extractOcppCsmsUrlPart(profileObject, pathSegments, chargePointId);
     }
 
     return navigateJsonObject(profileObject, pathSegments);
