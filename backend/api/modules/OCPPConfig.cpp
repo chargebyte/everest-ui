@@ -8,6 +8,7 @@
 #include "EverestServiceControl.hpp"
 #include "ProtocolSchema.hpp"
 #include "RpcApiClient.hpp"
+#include "YamlUtils.hpp"
 
 #include <QDir>
 #include <QFile>
@@ -24,6 +25,7 @@ namespace {
 RpcApiClient *g_rpcApiClient = nullptr;
 constexpr char kOcppBaseConfigPathKey[] = "ocpp_base_config_path";
 constexpr char kOcppCustomConfigPathKey[] = "ocpp_custom_config_path";
+constexpr char kAvailableModules[] = "_available_modules";
 constexpr char kNetworkConnectionProfiles[] = "NetworkConnectionProfiles";
 constexpr char kPropertiesKey[] = "properties";
 constexpr char kAttributesKey[] = "attributes";
@@ -165,6 +167,32 @@ OcppConfigDirResult loadOcppCustomConfigPath() {
         QString(),
         QString::fromLatin1(kErrorOcppBaseConfigNotDirectory),
         true);
+}
+
+QStringList findAvailableModules(const QJsonObject &yamlRoot) {
+    QStringList availableModules;
+    const QJsonObject activeModules = yamlRoot.value(QLatin1String(kEverestConfActiveModules)).toObject();
+    const auto activeModuleKeys = activeModules.keys();
+    for (const QString &activeModuleKey : activeModuleKeys) {
+        const QJsonObject activeModule = activeModules.value(activeModuleKey).toObject();
+        const QString moduleName = activeModule.value(QLatin1String(kEverestConfModule)).toString();
+        if (moduleName.isEmpty() || availableModules.contains(moduleName)) {
+            continue;
+        }
+
+        availableModules.append(moduleName);
+    }
+
+    return availableModules;
+}
+
+QJsonArray availableModulesToJsonArray(const QStringList &availableModules) {
+    QJsonArray modules;
+    for (const QString &moduleName : availableModules) {
+        modules.append(moduleName);
+    }
+
+    return modules;
 }
 
 QString buildControllerFilePath(const QString &directoryPath, const QString &controllerName) {
@@ -1088,6 +1116,17 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
     }
 
     response.parameters = fillResult.parameters;
+
+    const QString everestConfigPath = loadBackendConfigValue(QLatin1String(kConfEverestConfPath));
+    if (!everestConfigPath.isEmpty()) {
+        const YamlLoadResult yamlLoadResult = loadYamlFile(everestConfigPath);
+        if (yamlLoadResult.success) {
+            response.parameters.insert(
+                QLatin1String(kAvailableModules),
+                availableModulesToJsonArray(findAvailableModules(yamlLoadResult.yamlRoot)));
+        }
+    }
+
     response.success = true;
     return response;
 }

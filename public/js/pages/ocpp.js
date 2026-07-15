@@ -8,6 +8,8 @@ import { MODULE_IDS } from '../protocol/constants.js';
 import { buildRequest } from '../protocol/requestBuilder.js';
 import { mapResponse } from '../protocol/responseMapper.js';
 
+const kOcpp201Warning = 'OCPP201 is not available in the current EVerest base configuration. Use Direct config on the EVerest Config page to upload or create a base config that includes OCPP201.';
+
 export function renderOcppPage(container, {
   parameterCatalog,
   sendPayload,
@@ -51,6 +53,13 @@ export function renderOcppPage(container, {
     onMessage(message) {
       if (message.type === 'ocpp.read_settings.result') {
         addLog('ocpp.read_settings.result received');
+        const availableModules = Array.isArray(message.parameters?._available_modules)
+          ? message.parameters._available_modules
+          : null;
+        const ocpp201Available = availableModules?.includes('OCPP201') === true;
+        settingsTable.setWarning(
+          availableModules && !ocpp201Available ? kOcpp201Warning : ''
+        );
         settingsTable.setValues(
           mapResponse('settings_table', settingsTable.requestResponseObject, message)
         );

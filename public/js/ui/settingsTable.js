@@ -17,6 +17,8 @@ export function renderSettingsTableBlock(blockConfig, options) {
 
   const element = document.createElement('section');
   element.className = 'section';
+  const warningElement = createSettingsTableMissingNote();
+  element.appendChild(warningElement);
   const sectionElements = renderSettingsTableSections(blockConfig.sections, fieldMap);
 
   sectionElements.forEach((sectionElement) => {
@@ -42,6 +44,9 @@ export function renderSettingsTableBlock(blockConfig, options) {
     },
     applyAvailableModules(availableModules) {
       applySettingsTableAvailableModules(sectionElements, unavailableParameterIds, availableModules);
+    },
+    setWarning(message) {
+      renderSettingsTableBlockWarning(warningElement, message);
     },
     getValues(requestResponseObject) {
       return getSettingsTableValues(requestResponseObject, fieldMap, unavailableParameterIds);
@@ -136,6 +141,25 @@ function createSettingsTableMissingNote() {
   noteElement.className = 'settings-missing-note';
   noteElement.hidden = true;
   return noteElement;
+}
+
+function renderSettingsTableBlockWarning(noteElement, message) {
+  if (typeof message !== 'string' || message.trim() === '') {
+    noteElement.hidden = true;
+    noteElement.textContent = '';
+    return;
+  }
+
+  const iconElement = document.createElement('span');
+  iconElement.className = 'settings-warning-icon';
+  iconElement.textContent = '⚠';
+  iconElement.setAttribute('aria-hidden', 'true');
+
+  const messageElement = document.createElement('span');
+  messageElement.textContent = message;
+
+  noteElement.replaceChildren(iconElement, messageElement);
+  noteElement.hidden = false;
 }
 
 function applySettingsTableAvailableModules(sectionElements, unavailableParameterIds, availableModules) {
