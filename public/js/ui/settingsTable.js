@@ -32,7 +32,13 @@ export function renderSettingsTableBlock(blockConfig, options) {
     element,
     requestResponseObject,
     bindSubmit(handler) {
-      applyButtonElement.addEventListener('click', handler);
+      applyButtonElement.addEventListener('click', () => {
+        if (!validateSettingsTableFields(fieldMap)) {
+          return;
+        }
+
+        handler();
+      });
     },
     applyAvailableModules(availableModules) {
       applySettingsTableAvailableModules(sectionElements, unavailableParameterIds, availableModules);
@@ -277,6 +283,18 @@ function createSettingsTableTextInput(parameter, fieldMap) {
   const inputElement = document.createElement('input');
   inputElement.className = 'input';
   inputElement.id = parameter.id;
+
+  if (parameter.value_type === 'integer' && parameter.id === 'security_profile') {
+    inputElement.type = 'number';
+    inputElement.min = '1';
+    inputElement.max = '3';
+    inputElement.step = '1';
+    inputElement.inputMode = 'numeric';
+    inputElement.addEventListener('input', () => {
+      updateSecurityProfileValidity(inputElement);
+    });
+  }
+
   fieldMap.set(parameter.id, inputElement);
 
   if (!parameter.unit) {
@@ -377,13 +395,17 @@ function getSettingsTableValues(requestResponseObject, fieldMap, unavailablePara
       return;
     }
 
-    parameterEntry.value = coerceSettingsTableValue(fieldElement.value, parameterEntry.value_type);
+    parameterEntry.value = coerceSettingsTableValue(
+      fieldElement.value,
+      parameterEntry.value_type,
+      parameterId
+    );
   });
 
   return updatedRequestResponseObject;
 }
 
-function coerceSettingsTableValue(value, valueType) {
+function coerceSettingsTableValue(value, valueType, parameterId = '') {
   if (valueType === 'integer') {
     const trimmedValue = String(value).trim();
     if (trimmedValue === '') {
@@ -391,7 +413,21 @@ function coerceSettingsTableValue(value, valueType) {
     }
 
     const integerValue = Number.parseInt(trimmedValue, 10);
-    return Number.isNaN(integerValue) ? value : integerValue;
+    if (Number.isNaN(integerValue)) {
+      return value;
+    }
+
+    if (parameterId === 'security_profile') {
+      if (!/^[+-]?\d+$/.test(trimmedValue)) {
+        return value;
+      }
+
+      if (integerValue < 1 || integerValue > 3) {
+        return value;
+      }
+    }
+
+    return integerValue;
   }
 
   if (valueType === 'float') {
@@ -405,4 +441,47 @@ function coerceSettingsTableValue(value, valueType) {
   }
 
   return value;
+}
+
+function validateSettingsTableFields(fieldMap) {
+  for (const fieldElement of fieldMap.values()) {
+    if (!(fieldElement instanceof HTMLInputElement)) {
+      continue;
+    }
+
+    if (fieldElement.id === 'security_profile') {
+      updateSecurityProfileValidity(fieldElement);
+    }
+
+    if (typeof fieldElement.checkValidity === 'function' && !fieldElement.checkValidity()) {
+      if (typeof fieldElement.reportValidity === 'function') {
+        fieldElement.reportValidity();
+      }
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function updateSecurityProfileValidity(fieldElement) {
+  const trimmedValue = String(fieldElement.value ?? '').trim();
+
+  if (trimmedValue === '') {
+    fieldElement.setCustomValidity('');
+    return;
+  }
+
+  if (!/^[+-]?\d+$/.test(trimmedValue)) {
+    fieldElement.setCustomValidity('Enter an integer from 1 to 3.');
+    return;
+  }
+
+  const integerValue = Number.parseInt(trimmedValue, 10);
+  if (Number.isNaN(integerValue) || integerValue < 1 || integerValue > 3) {
+    fieldElement.setCustomValidity('Enter an integer from 1 to 3.');
+    return;
+  }
+
+  fieldElement.setCustomValidity('');
 }

@@ -270,8 +270,8 @@
           {
             "id": "security_profile",
             "display_name": "Security Profile",
-            "description": "fill in later",
-            "value_type": "string",
+            "description": "Security Profile to use (integer from 1 to 3)",
+            "value_type": "integer",
             "backend_path": "InternalCtrlr.NetworkConnectionProfiles.connectionData.securityProfile"
           }
         ]
