@@ -39,6 +39,7 @@ constexpr char kErrorEverestConfSymlinkVerificationFailed[] = "everest_config_sy
 constexpr char kAvailableModules[] = "_available_modules";
 constexpr char kErrorEverestRequiredModuleMissing[] = "everest_required_module_missing";
 constexpr char kModuleEvseManager[] = "EvseManager";
+constexpr char kUploadedConfigFilePrefix[] = "everest-ui-uploaded-";
 
 EverestAction toEverestAction(const QString &action) {
     if (action == QLatin1String(kActionReadConfigParameters)) {
@@ -190,14 +191,28 @@ ConfigPathResult loadEverestConfigPath(const QString &configKey) {
     };
 }
 
-QString buildUploadedConfigTargetPath(const QString &baseConfigPath, const QString &uploadedFileName) {
-    if (baseConfigPath.trimmed().isEmpty() || uploadedFileName.trimmed().isEmpty()) {
+QString buildUploadedConfigTargetPath(const QString &baseConfigPath,
+                                      const QString &configPath,
+                                      const QString &uploadedFileName) {
+    if (baseConfigPath.trimmed().isEmpty() ||
+        configPath.trimmed().isEmpty() ||
+        uploadedFileName.trimmed().isEmpty()) {
         return QString();
     }
 
     const QFileInfo baseConfigInfo(baseConfigPath);
     const QDir baseConfigDirectory = baseConfigInfo.dir();
-    return baseConfigDirectory.filePath(uploadedFileName);
+    const QString safeFileName =
+        QString::fromLatin1(kUploadedConfigFilePrefix) + uploadedFileName.trimmed();
+    const QString targetPath = baseConfigDirectory.filePath(safeFileName);
+    const QString cleanedTargetPath = QDir::cleanPath(targetPath);
+    const QString cleanedConfigPath = QDir::cleanPath(configPath);
+
+    if (cleanedTargetPath == cleanedConfigPath) {
+        return QString();
+    }
+
+    return cleanedTargetPath;
 }
 
 QJsonObject fillRequestedReadParameters(const QJsonObject &requestParameters,
@@ -655,8 +670,19 @@ ModuleResponse handleUploadRequest(const ModuleRequest &request) {
         return response;
     }
 
+    const ConfigPathResult configPathResult =
+        loadEverestConfigPath(QLatin1String(kConfEverestConfPath));
+    if (!configPathResult.success) {
+        response.parameters = QJsonObject{
+            {QLatin1String(kError), configPathResult.error},
+        };
+        return response;
+    }
+
     const QString uploadedConfigPath =
-        buildUploadedConfigTargetPath(baseConfigPathResult.path, uploadedFileName);
+        buildUploadedConfigTargetPath(baseConfigPathResult.path,
+                                      configPathResult.path,
+                                      uploadedFileName);
     if (uploadedConfigPath.isEmpty() || !writeTextFile(uploadedConfigPath, configYaml)) {
         response.parameters = QJsonObject{
             {QLatin1String(kError), QString::fromLatin1(kErrorConfigWriteFailed)},
