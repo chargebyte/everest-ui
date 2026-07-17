@@ -370,6 +370,33 @@
   max-width: 520px;
 }
 
+.everest-direct-status {
+  margin: 12px 0 0 180px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.everest-direct-status-info {
+  border-color: #d6ddea;
+  background: #f5f7fb;
+  color: #5a647d;
+}
+
+.everest-direct-status-success {
+  border-color: #b9e2c8;
+  background: #edf9f1;
+  color: #17663f;
+}
+
+.everest-direct-status-error {
+  border-color: #e2c48d;
+  background: #fff5df;
+  color: #7a4b00;
+}
+
 .switch-row {
   display: inline-flex;
   align-items: center;
@@ -582,6 +609,10 @@
   .firmware-file-row {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .everest-direct-status {
+    margin-left: 0;
   }
 
   .controls {
