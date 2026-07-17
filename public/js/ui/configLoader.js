@@ -43,6 +43,11 @@ export function renderConfigLoaderBlock(blockConfig, options = {}) {
   gridElement.appendChild(uploadRowElement);
   element.appendChild(gridElement);
 
+  const statusElement = document.createElement('p');
+  statusElement.className = 'everest-direct-status';
+  statusElement.hidden = true;
+  element.appendChild(statusElement);
+
   const state = {
     fileName: '',
     configYaml: ''
@@ -66,9 +71,27 @@ export function renderConfigLoaderBlock(blockConfig, options = {}) {
       })
       .catch((error) => {
         fileInputElement.value = '';
+        clearStatus();
         options.onFileError?.(error instanceof Error ? error.message : String(error));
       });
   });
+
+  function setStatus(message, tone = 'info') {
+    if (typeof message !== 'string' || message.trim() === '') {
+      clearStatus();
+      return;
+    }
+
+    statusElement.textContent = message;
+    statusElement.className = `everest-direct-status everest-direct-status-${tone}`;
+    statusElement.hidden = false;
+  }
+
+  function clearStatus() {
+    statusElement.textContent = '';
+    statusElement.className = 'everest-direct-status';
+    statusElement.hidden = true;
+  }
 
   return {
     element,
@@ -103,6 +126,12 @@ export function renderConfigLoaderBlock(blockConfig, options = {}) {
         parameters.file || 'config.yaml',
         parameters.config_yaml || ''
       );
+    },
+    setStatus(message, tone = 'info') {
+      setStatus(message, tone);
+    },
+    clearStatus() {
+      clearStatus();
     },
     clearSelection() {
       state.fileName = '';

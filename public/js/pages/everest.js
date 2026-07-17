@@ -74,6 +74,7 @@ export function renderEverestPage(container, {
   });
 
   configLoader.bindUpload(() => {
+    configLoader.setStatus('Applying uploaded configuration...', 'info');
     const uploadAction = pageConfig.actions.upload_config;
     const uploadEverestConfigRequest = buildRequest(
       uploadAction.group,
@@ -116,6 +117,7 @@ export function renderEverestPage(container, {
 
       if (message.type === 'everest.upload_config.ack') {
         addLog('everest.upload_config.ack received');
+        configLoader.setStatus('Configuration uploaded and applied.', 'success');
         configLoader.clearSelection();
         return;
       }
@@ -137,6 +139,7 @@ export function renderEverestPage(container, {
 
       if (message.type === 'everest.upload_config.error') {
         const error = message.parameters.error
+        configLoader.setStatus(error, 'error');
         addLog(`everest.upload_config.error: ${error}`);
       }
     },
