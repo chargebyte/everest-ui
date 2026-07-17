@@ -98,6 +98,7 @@ export function renderEverestPage(container, {
     onMessage(message) {
       if (message.type === 'everest.read_config_parameters.result') {
         addLog('everest.read_config_parameters.result received');
+        configLoader.clearStatus();
         settingsTable.applyAvailableModules(message.parameters?._available_modules);
         settingsTable.setValues(
           mapResponse('settings_table', settingsTable.requestResponseObject, message)
