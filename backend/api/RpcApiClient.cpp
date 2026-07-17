@@ -252,20 +252,17 @@ void RpcApiClient::onDisconnected() {
 void RpcApiClient::onBinaryMessageReceived(const QByteArray &message) {
     const QJsonDocument document = QJsonDocument::fromJson(message);
     if (!document.isObject()) {
-        if (!m_pendingRequests.isEmpty()) {
-            m_pendingRequestTimer.stop();
-            onPendingRequestTimeout();
-        }
         return;
     }
 
     const QJsonObject response = document.object();
     const QJsonValue idValue = response.value(QStringLiteral("id"));
     if (!idValue.isDouble()) {
-        if (!m_pendingRequests.isEmpty()) {
-            m_pendingRequestTimer.stop();
-            onPendingRequestTimeout();
+        if (response.value(QStringLiteral("jsonrpc")).toString() == QStringLiteral("2.0") &&
+            response.value(QStringLiteral("method")).isString()) {
+            return;
         }
+
         return;
     }
 
