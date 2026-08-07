@@ -10,7 +10,8 @@ const kFileColumns = [
 
 export function renderFilesDownloadBlock(blockConfig, options = {}) {
   const sections = blockConfig.sections || [];
-  const element = document.createElement('div');
+  const element = document.createElement('section');
+  element.className = 'section files-download';
   const tableContexts = sections.map((section) => {
     const context = createFilesDownloadSection(section);
     element.appendChild(context.element);
@@ -60,8 +61,8 @@ export function renderFilesDownloadBlock(blockConfig, options = {}) {
 }
 
 function createFilesDownloadSection(section) {
-  const sectionElement = document.createElement('section');
-  sectionElement.className = 'section';
+  const sectionElement = document.createElement('div');
+  sectionElement.className = 'files-download-section';
 
   const titleElement = document.createElement('h2');
   titleElement.textContent = section.title;

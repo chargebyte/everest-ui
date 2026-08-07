@@ -362,6 +362,11 @@
           "group": "logs",
           "action": "download",
           "parameters_mode": "raw_object"
+        },
+        "extract": {
+          "group": "logs",
+          "action": "extract",
+          "parameters_mode": "raw_object"
         }
       },
       "files_download": {
@@ -370,6 +375,23 @@
             "id": "error_logs",
             "display_name": "Available Log Files"
           }
+        ]
+      },
+      "journal_extract": {
+        "display_name": "Journal Extract",
+        "boot_options": [
+          { "id": "current", "display_name": "Since last boot" },
+          { "id": "two", "display_name": "Last two boots" },
+          { "id": "all", "display_name": "Complete available range" }
+        ],
+        "service_filter": {
+          "id": "everest",
+          "display_name": "Only everest.service"
+        },
+        "output_options": [
+          { "id": "download", "display_name": "Download file" },
+          { "id": "text", "display_name": "Display as text" },
+          { "id": "new_tab", "display_name": "Display as text in new tab" }
         ]
       }
     }

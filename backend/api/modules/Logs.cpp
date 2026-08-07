@@ -25,6 +25,9 @@ LogsAction toLogsAction(const QString &action) {
     if (action == QLatin1String(kActionDownload)) {
         return LogsAction::Download;
     }
+    if (action == QLatin1String(kActionExtract)) {
+        return LogsAction::Extract;
+    }
 
     return LogsAction::Unknown;
 }
@@ -42,6 +45,22 @@ constexpr char kFileDefaultName[] = "logs_bundle.tar.gz";
 constexpr char kCmdFlafCzf[] = "-czf";
 constexpr char kCmdFlagC[] = "-C";
 constexpr char kCmdFlagTar[] = "tar";
+constexpr char kJournalctlPath[] = "/bin/journalctl";
+constexpr char kJournalOutput[] = "short-iso-precise";
+constexpr char kJournalBoot[] = "boot";
+constexpr char kJournalService[] = "service";
+constexpr char kJournalOutputMode[] = "output";
+constexpr char kJournalBootCurrent[] = "current";
+constexpr char kJournalBootTwo[] = "two";
+constexpr char kJournalBootAll[] = "all";
+constexpr char kJournalOutputDownload[] = "download";
+constexpr char kJournalOutputText[] = "text";
+constexpr char kJournalOutputNewTab[] = "new_tab";
+constexpr char kJournalServiceUnit[] = "everest.service";
+constexpr char kJournalFileName[] = "journal-extract.txt";
+constexpr char kErrorJournalStartFailed[] = "journal_start_failed";
+constexpr char kErrorJournalTimeout[] = "journal_timeout";
+constexpr char kErrorJournalFailed[] = "journal_failed";
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
 constexpr auto kSkipEmptyParts = Qt::SkipEmptyParts;
@@ -82,6 +101,8 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
         return handleReadRequest(request);
     case LogsAction::Download:
         return handleDownloadRequest(request);
+    case LogsAction::Extract:
+        return handleExtractRequest(request);
     case LogsAction::Unknown:
         throw std::runtime_error("Logs::handleRequest got unsupported action");
     }
@@ -140,6 +161,84 @@ ModuleResponse handleDownloadRequest(const ModuleRequest &request) {
     }
 
     response.parameters = downloadResult.parameters;
+    response.success = true;
+    return response;
+}
+
+ModuleResponse handleExtractRequest(const ModuleRequest &request) {
+    ModuleResponse response{
+        .requestId = request.requestId,
+        .group = QLatin1String(kGroupLogs),
+        .action = request.action,
+        .parameters = QJsonObject{},
+        .success = false,
+        .final = true,
+    };
+
+    const QJsonObject parameters = request.parameters;
+    const QString boot = parameters.value(QLatin1String(kJournalBoot)).toString(
+        QLatin1String(kJournalBootCurrent));
+    const QString outputMode = parameters.value(QLatin1String(kJournalOutputMode)).toString(
+        QLatin1String(kJournalOutputDownload));
+    const QJsonValue serviceValue = parameters.value(QLatin1String(kJournalService));
+    if ((boot != QLatin1String(kJournalBootCurrent) &&
+         boot != QLatin1String(kJournalBootTwo) &&
+         boot != QLatin1String(kJournalBootAll)) ||
+        (outputMode != QLatin1String(kJournalOutputDownload) &&
+         outputMode != QLatin1String(kJournalOutputText) &&
+         outputMode != QLatin1String(kJournalOutputNewTab)) ||
+        (!serviceValue.isUndefined() && !serviceValue.isBool())) {
+        response.parameters = QJsonObject{
+            {QLatin1String(kError), QLatin1String(kErrorInvalidParams)},
+        };
+        return response;
+    }
+
+    QStringList args{
+        QStringLiteral("--no-pager"),
+        QStringLiteral("--quiet"),
+        QStringLiteral("--output=%1").arg(QLatin1String(kJournalOutput)),
+    };
+    if (boot == QLatin1String(kJournalBootCurrent)) {
+        args << QStringLiteral("--boot=0");
+    } else if (boot == QLatin1String(kJournalBootTwo)) {
+        args << QStringLiteral("--boot=0") << QStringLiteral("--boot=-1");
+    }
+
+    if (parameters.value(QLatin1String(kJournalService)).toBool(false)) {
+        args << QStringLiteral("--unit=%1").arg(QLatin1String(kJournalServiceUnit));
+    }
+
+    QProcess process;
+    process.start(QLatin1String(kJournalctlPath), args);
+    if (!process.waitForStarted(2000)) {
+        response.parameters = QJsonObject{
+            {QLatin1String(kError), QLatin1String(kErrorJournalStartFailed)},
+        };
+        return response;
+    }
+
+    if (!process.waitForFinished(30000)) {
+        process.kill();
+        process.waitForFinished(1000);
+        response.parameters = QJsonObject{
+            {QLatin1String(kError), QLatin1String(kErrorJournalTimeout)},
+        };
+        return response;
+    }
+
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        response.parameters = QJsonObject{
+            {QLatin1String(kError), QLatin1String(kErrorJournalFailed)},
+        };
+        return response;
+    }
+
+    const QByteArray journalData = process.readAllStandardOutput();
+    response.parameters = QJsonObject{
+        {QLatin1String(kKeyFile), QLatin1String(kJournalFileName)},
+        {QLatin1String(kKeyDataB64), QString::fromLatin1(journalData.toBase64())},
+    };
     response.success = true;
     return response;
 }

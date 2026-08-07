@@ -6,6 +6,7 @@ import { loadPageConfig } from '../config/pageConfigAdapter.js';
 import { MODULE_IDS } from '../protocol/constants.js';
 import { buildRequest } from '../protocol/requestBuilder.js';
 import { renderFilesDownloadBlock } from '../ui/filesDownload.js';
+import { renderJournalExtractBlock } from '../ui/journalExtract.js';
 
 export function renderErrorLogsPage(container, {
   parameterCatalog,
@@ -14,6 +15,7 @@ export function renderErrorLogsPage(container, {
 }) {
   const pageConfig = loadPageConfig(MODULE_IDS.LOGS, parameterCatalog);
   const filesDownloadBlock = pageConfig.blocks.find((block) => block.kind === 'files_download');
+  const journalExtractBlock = pageConfig.blocks.find((block) => block.kind === 'journal_extract');
 
   container.innerHTML = '';
 
@@ -23,6 +25,11 @@ export function renderErrorLogsPage(container, {
 
   const filesDownload = renderFilesDownloadBlock(filesDownloadBlock, {
     buttonLabel: 'Download Selected'
+  });
+  const journalExtract = renderJournalExtractBlock(journalExtractBlock, {
+    onPopupBlocked() {
+      addLog('logs.extract new tab blocked; displaying inline');
+    }
   });
 
   filesDownload.bindDownload(() => {
@@ -40,7 +47,23 @@ export function renderErrorLogsPage(container, {
     );
   });
 
+  journalExtract.bindGenerate((parameters) => {
+    const extractRequest = buildRequest(
+      pageConfig.actions.extract.group,
+      pageConfig.actions.extract.action,
+      createRequestParameters(parameters)
+    );
+    sendLogsRequest(
+      sendPayload,
+      addLog,
+      extractRequest,
+      pageConfig.actions.extract.group,
+      pageConfig.actions.extract.action
+    );
+  });
+
   pageElement.appendChild(filesDownload.element);
+  pageElement.appendChild(journalExtract.element);
   container.appendChild(pageElement);
 
   return {
@@ -57,6 +80,12 @@ export function renderErrorLogsPage(container, {
         return;
       }
 
+      if (message.type === 'logs.extract.result') {
+        addLog('logs.extract.result received');
+        journalExtract.setResult(message.parameters || {});
+        return;
+      }
+
       if (message.type === 'logs.read.error') {
         const error = message.parameters?.error;
         addLog(`logs.read.error: ${error}`);
@@ -65,6 +94,12 @@ export function renderErrorLogsPage(container, {
       if (message.type === 'logs.download.error') {
         const error = message.parameters?.error;
         addLog(`logs.download.error: ${error}`);
+      }
+
+      if (message.type === 'logs.extract.error') {
+        const error = message.parameters?.error;
+        journalExtract.clearPendingTab();
+        addLog(`logs.extract.error: ${error}`);
       }
     },
     onConnectionChange(connected) {
@@ -85,6 +120,26 @@ export function renderErrorLogsPage(container, {
       }
     },
     destroy() {}
+  };
+}
+
+function createRequestParameters(parameters) {
+  return {
+    boot: {
+      backend_path: 'boot',
+      value_type: 'string',
+      value: parameters.boot
+    },
+    service: {
+      backend_path: 'service',
+      value_type: 'boolean',
+      value: parameters.service
+    },
+    output: {
+      backend_path: 'output',
+      value_type: 'string',
+      value: parameters.output
+    }
   };
 }
 
