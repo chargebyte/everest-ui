@@ -70,8 +70,7 @@ inline constexpr const char kActionReadAppTitle[] = "read_app_title";
 inline constexpr const char kKeyGeneral[] = "general";
 inline constexpr const char kKeyInterface[] = "interface";
 inline constexpr const char kKeyFilters[] = "filters";
-inline constexpr const char kKeyIpv6[] = "ipv6";
-inline constexpr const char kKeyHomeplugAv[] = "homeplug_av";
+inline constexpr const char kKeyV2gHlc[] = "v2g_hlc";
 
 // Response types
 inline constexpr const char kTypeAck[] = "ack";

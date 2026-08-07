@@ -405,19 +405,10 @@ QString PCAP::extractInterface(const ModuleRequest &request) {
 QString PCAP::extractFilter(const ModuleRequest &request) {
     const QJsonObject general = request.parameters.value(QLatin1String(kKeyGeneral)).toObject();
     const QJsonObject filters = general.value(QLatin1String(kKeyFilters)).toObject();
-    const bool ipv6 = filters.value(QLatin1String(kKeyIpv6)).toBool();
-    const bool homeplugAv = filters.value(QLatin1String(kKeyHomeplugAv)).toBool();
-    QStringList expressions;
-    if (ipv6) {
-        expressions.append(QStringLiteral("ip6"));
-    }
-    if (homeplugAv) {
-        expressions.append(QStringLiteral("ether proto 0x88e1"));
-    }
-    if (expressions.isEmpty()) {
+    if (!filters.value(QLatin1String(kKeyV2gHlc)).toBool()) {
         return QString();
     }
-    return QStringLiteral("'%1'").arg(expressions.join(QStringLiteral(" or ")));
+    return QStringLiteral("ip6 or ether proto 0x88e1");
 }
 
 QString PCAP::fileNameFromPath(const QString &filePath) {
