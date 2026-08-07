@@ -2,45 +2,45 @@
 
 // Copyright 2026 chargebyte GmbH
 
-#ifndef LOGS_HPP
-#define LOGS_HPP
+#ifndef SYSTEM_LOGS_HPP
+#define SYSTEM_LOGS_HPP
 
 #include "RequestResponseTypes.hpp"
 
-enum class LogsAction {
+enum class SystemLogsAction {
     Read,
     Download,
     Extract,
     Unknown
 };
 
-struct LogsConfigPathResult {
+struct SystemLogsConfigPathResult {
     bool success = false;
     QString path;
     QString error;
 };
 
-struct LogsReadResult {
+struct SystemLogsReadResult {
     bool success = false;
     QJsonObject parameters;
     QString error;
 };
 
-struct LogsDownloadResult {
+struct SystemLogsDownloadResult {
     bool success = false;
     QJsonObject parameters;
     QString error;
 };
 
-namespace Logs {
+namespace SystemLogs {
 ModuleResponse handleRequest(const ModuleRequest &request);
 ModuleResponse handleReadRequest(const ModuleRequest &request);
 ModuleResponse handleDownloadRequest(const ModuleRequest &request);
 ModuleResponse handleExtractRequest(const ModuleRequest &request);
-LogsConfigPathResult loadLogsSettingsPath(const QString &configKey);
+SystemLogsConfigPathResult loadSystemLogsSettingsPath(const QString &configKey);
 QString loadBackendConfigValue(const QString &configKey);
-LogsReadResult readLogFilesInformation(const QString &logPaths);
-LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters);
+SystemLogsReadResult readSystemLogFilesInformation(const QString &systemLogPaths);
+SystemLogsDownloadResult createSystemLogsArchive(const QJsonObject &requestParameters);
 }
 
-#endif // LOGS_HPP
+#endif // SYSTEM_LOGS_HPP

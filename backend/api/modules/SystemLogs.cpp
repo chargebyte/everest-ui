@@ -2,7 +2,7 @@
 
 // Copyright 2026 chargebyte GmbH
 
-#include "Logs.hpp"
+#include "SystemLogs.hpp"
 
 #include "ProtocolSchema.hpp"
 #include "BackendConfig.hpp"
@@ -18,30 +18,30 @@
 #include <QTemporaryDir>
 #include <QtGlobal>
 
-LogsAction toLogsAction(const QString &action) {
+SystemLogsAction toSystemLogsAction(const QString &action) {
     if (action == QLatin1String(kActionRead)) {
-        return LogsAction::Read;
+        return SystemLogsAction::Read;
     }
     if (action == QLatin1String(kActionDownload)) {
-        return LogsAction::Download;
+        return SystemLogsAction::Download;
     }
     if (action == QLatin1String(kActionExtract)) {
-        return LogsAction::Extract;
+        return SystemLogsAction::Extract;
     }
 
-    return LogsAction::Unknown;
+    return SystemLogsAction::Unknown;
 }
 
-namespace Logs {
-constexpr char kErrorLogsPathNotFound[] = "logs_path_not_found";
-constexpr char kErrorLogsPathNotDirectory[] = "logs_path_not_a_directory";
-constexpr char kErrorLogsPathNotReadable[] = "logs_path_not_readable";
+namespace SystemLogs {
+constexpr char kErrorSystemLogsPathNotFound[] = "system_logs_path_not_found";
+constexpr char kErrorSystemLogsPathNotDirectory[] = "system_logs_path_not_a_directory";
+constexpr char kErrorSystemLogsPathNotReadable[] = "system_logs_path_not_readable";
 constexpr char kErrorZipFailed[] = "zip_failed";
 constexpr char kParametersFiles[] = "files";
-constexpr char kConfLogsPath[] = "logs_path";
+constexpr char kConfSystemLogsPath[] = "system_logs_path";
 constexpr char kFileName[] = "name";
 constexpr char kFileLastModified[] = "last_modified";
-constexpr char kFileDefaultName[] = "logs_bundle.tar.gz";
+constexpr char kFileDefaultName[] = "system_logs_bundle.tar.gz";
 constexpr char kCmdFlafCzf[] = "-czf";
 constexpr char kCmdFlagC[] = "-C";
 constexpr char kCmdFlagTar[] = "tar";
@@ -57,7 +57,7 @@ constexpr char kJournalOutputDownload[] = "download";
 constexpr char kJournalOutputText[] = "text";
 constexpr char kJournalOutputNewTab[] = "new_tab";
 constexpr char kJournalServiceUnit[] = "everest.service";
-constexpr char kJournalFileName[] = "journal-extract.txt";
+constexpr char kJournalFileName[] = "system-log-extract.txt";
 constexpr char kErrorJournalStartFailed[] = "journal_start_failed";
 constexpr char kErrorJournalTimeout[] = "journal_timeout";
 constexpr char kErrorJournalFailed[] = "journal_failed";
@@ -68,7 +68,7 @@ constexpr auto kSkipEmptyParts = Qt::SkipEmptyParts;
 constexpr auto kSkipEmptyParts = QString::SkipEmptyParts;
 #endif
 
-bool isFileInConfiguredLogPath(const QFileInfo &fileInfo, const QString &logPaths) {
+bool isFileInConfiguredSystemLogsPath(const QFileInfo &fileInfo, const QString &systemLogPaths) {
     if (fileInfo.isSymLink()) {
         return false;
     }
@@ -78,7 +78,7 @@ bool isFileInConfiguredLogPath(const QFileInfo &fileInfo, const QString &logPath
         return false;
     }
 
-    for (const QString &entry : logPaths.split(',', kSkipEmptyParts)) {
+    for (const QString &entry : systemLogPaths.split(',', kSkipEmptyParts)) {
         const QFileInfo logPathInfo(entry.trimmed());
         const QString canonicalLogPath = logPathInfo.canonicalFilePath();
         if (canonicalLogPath.isEmpty()) {
@@ -96,39 +96,41 @@ bool isFileInConfiguredLogPath(const QFileInfo &fileInfo, const QString &logPath
 }
 
 ModuleResponse handleRequest(const ModuleRequest &request) {
-    switch (toLogsAction(request.action)) {
-    case LogsAction::Read:
+    switch (toSystemLogsAction(request.action)) {
+    case SystemLogsAction::Read:
         return handleReadRequest(request);
-    case LogsAction::Download:
+    case SystemLogsAction::Download:
         return handleDownloadRequest(request);
-    case LogsAction::Extract:
+    case SystemLogsAction::Extract:
         return handleExtractRequest(request);
-    case LogsAction::Unknown:
-        throw std::runtime_error("Logs::handleRequest got unsupported action");
+    case SystemLogsAction::Unknown:
+        throw std::runtime_error("SystemLogs::handleRequest got unsupported action");
     }
 
-    throw std::runtime_error("Logs::handleRequest reached unreachable code");
+    throw std::runtime_error("SystemLogs::handleRequest reached unreachable code");
 }
 
 ModuleResponse handleReadRequest(const ModuleRequest &request) {
     ModuleResponse response{
         .requestId = request.requestId,
-        .group = QLatin1String(kGroupLogs),
+        .group = QLatin1String(kGroupSystemLogs),
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
         .final = true,
     };
 
-    const LogsConfigPathResult logsPathResult = loadLogsSettingsPath(QLatin1String(kConfLogsPath));
-    if (!logsPathResult.success) {
+    const SystemLogsConfigPathResult systemLogsPathResult =
+        loadSystemLogsSettingsPath(QLatin1String(kConfSystemLogsPath));
+    if (!systemLogsPathResult.success) {
         response.parameters = QJsonObject{
-            {QLatin1String(kError), logsPathResult.error},
+            {QLatin1String(kError), systemLogsPathResult.error},
         };
         return response;
     }
 
-    const LogsReadResult readResult = readLogFilesInformation(logsPathResult.path);
+    const SystemLogsReadResult readResult =
+        readSystemLogFilesInformation(systemLogsPathResult.path);
     if (!readResult.success) {
         response.parameters = QJsonObject{
             {QLatin1String(kError), readResult.error},
@@ -145,14 +147,15 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
 ModuleResponse handleDownloadRequest(const ModuleRequest &request) {
     ModuleResponse response{
         .requestId = request.requestId,
-        .group = QLatin1String(kGroupLogs),
+        .group = QLatin1String(kGroupSystemLogs),
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
         .final = true,
     };
 
-    const LogsDownloadResult downloadResult = createLogsArchive(request.parameters);
+    const SystemLogsDownloadResult downloadResult =
+        createSystemLogsArchive(request.parameters);
     if (!downloadResult.success) {
         response.parameters = QJsonObject{
             {QLatin1String(kError), downloadResult.error},
@@ -168,7 +171,7 @@ ModuleResponse handleDownloadRequest(const ModuleRequest &request) {
 ModuleResponse handleExtractRequest(const ModuleRequest &request) {
     ModuleResponse response{
         .requestId = request.requestId,
-        .group = QLatin1String(kGroupLogs),
+        .group = QLatin1String(kGroupSystemLogs),
         .action = request.action,
         .parameters = QJsonObject{},
         .success = false,
@@ -243,17 +246,17 @@ ModuleResponse handleExtractRequest(const ModuleRequest &request) {
     return response;
 }
 
-LogsConfigPathResult loadLogsSettingsPath(const QString &configKey) {
+SystemLogsConfigPathResult loadSystemLogsSettingsPath(const QString &configKey) {
     const QString value = loadBackendConfigValue(configKey);
     if (!value.isEmpty()) {
-        return LogsConfigPathResult{
+        return SystemLogsConfigPathResult{
             .success = true,
             .path = value,
             .error = QString(),
         };
     }
 
-    return LogsConfigPathResult{
+    return SystemLogsConfigPathResult{
         .success = false,
         .path = QString(),
         .error = configKey + QLatin1String(kErrorMissing),
@@ -264,38 +267,38 @@ QString loadBackendConfigValue(const QString &configKey) {
     return ::readBackendConfigValue(configKey);
 }
 
-LogsReadResult readLogFilesInformation(const QString &logPaths) {
+SystemLogsReadResult readSystemLogFilesInformation(const QString &systemLogPaths) {
     QJsonObject parameters = {};
     QJsonObject files = {};
     
-    QList<QString> logPathsList;
-    for (const QString &entry : logPaths.split(',', kSkipEmptyParts)) {
-        logPathsList.append(entry.trimmed());
+    QList<QString> systemLogPathsList;
+    for (const QString &entry : systemLogPaths.split(',', kSkipEmptyParts)) {
+        systemLogPathsList.append(entry.trimmed());
     }
 
     int16_t idCounter = 0;
-    for (const QString& path: logPathsList) {
+    for (const QString& path: systemLogPathsList) {
         if (!QFileInfo(path).exists()) {
-            return LogsReadResult{
+            return SystemLogsReadResult{
                 .success = false,
                 .parameters = QJsonObject{},
-                .error = QLatin1String(kErrorLogsPathNotFound)
+                .error = QLatin1String(kErrorSystemLogsPathNotFound)
             };
         }
 
         if (!QFileInfo(path).isDir()) {
-            return LogsReadResult{
+            return SystemLogsReadResult{
                 .success = false,
                 .parameters = QJsonObject{},
-                .error = QLatin1String(kErrorLogsPathNotDirectory)
+                .error = QLatin1String(kErrorSystemLogsPathNotDirectory)
             };
         }
 
         if (!QFileInfo(path).isReadable()) {
-            return LogsReadResult{
+            return SystemLogsReadResult{
                 .success = false,
                 .parameters = QJsonObject{},
-                .error = QLatin1String(kErrorLogsPathNotReadable)
+                .error = QLatin1String(kErrorSystemLogsPathNotReadable)
             };
         }
 
@@ -322,7 +325,7 @@ LogsReadResult readLogFilesInformation(const QString &logPaths) {
     }
 
     parameters.insert(QLatin1String(kParametersFiles), files);
-    return LogsReadResult{
+    return SystemLogsReadResult{
         .success = true,
         .parameters = parameters,
         .error = QString()
@@ -330,22 +333,23 @@ LogsReadResult readLogFilesInformation(const QString &logPaths) {
 
 }
 
-LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
+SystemLogsDownloadResult createSystemLogsArchive(const QJsonObject &requestParameters) {
     const QJsonObject selectedFiles = requestParameters.value(QLatin1String(kParametersFiles)).toObject();
     if (selectedFiles.isEmpty()) {
-        return LogsDownloadResult{
+        return SystemLogsDownloadResult{
             .success = false,
             .parameters = QJsonObject{},
             .error = QLatin1String(kErrorNoFilesSelected),
         };
     }
 
-    const LogsConfigPathResult logsPathResult = loadLogsSettingsPath(QLatin1String(kConfLogsPath));
-    if (!logsPathResult.success) {
-        return LogsDownloadResult{
+    const SystemLogsConfigPathResult systemLogsPathResult =
+        loadSystemLogsSettingsPath(QLatin1String(kConfSystemLogsPath));
+    if (!systemLogsPathResult.success) {
+        return SystemLogsDownloadResult{
             .success = false,
             .parameters = QJsonObject{},
-            .error = logsPathResult.error,
+            .error = systemLogsPathResult.error,
         };
     }
 
@@ -354,7 +358,7 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
     for (const QString &selectedFileId : selectedFileIds) {
         const QString filePath = selectedFiles.value(selectedFileId).toString().trimmed();
         if (filePath.isEmpty()) {
-            return LogsDownloadResult{
+            return SystemLogsDownloadResult{
                 .success = false,
                 .parameters = QJsonObject{},
                 .error = QLatin1String(kErrorInvalidParams),
@@ -363,8 +367,8 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
 
         const QFileInfo fileInfo(filePath);
         if (!fileInfo.exists() || !fileInfo.isFile() ||
-            !isFileInConfiguredLogPath(fileInfo, logsPathResult.path)) {
-            return LogsDownloadResult{
+            !isFileInConfiguredSystemLogsPath(fileInfo, systemLogsPathResult.path)) {
+            return SystemLogsDownloadResult{
                 .success = false,
                 .parameters = QJsonObject{},
                 .error = QLatin1String(kErrorFileNotFound),
@@ -372,7 +376,7 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
         }
 
         if (!fileInfo.isReadable()) {
-            return LogsDownloadResult{
+            return SystemLogsDownloadResult{
                 .success = false,
                 .parameters = QJsonObject{},
                 .error = QLatin1String(kErrorReadFailed),
@@ -383,7 +387,7 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
 
     QTemporaryDir archiveDir;
     if (!archiveDir.isValid()) {
-        return LogsDownloadResult{
+        return SystemLogsDownloadResult{
             .success = false,
             .parameters = QJsonObject{},
             .error = QLatin1String(kErrorFileIoFailed),
@@ -407,7 +411,7 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
 
     const int exitCode = QProcess::execute(QLatin1String(kCmdFlagTar), args);
     if (exitCode != 0) {
-        return LogsDownloadResult{
+        return SystemLogsDownloadResult{
             .success = false,
             .parameters = QJsonObject{},
             .error = QLatin1String(kErrorZipFailed),
@@ -416,7 +420,7 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
 
     QFile tarFile(tarPath);
     if (!tarFile.open(QIODevice::ReadOnly)) {
-        return LogsDownloadResult{
+        return SystemLogsDownloadResult{
             .success = false,
             .parameters = QJsonObject{},
             .error = QLatin1String(kErrorFileIoFailed),
@@ -426,7 +430,7 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
     const QByteArray tarData = tarFile.readAll();
     const QByteArray tarDataB64 = tarData.toBase64();
 
-    return LogsDownloadResult{
+    return SystemLogsDownloadResult{
         .success = true,
         .parameters = QJsonObject{
             {QLatin1String(kKeyFile), archiveFileName},
@@ -435,4 +439,4 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
         .error = QString(),
     };
 }
-} // namespace Logs
+} // namespace SystemLogs

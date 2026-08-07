@@ -5,13 +5,13 @@
 import { createTransport } from './transport.js';
 import { renderLayout } from './ui/layout.js';
 import { appendLog, state } from './state.js';
-import { setSystemLog, bindSystemLogResize } from './ui/systemLog.js';
+import { setUiLog, bindUiLogResize } from './ui/uiLog.js';
 import { renderEverestPage } from './pages/everest.js';
 import { renderSafetyPage } from './pages/safety.js';
 import { renderOcppPage } from './pages/ocpp.js';
 import { renderPcapPage } from './pages/pcap.js';
 import { renderFirmwarePage } from './pages/firmware.js';
-import { renderErrorLogsPage } from './pages/errorLogs.js';
+import { renderSystemLogsPage } from './pages/systemLogs.js';
 
 async function init() {
   const appRoot = createAppRoot();
@@ -40,7 +40,7 @@ async function startAuthenticatedApp(appRoot, appTitle) {
 
 async function initializeApp(appRoot, appTitle) {
   const appLayout = createLayout(appRoot);
-  bindSystemLogResize(appLayout.systemLogResizeHandle, appLayout.systemLog);
+  bindUiLogResize(appLayout.uiLogResizeHandle, appLayout.uiLog);
 
   return {
     layout: appLayout,
@@ -255,7 +255,7 @@ function createRoutes() {
     ocpp: renderOcppPage,
     pcap: renderPcapPage,
     firmware: renderFirmwarePage,
-    logs: renderErrorLogsPage
+    system_logs: renderSystemLogsPage
   };
 }
 
@@ -341,7 +341,7 @@ function updateActiveNav(appContext) {
 
 function addLog(appContext, message) {
   appendLog(message);
-  setSystemLog(appContext.layout.systemLog, state.logs.lines);
+  setUiLog(appContext.layout.uiLog, state.uiLog.lines);
 }
 
 init();

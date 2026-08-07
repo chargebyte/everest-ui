@@ -2,31 +2,31 @@
 
 // Copyright 2026 chargebyte GmbH
 
-export function renderJournalExtractBlock(blockConfig, options = {}) {
+export function renderSystemLogExtractBlock(blockConfig, options = {}) {
   let requestedOutputMode = blockConfig.outputOptions[0]?.id || 'download';
   let pendingTab = null;
   const element = document.createElement('section');
-  element.className = 'section journal-extract';
+  element.className = 'section system-log-extract';
 
   const titleElement = document.createElement('h2');
   titleElement.textContent = blockConfig.title;
   element.appendChild(titleElement);
 
   const controlsElement = document.createElement('div');
-  controlsElement.className = 'journal-extract-controls';
+  controlsElement.className = 'system-log-extract-controls';
 
   const bootGroup = createRadioGroup(
     'Boot range',
-    'journal-extract-boot',
+    'system-log-extract-boot',
     blockConfig.bootOptions
   );
   const serviceFilter = createCheckbox(
     blockConfig.serviceFilter.label,
-    'journal-extract-service'
+    'system-log-extract-service'
   );
   const outputGroup = createRadioGroup(
     'Output',
-    'journal-extract-output',
+    'system-log-extract-output',
     blockConfig.outputOptions
   );
 
@@ -37,12 +37,12 @@ export function renderJournalExtractBlock(blockConfig, options = {}) {
 
   const generateButton = document.createElement('button');
   generateButton.type = 'button';
-  generateButton.className = 'btn btn-start journal-extract-generate';
+  generateButton.className = 'btn btn-start system-log-extract-generate';
   generateButton.textContent = 'Generate';
   element.appendChild(generateButton);
 
   const resultElement = document.createElement('pre');
-  resultElement.className = 'journal-extract-result';
+  resultElement.className = 'system-log-extract-result';
   resultElement.hidden = true;
   element.appendChild(resultElement);
 
@@ -100,7 +100,7 @@ export function renderJournalExtractBlock(blockConfig, options = {}) {
         return;
       }
 
-      downloadTextFile(parameters.file || 'journal-extract.txt', text);
+      downloadTextFile(parameters.file || 'system-log-extract.txt', text);
     },
     clearPendingTab() {
       closePendingTab();
@@ -121,7 +121,7 @@ function openTextTab() {
     }
 
     tab.opener = null;
-    if (!writeTextTab(tab, 'Waiting for journal extract...')) {
+    if (!writeTextTab(tab, 'Waiting for system log extract...')) {
       tab.close();
       return null;
     }
@@ -138,7 +138,7 @@ function writeTextTab(tab, text) {
       return false;
     }
 
-    documentObject.title = 'Journal Extract';
+    documentObject.title = 'System Log Extract';
     documentObject.body.replaceChildren();
     documentObject.head.replaceChildren();
 
@@ -160,7 +160,7 @@ function writeTextTab(tab, text) {
 
 function createRadioGroup(label, name, options) {
   const fieldsetElement = document.createElement('fieldset');
-  fieldsetElement.className = 'journal-extract-option-group';
+  fieldsetElement.className = 'system-log-extract-option-group';
 
   const legendElement = document.createElement('legend');
   legendElement.textContent = label;
@@ -168,7 +168,7 @@ function createRadioGroup(label, name, options) {
 
   const inputElements = options.map((option, index) => {
     const labelElement = document.createElement('label');
-    labelElement.className = 'journal-extract-option';
+    labelElement.className = 'system-log-extract-option';
 
     const inputElement = document.createElement('input');
     inputElement.type = 'radio';
@@ -192,14 +192,14 @@ function createRadioGroup(label, name, options) {
 
 function createCheckbox(label, id) {
   const fieldsetElement = document.createElement('fieldset');
-  fieldsetElement.className = 'journal-extract-option-group journal-extract-checkbox-group';
+  fieldsetElement.className = 'system-log-extract-option-group system-log-extract-checkbox-group';
 
   const legendElement = document.createElement('legend');
   legendElement.textContent = 'Service filter';
   fieldsetElement.appendChild(legendElement);
 
   const labelElement = document.createElement('label');
-  labelElement.className = 'journal-extract-checkbox';
+  labelElement.className = 'system-log-extract-checkbox';
 
   const inputElement = document.createElement('input');
   inputElement.type = 'checkbox';

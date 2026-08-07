@@ -523,7 +523,7 @@
   margin-top: 12px;
 }
 
-.journal-extract-controls {
+.system-log-extract-controls {
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -532,7 +532,7 @@
   margin-bottom: 14px;
 }
 
-.journal-extract-option-group {
+.system-log-extract-option-group {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 14px;
@@ -543,15 +543,15 @@
   border-radius: 6px;
 }
 
-.journal-extract-option-group legend {
+.system-log-extract-option-group legend {
   padding: 0 4px;
   color: var(--cb-text);
   font-size: 14px;
   font-weight: 600;
 }
 
-.journal-extract-option,
-.journal-extract-checkbox {
+.system-log-extract-option,
+.system-log-extract-checkbox {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -559,11 +559,11 @@
   font-size: 14px;
 }
 
-.journal-extract-checkbox {
+.system-log-extract-checkbox {
   min-height: 38px;
 }
 
-.journal-extract-result {
+.system-log-extract-result {
   max-height: 480px;
   margin: 14px 0 0;
   padding: 12px;

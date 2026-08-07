@@ -5,7 +5,7 @@
 #include "modules/EverestConfig.hpp"
 #include "modules/FirmwareUpdate.hpp"
 #include "modules/FirmwareUpdateRuntime.hpp"
-#include "modules/Logs.hpp"
+#include "modules/SystemLogs.hpp"
 #include "modules/OCPPConfig.hpp"
 #include "modules/SafetyController.hpp"
 #include "RpcApiClient.hpp"
@@ -71,8 +71,8 @@ void SystemControl::startRequest(const ModuleRequest &request) {
         handleModuleResponse(response);
         return;
     }
-    case ModuleGroup::Logs: {
-        const ModuleResponse response = Logs::handleRequest(request);
+    case ModuleGroup::SystemLogs: {
+        const ModuleResponse response = SystemLogs::handleRequest(request);
         handleModuleResponse(response);
         return;
     }
@@ -81,8 +81,12 @@ void SystemControl::startRequest(const ModuleRequest &request) {
         handleModuleResponse(response);
         return;
     }
-    case ModuleGroup::Unknown:
-        throw std::runtime_error("SystemControl::startRequest got unsupported group");
+    case ModuleGroup::Unknown: {
+        qWarning() << "Ignoring request with unsupported module group";
+        m_pendingRequest.reset();
+        processQueue();
+        return;
+    }
     }
 
     throw std::runtime_error("SystemControl::startRequest reached unreachable code");
@@ -170,8 +174,8 @@ ModuleGroup SystemControl::toModuleGroup(const QString &group) const {
     if (group == QLatin1String(kGroupFirmware)) {
         return ModuleGroup::FirmwareUpdate;
     }
-    if (group == QLatin1String(kGroupLogs)) {
-        return ModuleGroup::Logs;
+    if (group == QLatin1String(kGroupSystemLogs)) {
+        return ModuleGroup::SystemLogs;
     }
     if (group == QLatin1String(kGroupSystem)) {
         return ModuleGroup::System;

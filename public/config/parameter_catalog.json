@@ -350,21 +350,21 @@
         ]
       }
     },
-    "logs": {
-      "title": "Error Logs",
+    "system_logs": {
+      "title": "System Logs",
       "actions": {
         "read": {
-          "group": "logs",
+          "group": "system_logs",
           "action": "read",
           "parameters_mode": "empty"
         },
         "download": {
-          "group": "logs",
+          "group": "system_logs",
           "action": "download",
           "parameters_mode": "raw_object"
         },
         "extract": {
-          "group": "logs",
+          "group": "system_logs",
           "action": "extract",
           "parameters_mode": "raw_object"
         }
@@ -372,13 +372,13 @@
       "files_download": {
         "available_files": [
           {
-            "id": "error_logs",
+            "id": "system_log_files",
             "display_name": "Available Log Files"
           }
         ]
       },
-      "journal_extract": {
-        "display_name": "Journal Extract",
+      "system_log_extract": {
+        "display_name": "System Log Extract",
         "boot_options": [
           { "id": "current", "display_name": "Since last boot" },
           { "id": "two", "display_name": "Last two boots" },

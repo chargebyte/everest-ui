@@ -81,6 +81,21 @@ void RequestHandler::handleTextMessage(const QString &message) {
     }
 
     const ModuleRequest request = toModuleRequest(obj);
+    if (request.group == ModuleGroup::Unknown) {
+        const QString group = obj.value(FieldNameKey(FieldName::Group)).toString();
+        enqueueResponse(ResponseBuilder::buildResponse(ModuleResponse{
+            .requestId = request.requestId,
+            .group = group,
+            .action = request.action,
+            .parameters = QJsonObject{
+                {QLatin1String(kError), QStringLiteral("unsupported_group")},
+            },
+            .success = false,
+            .final = true,
+        }));
+        return;
+    }
+
     switch (request.group) {
     case ModuleGroup::PCAP:
         emit pcapEnqueueRequested(request);
@@ -89,7 +104,7 @@ void RequestHandler::handleTextMessage(const QString &message) {
     case ModuleGroup::SafetyController:
     case ModuleGroup::OCPPConfig:
     case ModuleGroup::FirmwareUpdate:
-    case ModuleGroup::Logs:
+    case ModuleGroup::SystemLogs:
     case ModuleGroup::System:
     case ModuleGroup::Unknown:
         emit systemControlEnqueueRequested(request);
@@ -152,9 +167,15 @@ bool RequestHandler::isValidTemplate(const QJsonObject &obj) {
 }
 
 ModuleRequest RequestHandler::toModuleRequest(const QJsonObject &obj) {
+    const QString group = obj.value(FieldNameKey(FieldName::Group)).toString();
+    const ModuleGroup moduleGroup = toModuleGroup(group);
+    if (moduleGroup == ModuleGroup::Unknown) {
+        qWarning().noquote() << "Unsupported request group:" << group;
+    }
+
     return ModuleRequest{
         .requestId = static_cast<qint64>(obj.value(FieldNameKey(FieldName::RequestId)).toDouble()),
-        .group = toModuleGroup(obj.value(FieldNameKey(FieldName::Group)).toString()),
+        .group = moduleGroup,
         .action = obj.value(FieldNameKey(FieldName::Action)).toString(),
         .parameters = obj.value(FieldNameKey(FieldName::Parameters)).toObject(),
     };
@@ -177,8 +198,8 @@ ModuleGroup RequestHandler::toModuleGroup(const QString &group) {
     if (group == QLatin1String(kGroupFirmware)) {
         return ModuleGroup::FirmwareUpdate;
     }
-    if (group == QLatin1String(kGroupLogs)) {
-        return ModuleGroup::Logs;
+    if (group == QLatin1String(kGroupSystemLogs)) {
+        return ModuleGroup::SystemLogs;
     }
     if (group == QLatin1String(kGroupSystem)) {
         return ModuleGroup::System;

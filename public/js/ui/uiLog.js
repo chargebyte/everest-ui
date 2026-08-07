@@ -2,26 +2,26 @@
 
 // Copyright 2026 chargebyte GmbH
 
-export function renderSystemLog() {
+export function renderUiLog() {
   return `
-    <section class="system-log">
+    <section class="ui-log">
       <div
-        id="system-log-resize-handle"
+        id="ui-log-resize-handle"
         class="log-resize-handle"
-        title="Drag to resize system log"
+        title="Drag to resize Web UI Log"
       ></div>
-      <h2>System Log</h2>
-      <pre id="system-log" class="log-window"></pre>
+      <h2>Web UI Log</h2>
+      <pre id="ui-log" class="log-window"></pre>
     </section>
   `;
 }
 
-export function setSystemLog(logEl, lines) {
+export function setUiLog(logEl, lines) {
   logEl.textContent = lines.join('\n');
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-export function bindSystemLogResize(handleEl, logWindowEl) {
+export function bindUiLogResize(handleEl, logWindowEl) {
   if (!handleEl || !logWindowEl) {
     return;
   }
