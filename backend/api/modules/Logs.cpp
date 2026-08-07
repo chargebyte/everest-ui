@@ -7,6 +7,7 @@
 #include "ProtocolSchema.hpp"
 #include "BackendConfig.hpp"
 
+#include <QDir>
 #include <QDebug>
 #include <QDirIterator>
 #include <QDateTime>
@@ -47,6 +48,33 @@ constexpr auto kSkipEmptyParts = Qt::SkipEmptyParts;
 #else
 constexpr auto kSkipEmptyParts = QString::SkipEmptyParts;
 #endif
+
+bool isFileInConfiguredLogPath(const QFileInfo &fileInfo, const QString &logPaths) {
+    if (fileInfo.isSymLink()) {
+        return false;
+    }
+
+    const QString canonicalFilePath = fileInfo.canonicalFilePath();
+    if (canonicalFilePath.isEmpty()) {
+        return false;
+    }
+
+    for (const QString &entry : logPaths.split(',', kSkipEmptyParts)) {
+        const QFileInfo logPathInfo(entry.trimmed());
+        const QString canonicalLogPath = logPathInfo.canonicalFilePath();
+        if (canonicalLogPath.isEmpty()) {
+            continue;
+        }
+
+        const QString relativeFilePath = QDir(canonicalLogPath).relativeFilePath(canonicalFilePath);
+        if (relativeFilePath != QLatin1String("..") &&
+            !relativeFilePath.startsWith(QLatin1String("../"))) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 ModuleResponse handleRequest(const ModuleRequest &request) {
     switch (toLogsAction(request.action)) {
@@ -185,7 +213,7 @@ LogsReadResult readLogFilesInformation(const QString &logPaths) {
 
             files.insert(QString::number(idCounter),
                          QJsonObject{
-                             { QLatin1String(kFileName), (path + fileInfo.fileName()) },
+                             { QLatin1String(kFileName), fileInfo.absoluteFilePath() },
                              { QLatin1String(kParametersSizeBytes), size },
                              { QLatin1String(kFileLastModified), lastModified.toString(Qt::ISODate) }
                          });
@@ -213,6 +241,15 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
         };
     }
 
+    const LogsConfigPathResult logsPathResult = loadLogsSettingsPath(QLatin1String(kConfLogsPath));
+    if (!logsPathResult.success) {
+        return LogsDownloadResult{
+            .success = false,
+            .parameters = QJsonObject{},
+            .error = logsPathResult.error,
+        };
+    }
+
     QStringList files;
     const auto selectedFileIds = selectedFiles.keys();
     for (const QString &selectedFileId : selectedFileIds) {
@@ -226,7 +263,8 @@ LogsDownloadResult createLogsArchive(const QJsonObject &requestParameters) {
         }
 
         const QFileInfo fileInfo(filePath);
-        if (!fileInfo.exists() || !fileInfo.isFile()) {
+        if (!fileInfo.exists() || !fileInfo.isFile() ||
+            !isFileInConfiguredLogPath(fileInfo, logsPathResult.path)) {
             return LogsDownloadResult{
                 .success = false,
                 .parameters = QJsonObject{},
