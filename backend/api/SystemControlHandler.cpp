@@ -81,8 +81,12 @@ void SystemControl::startRequest(const ModuleRequest &request) {
         handleModuleResponse(response);
         return;
     }
-    case ModuleGroup::Unknown:
-        throw std::runtime_error("SystemControl::startRequest got unsupported group");
+    case ModuleGroup::Unknown: {
+        qWarning() << "Ignoring request with unsupported module group";
+        m_pendingRequest.reset();
+        processQueue();
+        return;
+    }
     }
 
     throw std::runtime_error("SystemControl::startRequest reached unreachable code");

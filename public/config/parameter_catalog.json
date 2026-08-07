@@ -354,17 +354,17 @@
       "title": "System Logs",
       "actions": {
         "read": {
-          "group": "logs",
+          "group": "system_logs",
           "action": "read",
           "parameters_mode": "empty"
         },
         "download": {
-          "group": "logs",
+          "group": "system_logs",
           "action": "download",
           "parameters_mode": "raw_object"
         },
         "extract": {
-          "group": "logs",
+          "group": "system_logs",
           "action": "extract",
           "parameters_mode": "raw_object"
         }
