@@ -3,7 +3,9 @@
 // Copyright 2026 chargebyte GmbH
 
 const kCaptureFields = {
-  string: createCaptureTextInput
+  string: createCaptureTextInput,
+  interface: createCaptureInterfaceInput,
+  boolean: createCaptureBooleanInput
 };
 
 export function renderCaptureBlock(blockConfig, options = {}) {
@@ -19,6 +21,7 @@ export function renderCaptureBlock(blockConfig, options = {}) {
   element.appendChild(controls.element);
 
   const requestResponseObject = createRequestResponseObject(blockConfig.sections);
+  let interfaceOptions = [];
   let currentViewState = {
     connected: false,
     recordingState: 'idle',
@@ -119,6 +122,36 @@ export function renderCaptureBlock(blockConfig, options = {}) {
     },
     setValues(sourceRequestResponseObject) {
       setCaptureValues(sourceRequestResponseObject, fieldMap);
+      updateStateView(currentViewState);
+    },
+    setInterfaceOptions(options) {
+      interfaceOptions = Array.isArray(options) ? options : [];
+      const selectElement = fieldMap.get('interface');
+      if (!selectElement) {
+        return;
+      }
+
+      const selectedValue = selectElement.value;
+      selectElement._interfaceOptions = interfaceOptions;
+      selectElement.replaceChildren();
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Select an interface';
+      selectElement.appendChild(placeholder);
+
+      interfaceOptions.forEach((optionData) => {
+        const optionElement = document.createElement('option');
+        optionElement.value = optionData.name || '';
+        optionElement.textContent = formatInterfaceOption(optionData);
+        optionElement.title = optionData.warning || optionData.recommendation || '';
+        optionElement.disabled = optionData.available === false;
+        selectElement.appendChild(optionElement);
+      });
+
+      if (interfaceOptions.some((optionData) => optionData.name === selectedValue)) {
+        selectElement.value = selectedValue;
+      }
+      updateInterfaceHint(selectElement);
       updateStateView(currentViewState);
     },
     setViewState(viewState) {
@@ -231,6 +264,65 @@ function createCaptureTextInput(parameter, fieldMap) {
   return inputElement;
 }
 
+function createCaptureInterfaceInput(parameter, fieldMap) {
+  const wrapperElement = document.createElement('div');
+  wrapperElement.className = 'capture-interface-field';
+
+  const selectElement = document.createElement('select');
+  selectElement.className = 'input';
+  selectElement.id = parameter.id;
+  fieldMap.set(parameter.id, selectElement);
+  selectElement._interfaceOptions = [];
+
+  const hintElement = document.createElement('div');
+  hintElement.className = 'capture-interface-hint';
+  selectElement._captureHintElement = hintElement;
+  selectElement.addEventListener('change', () => {
+    updateInterfaceHint(selectElement);
+    updateStateView();
+  });
+
+  wrapperElement.appendChild(selectElement);
+  wrapperElement.appendChild(hintElement);
+  return wrapperElement;
+}
+
+function createCaptureBooleanInput(parameter, fieldMap) {
+  const inputElement = document.createElement('input');
+  inputElement.type = 'checkbox';
+  inputElement.className = 'checkbox';
+  inputElement.id = parameter.id;
+  inputElement.checked = parameter.default_value === true;
+  fieldMap.set(parameter.id, inputElement);
+  return inputElement;
+}
+
+function formatInterfaceOption(optionData) {
+  const labels = [optionData.name || ''];
+  if (optionData.likely_powerline) {
+    labels.push('Likely PLC/HomePlug');
+  }
+  if (optionData.available === false && !optionData.warning) {
+    labels.push('Unavailable');
+  }
+  return labels.filter(Boolean).join(' - ');
+}
+
+function updateInterfaceHint(selectElement) {
+  const hintElement = selectElement._captureHintElement;
+  if (!hintElement) {
+    return;
+  }
+
+  const optionData = selectElement.value
+    ? selectElement._interfaceOptions?.find((option) => option.name === selectElement.value)
+    : null;
+  hintElement.textContent = optionData?.warning || optionData?.recommendation || '';
+  hintElement.className = optionData?.warning
+    ? 'capture-interface-hint warning'
+    : 'capture-interface-hint recommendation';
+}
+
 function createCaptureControlSection(options) {
   const element = document.createElement('section');
   element.className = 'section';
@@ -305,7 +397,9 @@ function getCaptureValues(requestResponseObject, fieldMap) {
       return;
     }
 
-    parameterEntry.value = fieldElement.value;
+    parameterEntry.value = fieldElement.type === 'checkbox'
+      ? fieldElement.checked
+      : fieldElement.value;
   });
 
   return updatedRequestResponseObject;
@@ -318,13 +412,21 @@ function setCaptureValues(requestResponseObject, fieldMap) {
       return;
     }
 
-    fieldElement.value = parameterEntry?.value ?? '';
+    if (fieldElement.type === 'checkbox') {
+      fieldElement.checked = parameterEntry?.value === true;
+    } else {
+      fieldElement.value = parameterEntry?.value ?? '';
+    }
   });
 }
 
 function hasStartParameters(fieldMap) {
   return Array.from(fieldMap.values()).every((fieldElement) => {
-    return fieldElement.value.trim() !== '';
+    if (fieldElement.type === 'checkbox') {
+      return true;
+    }
+    const selectedOption = fieldElement.options[fieldElement.selectedIndex];
+    return fieldElement.value.trim() !== '' && !selectedOption?.disabled;
   });
 }
 

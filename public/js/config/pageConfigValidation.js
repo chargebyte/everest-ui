@@ -355,7 +355,7 @@ function validateCaptureRows(block) {
   const requiredKeys = ['id', 'display_name', 'description', 'value_type', 'backend_path'];
   const optionalKeys = ['default_value'];
   const allowedKeys = new Set([...requiredKeys, ...optionalKeys]);
-  const allowedFieldTypes = new Set(['string']);
+  const allowedFieldTypes = new Set(['string', 'interface', 'boolean']);
 
   validateRequiredKeys(block, requiredKeys, 'capture');
   validateAllowedKeys(block, allowedKeys, 'capture');

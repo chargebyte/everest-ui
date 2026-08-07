@@ -13,6 +13,8 @@ export const state = {
   pcap: {
     connected: false,
     interfaceName: '',
+    captureValues: null,
+    interfaces: [],
     recordingState: 'idle',
     captureStartTs: null,
     lastPcapUrl: null,

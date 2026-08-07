@@ -289,6 +289,11 @@
           "group": "pcap",
           "action": "read",
           "parameters_mode": "empty"
+        },
+        "read_interfaces": {
+          "group": "pcap",
+          "action": "read_interfaces",
+          "parameters_mode": "empty"
         }
       },
       "capture": {
@@ -296,9 +301,25 @@
           {
             "id": "interface",
             "display_name": "Interface",
-            "description": "",
-            "value_type": "string",
+            "description": "Select the network interface to capture.",
+            "value_type": "interface",
             "backend_path": "general.interface"
+          },
+          {
+            "id": "ipv6",
+            "display_name": "IPv6",
+            "description": "Capture IPv6 packets.",
+            "value_type": "boolean",
+            "default_value": false,
+            "backend_path": "general.filters.ipv6"
+          },
+          {
+            "id": "homeplug_av",
+            "display_name": "HomePlug AV",
+            "description": "Capture HomePlug AV packets.",
+            "value_type": "boolean",
+            "default_value": false,
+            "backend_path": "general.filters.homeplug_av"
           }
         ]
       }

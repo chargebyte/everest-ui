@@ -15,6 +15,7 @@
 class ConsoleConnector;
 
 enum class PCAPAction {
+    ReadInterfaces,
     Read,
     Write,
     Unknown
@@ -26,6 +27,7 @@ class PCAP final : public QObject {
 public:
     explicit PCAP(QObject *parent = nullptr);
     ModuleResponse handleRequest(const ModuleRequest &request);
+    ModuleResponse handleReadInterfacesRequest(const ModuleRequest &request);
     ModuleResponse handleReadRequest(const ModuleRequest &request);
     ModuleResponse handleWriteRequest(const ModuleRequest &request);
 
@@ -39,6 +41,7 @@ private:
     void processQueue();
     static PCAPAction toPcapAction(const QString &action);
     static QString extractInterface(const ModuleRequest &request);
+    static QString extractFilter(const ModuleRequest &request);
     static QString fileNameFromPath(const QString &filePath);
     ModuleResponse startCapture(const ModuleRequest &request);
     ModuleResponse readCapture(const ModuleRequest &request);
