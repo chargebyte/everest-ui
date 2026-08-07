@@ -7,7 +7,7 @@ export const state = {
     connected: false,
     requestId: 0
   },
-  logs: {
+  uiLog: {
     lines: []
   },
   pcap: {
@@ -27,8 +27,8 @@ export function nextRequestId() {
 
 export function appendLog(message) {
   const stamp = new Date().toISOString().replace('T', ' ').replace('Z', '');
-  state.logs.lines.push(`[${stamp}] ${message}`);
-  if (state.logs.lines.length > 300) {
-    state.logs.lines.shift();
+  state.uiLog.lines.push(`[${stamp}] ${message}`);
+  if (state.uiLog.lines.length > 300) {
+    state.uiLog.lines.shift();
   }
 }

@@ -16,7 +16,7 @@ enum class ModuleGroup {
     SafetyController,
     OCPPConfig,
     FirmwareUpdate,
-    Logs,
+    SystemLogs,
     System,
     Unknown
 };

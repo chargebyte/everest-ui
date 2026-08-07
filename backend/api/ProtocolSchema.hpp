@@ -42,7 +42,7 @@ inline constexpr const char kGroupEverest[] = "everest";
 inline constexpr const char kGroupSafety[] = "safety";
 inline constexpr const char kGroupOcpp[] = "ocpp";
 inline constexpr const char kGroupFirmware[] = "firmware";
-inline constexpr const char kGroupLogs[] = "logs";
+inline constexpr const char kGroupSystemLogs[] = "system_logs";
 inline constexpr const char kGroupSystem[] = "system";
 
 inline constexpr const char kActionRead[] = "read";

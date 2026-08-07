@@ -89,7 +89,7 @@ void RequestHandler::handleTextMessage(const QString &message) {
     case ModuleGroup::SafetyController:
     case ModuleGroup::OCPPConfig:
     case ModuleGroup::FirmwareUpdate:
-    case ModuleGroup::Logs:
+    case ModuleGroup::SystemLogs:
     case ModuleGroup::System:
     case ModuleGroup::Unknown:
         emit systemControlEnqueueRequested(request);
@@ -177,8 +177,8 @@ ModuleGroup RequestHandler::toModuleGroup(const QString &group) {
     if (group == QLatin1String(kGroupFirmware)) {
         return ModuleGroup::FirmwareUpdate;
     }
-    if (group == QLatin1String(kGroupLogs)) {
-        return ModuleGroup::Logs;
+    if (group == QLatin1String(kGroupSystemLogs)) {
+        return ModuleGroup::SystemLogs;
     }
     if (group == QLatin1String(kGroupSystem)) {
         return ModuleGroup::System;

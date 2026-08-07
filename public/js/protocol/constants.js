@@ -8,7 +8,7 @@ export const MODULE_IDS = Object.freeze({
   OCPP: 'ocpp',
   PCAP: 'pcap',
   FIRMWARE: 'firmware',
-  LOGS: 'logs'
+  SYSTEM_LOGS: 'system_logs'
 });
 
 export const EVEREST_ACTIONS = Object.freeze({

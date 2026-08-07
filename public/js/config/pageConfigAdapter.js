@@ -9,7 +9,7 @@ const kUiBlocks = {
   config_loader: normalizeConfigLoader,
   settings_matrix: normalizeSettingsMatrix,
   files_download: normalizeFilesDownload,
-  journal_extract: normalizeJournalExtract,
+  system_log_extract: normalizeSystemLogExtract,
   updater: normalizeUpdater,
   capture: normalizeCapture
 };
@@ -197,9 +197,9 @@ function normalizeFilesDownloadSections(block) {
   });
 }
 
-function normalizeJournalExtract(block) {
+function normalizeSystemLogExtract(block) {
   return {
-    kind: 'journal_extract',
+    kind: 'system_log_extract',
     title: block.display_name,
     bootOptions: block.boot_options.map((option) => ({
       id: option.id,

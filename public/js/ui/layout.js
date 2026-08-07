@@ -3,7 +3,7 @@
 // Copyright 2026 chargebyte GmbH
 
 import { renderSideBar } from './sideBar.js';
-import { renderSystemLog } from './systemLog.js';
+import { renderUiLog } from './uiLog.js';
 import { renderTopBar } from './topBar.js';
 
 export function renderLayout(root) {
@@ -16,15 +16,15 @@ export function renderLayout(root) {
         <div id="page-outlet"></div>
       </section>
 
-      ${renderSystemLog()}
+      ${renderUiLog()}
     </div>
   `;
 
   return {
     pageOutlet: root.querySelector('#page-outlet'),
     logoutButton: root.querySelector('#logout-button'),
-    systemLog: root.querySelector('#system-log'),
-    systemLogResizeHandle: root.querySelector('#system-log-resize-handle'),
+    uiLog: root.querySelector('#ui-log'),
+    uiLogResizeHandle: root.querySelector('#ui-log-resize-handle'),
     navItems: root.querySelectorAll('.nav-item')
   };
 }

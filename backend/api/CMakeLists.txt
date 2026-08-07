@@ -12,7 +12,7 @@ add_executable(api
     modules/OCPPConfig.cpp
     modules/FirmwareUpdate.cpp
     modules/FirmwareUpdateRuntime.cpp
-    modules/Logs.cpp
+    modules/SystemLogs.cpp
     libs/ConsoleConnector.cpp
     libs/BackendConfig.cpp
     libs/ResponseBuilder.cpp

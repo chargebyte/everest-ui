@@ -203,7 +203,7 @@ body {
   padding: 18px 14px 8px;
 }
 
-.system-log {
+.ui-log {
   grid-area: log;
   border-top: 1px solid var(--cb-border);
   background: #eff2f8;
@@ -211,7 +211,7 @@ body {
   position: relative;
 }
 
-.system-log h2 {
+.ui-log h2 {
   margin: 2px 0 7px;
   text-align: center;
   font-size: 16px;
