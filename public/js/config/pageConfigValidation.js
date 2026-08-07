@@ -154,7 +154,7 @@ function validateJournalExtractParameters(block) {
   }
 
   validateJournalExtractOptions(block, 'boot_options', 3);
-  validateJournalExtractOptions(block, 'output_options', 2);
+  validateJournalExtractOptions(block, 'output_options', 3);
 
   if (!isPlainObject(block.service_filter) ||
       !hasNonEmptyStringField(block.service_filter, 'id') ||

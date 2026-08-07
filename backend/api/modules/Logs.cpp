@@ -55,6 +55,7 @@ constexpr char kJournalBootTwo[] = "two";
 constexpr char kJournalBootAll[] = "all";
 constexpr char kJournalOutputDownload[] = "download";
 constexpr char kJournalOutputText[] = "text";
+constexpr char kJournalOutputNewTab[] = "new_tab";
 constexpr char kJournalServiceUnit[] = "everest.service";
 constexpr char kJournalFileName[] = "journal-extract.txt";
 constexpr char kErrorJournalStartFailed[] = "journal_start_failed";
@@ -184,7 +185,8 @@ ModuleResponse handleExtractRequest(const ModuleRequest &request) {
          boot != QLatin1String(kJournalBootTwo) &&
          boot != QLatin1String(kJournalBootAll)) ||
         (outputMode != QLatin1String(kJournalOutputDownload) &&
-         outputMode != QLatin1String(kJournalOutputText)) ||
+         outputMode != QLatin1String(kJournalOutputText) &&
+         outputMode != QLatin1String(kJournalOutputNewTab)) ||
         (!serviceValue.isUndefined() && !serviceValue.isBool())) {
         response.parameters = QJsonObject{
             {QLatin1String(kError), QLatin1String(kErrorInvalidParams)},

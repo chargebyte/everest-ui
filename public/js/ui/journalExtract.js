@@ -2,8 +2,9 @@
 
 // Copyright 2026 chargebyte GmbH
 
-export function renderJournalExtractBlock(blockConfig) {
+export function renderJournalExtractBlock(blockConfig, options = {}) {
   let requestedOutputMode = blockConfig.outputOptions[0]?.id || 'download';
+  let pendingTab = null;
   const element = document.createElement('section');
   element.className = 'section journal-extract';
 
@@ -45,6 +46,13 @@ export function renderJournalExtractBlock(blockConfig) {
   resultElement.hidden = true;
   element.appendChild(resultElement);
 
+  function closePendingTab() {
+    if (pendingTab && !pendingTab.closed) {
+      pendingTab.close();
+    }
+    pendingTab = null;
+  }
+
   function getRequestParameters() {
     return {
       boot: bootGroup.value(),
@@ -61,20 +69,93 @@ export function renderJournalExtractBlock(blockConfig) {
         resultElement.textContent = '';
         const parameters = getRequestParameters();
         requestedOutputMode = parameters.output;
+
+        closePendingTab();
+        pendingTab = requestedOutputMode === 'new_tab' ? openTextTab() : null;
+        if (requestedOutputMode === 'new_tab' && !pendingTab) {
+          options.onPopupBlocked?.();
+        }
+
         handler(parameters);
       });
     },
     setResult(parameters) {
       const text = decodeBase64Text(parameters.dataB64 || '');
+      if (requestedOutputMode === 'new_tab' && pendingTab) {
+        if (!pendingTab.closed && writeTextTab(pendingTab, text)) {
+          pendingTab = null;
+          return;
+        }
+
+        pendingTab = null;
+      }
+
       if (requestedOutputMode === 'text') {
-        resultElement.textContent = text;
-        resultElement.hidden = false;
+        displayInlineText(resultElement, text);
+        return;
+      }
+
+      if (requestedOutputMode === 'new_tab') {
+        displayInlineText(resultElement, text);
         return;
       }
 
       downloadTextFile(parameters.file || 'journal-extract.txt', text);
+    },
+    clearPendingTab() {
+      closePendingTab();
     }
   };
+}
+
+function displayInlineText(resultElement, text) {
+  resultElement.textContent = text;
+  resultElement.hidden = false;
+}
+
+function openTextTab() {
+  try {
+    const tab = window.open('', '_blank');
+    if (!tab) {
+      return null;
+    }
+
+    tab.opener = null;
+    if (!writeTextTab(tab, 'Waiting for journal extract...')) {
+      tab.close();
+      return null;
+    }
+    return tab;
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeTextTab(tab, text) {
+  try {
+    const documentObject = tab.document;
+    if (!documentObject || !documentObject.body || !documentObject.head) {
+      return false;
+    }
+
+    documentObject.title = 'Journal Extract';
+    documentObject.body.replaceChildren();
+    documentObject.head.replaceChildren();
+
+    const styleElement = documentObject.createElement('style');
+    styleElement.textContent = `
+      body { margin: 16px; background: #101722; color: #e8edf5; }
+      pre { white-space: pre; font: 13px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    `;
+    documentObject.head.appendChild(styleElement);
+
+    const textElement = documentObject.createElement('pre');
+    textElement.textContent = text;
+    documentObject.body.appendChild(textElement);
+    return true;
+  } catch (error) {
+    return false;
+  }
 }
 
 function createRadioGroup(label, name, options) {

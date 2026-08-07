@@ -26,7 +26,11 @@ export function renderErrorLogsPage(container, {
   const filesDownload = renderFilesDownloadBlock(filesDownloadBlock, {
     buttonLabel: 'Download Selected'
   });
-  const journalExtract = renderJournalExtractBlock(journalExtractBlock);
+  const journalExtract = renderJournalExtractBlock(journalExtractBlock, {
+    onPopupBlocked() {
+      addLog('logs.extract new tab blocked; displaying inline');
+    }
+  });
 
   filesDownload.bindDownload(() => {
     const downloadLogsRequest = buildRequest(
@@ -94,6 +98,7 @@ export function renderErrorLogsPage(container, {
 
       if (message.type === 'logs.extract.error') {
         const error = message.parameters?.error;
+        journalExtract.clearPendingTab();
         addLog(`logs.extract.error: ${error}`);
       }
     },

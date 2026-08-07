@@ -390,7 +390,8 @@
         },
         "output_options": [
           { "id": "download", "display_name": "Download file" },
-          { "id": "text", "display_name": "Display as text" }
+          { "id": "text", "display_name": "Display as text" },
+          { "id": "new_tab", "display_name": "Display as text in new tab" }
         ]
       }
     }
