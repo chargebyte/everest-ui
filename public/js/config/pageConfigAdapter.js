@@ -9,6 +9,7 @@ const kUiBlocks = {
   config_loader: normalizeConfigLoader,
   settings_matrix: normalizeSettingsMatrix,
   files_download: normalizeFilesDownload,
+  journal_extract: normalizeJournalExtract,
   updater: normalizeUpdater,
   capture: normalizeCapture
 };
@@ -194,6 +195,25 @@ function normalizeFilesDownloadSections(block) {
       title: entry.display_name
     }));
   });
+}
+
+function normalizeJournalExtract(block) {
+  return {
+    kind: 'journal_extract',
+    title: block.display_name,
+    bootOptions: block.boot_options.map((option) => ({
+      id: option.id,
+      label: option.display_name
+    })),
+    serviceFilter: {
+      id: block.service_filter.id,
+      label: block.service_filter.display_name
+    },
+    outputOptions: block.output_options.map((option) => ({
+      id: option.id,
+      label: option.display_name
+    }))
+  };
 }
 
 function normalizeUpdater(block) {

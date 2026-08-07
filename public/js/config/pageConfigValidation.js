@@ -7,6 +7,7 @@ const kUiElementValidators = {
   config_loader: validateConfigLoaderParameters,
   settings_matrix: validateSettingsMatrixParameters,
   files_download: validateFilesDownloadParameters,
+  journal_extract: validateJournalExtractParameters,
   updater: validateUpdaterParameters,
   capture: validateCaptureParameters
 };
@@ -141,6 +142,42 @@ function validateFilesDownloadParameters(block) {
   validateUiElementSections(block, 'files_download');
   validateUiElementSectionEntries(block, 'files_download');
   validateFilesDownloadRows(block);
+}
+
+function validateJournalExtractParameters(block) {
+  if (!isPlainObject(block)) {
+    throw new Error('journal_extract configuration is missing or invalid');
+  }
+
+  if (!hasNonEmptyStringField(block, 'display_name')) {
+    throw new Error('journal_extract is missing display_name');
+  }
+
+  validateJournalExtractOptions(block, 'boot_options', 3);
+  validateJournalExtractOptions(block, 'output_options', 2);
+
+  if (!isPlainObject(block.service_filter) ||
+      !hasNonEmptyStringField(block.service_filter, 'id') ||
+      !hasNonEmptyStringField(block.service_filter, 'display_name')) {
+    throw new Error('journal_extract has invalid service_filter');
+  }
+}
+
+function validateJournalExtractOptions(block, key, expectedCount) {
+  if (!Array.isArray(block[key]) || block[key].length !== expectedCount) {
+    throw new Error(`journal_extract ${key} must contain ${expectedCount} options`);
+  }
+
+  const ids = new Set();
+  block[key].forEach((option, index) => {
+    if (!isPlainObject(option) ||
+        !hasNonEmptyStringField(option, 'id') ||
+        !hasNonEmptyStringField(option, 'display_name') ||
+        ids.has(option.id)) {
+      throw new Error(`journal_extract ${key} has invalid option at index ${index}`);
+    }
+    ids.add(option.id);
+  });
 }
 
 function validateUpdaterParameters(block) {

@@ -10,6 +10,7 @@
 enum class LogsAction {
     Read,
     Download,
+    Extract,
     Unknown
 };
 
@@ -35,6 +36,7 @@ namespace Logs {
 ModuleResponse handleRequest(const ModuleRequest &request);
 ModuleResponse handleReadRequest(const ModuleRequest &request);
 ModuleResponse handleDownloadRequest(const ModuleRequest &request);
+ModuleResponse handleExtractRequest(const ModuleRequest &request);
 LogsConfigPathResult loadLogsSettingsPath(const QString &configKey);
 QString loadBackendConfigValue(const QString &configKey);
 LogsReadResult readLogFilesInformation(const QString &logPaths);
