@@ -84,6 +84,7 @@ inline constexpr const char kErrorEverestStateNotAllowed[] = "everest_state_not_
 inline constexpr const char kErrorNotRecording[] = "not_recording";
 inline constexpr const char kErrorPcapBusy[] = "pcap_busy";
 inline constexpr const char kErrorPcapStopFailed[] = "pcap_stop_failed";
+inline constexpr const char kErrorPcapCaptureFailed[] = "pcap_capture_failed";
 inline constexpr const char kErrorFileIoFailed[] = "file_io_failed";
 inline constexpr const char kErrorFlashFailed[] = "flash_failed";
 inline constexpr const char kErrorFileNotFound[] = "file_not_found";
@@ -94,6 +95,7 @@ inline constexpr const char kErrorReadFailed[] = "read_failed";
 inline constexpr const char kParametersSizeBytes[] = "size_bytes";
 inline constexpr const char kParametersFileName[] = "file_name";
 inline constexpr const char kParametersImage[] = "image";
+inline constexpr const char kKeyDetails[] = "details";
 
 // EVerest Config Keys
 inline constexpr const char kEverestConfActiveModules[] = "active_modules";

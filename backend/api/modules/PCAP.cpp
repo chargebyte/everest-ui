@@ -17,6 +17,7 @@
 #include <QNetworkInterface>
 #include <QJsonArray>
 #include <QHostAddress>
+#include <QDebug>
 #include <QStringList>
 #include <QTemporaryFile>
 
@@ -199,7 +200,43 @@ bool isInterfaceAvailable(const QString &iface) {
 } // namespace
 
 PCAP::PCAP(QObject *parent)
-    : QObject(parent), m_console(new ConsoleConnector(this)) {}
+    : QObject(parent), m_console(new ConsoleConnector(this)) {
+    connect(m_console, &ConsoleConnector::streamingFinished, this, &PCAP::handleCaptureFinished);
+}
+
+void PCAP::handleCaptureFinished(const ConsoleConnector::RunResult &result) {
+    if (!m_recording || m_stopping) {
+        return;
+    }
+
+    const QString details = QString::fromLocal8Bit(result.stderrData).trimmed();
+    qWarning().noquote() << "tcpdump exited before capture was stopped"
+                         << "with code" << result.exitCode
+                         << (details.isEmpty() ? QString() : QStringLiteral(": ") + details);
+
+    if (!m_lastFile.isEmpty()) {
+        QFile::remove(m_lastFile);
+    }
+    m_lastFile.clear();
+    m_recording = false;
+    m_busy = false;
+
+    QJsonObject parameters{
+        {QLatin1String(kError), QLatin1String(kErrorPcapCaptureFailed)},
+    };
+    if (!details.isEmpty()) {
+        parameters.insert(QLatin1String(kKeyDetails), details);
+    }
+
+    emit responseReady(ResponseBuilder::buildResponse(ModuleResponse{
+        .requestId = m_captureRequestId,
+        .group = QLatin1String(kGroupPcap),
+        .action = QLatin1String(kActionWrite),
+        .parameters = parameters,
+        .success = false,
+        .final = true,
+    }));
+}
 
 ModuleResponse PCAP::handleRequest(const ModuleRequest &request) {
     switch (toPcapAction(request.action)) {
@@ -291,6 +328,8 @@ ModuleResponse PCAP::startCapture(const ModuleRequest &request) {
         return response;
     }
     m_lastFile = tempPath;
+    m_captureRequestId = request.requestId;
+    m_stopping = false;
 
     ConsoleConnector::ExecOptions options;
     options.stop = false;
@@ -298,7 +337,7 @@ ModuleResponse PCAP::startCapture(const ModuleRequest &request) {
         QLatin1String(kTcpdumpTemplate),
         buildPcapValues(iface, m_lastFile, filter),
         options,
-        ConsoleConnector::ExecMode::Async);
+        ConsoleConnector::ExecMode::StreamingAsync);
     if (result.exitCode != 0) {
         m_busy = false;
         QFile::remove(m_lastFile);
@@ -339,6 +378,7 @@ ModuleResponse PCAP::readCapture(const ModuleRequest &request) {
     }
 
     m_busy = true;
+    m_stopping = true;
     ConsoleConnector::ExecOptions options;
     options.stop = true;
     const ConsoleConnector::RunResult result = m_console->executeTemplate(
@@ -347,6 +387,7 @@ ModuleResponse PCAP::readCapture(const ModuleRequest &request) {
         options,
         ConsoleConnector::ExecMode::Async);
     if (result.exitCode != 0) {
+        m_stopping = false;
         m_busy = false;
         response.parameters = QJsonObject{
             {QLatin1String(kError), QLatin1String(kErrorPcapStopFailed)},
@@ -356,6 +397,7 @@ ModuleResponse PCAP::readCapture(const ModuleRequest &request) {
 
     QFile file(m_lastFile);
     if (!file.open(QIODevice::ReadOnly)) {
+        m_stopping = false;
         m_busy = false;
         response.parameters = QJsonObject{
             {QLatin1String(kError), QLatin1String(kErrorFileIoFailed)},
@@ -378,6 +420,7 @@ ModuleResponse PCAP::readCapture(const ModuleRequest &request) {
     m_lastFile.clear();
     m_recording = false;
     m_busy = false;
+    m_stopping = false;
     return response;
 }
 

@@ -156,7 +156,8 @@ export function renderPcapPage(container, {
 
       if (message.type === 'pcap.write.error') {
         const error = message.parameters?.error;
-        addLog(`pcap.write.error: ${error}`);
+        const details = message.parameters?.details;
+        addLog(`pcap.write.error: ${error}${details ? ` (${details})` : ''}`);
         resetCaptureState();
         syncCaptureView();
         return;

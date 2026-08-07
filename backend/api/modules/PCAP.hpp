@@ -6,13 +6,12 @@
 #define PCAP_HPP
 
 #include "RequestResponseTypes.hpp"
+#include "ConsoleConnector.hpp"
 
 #include <QObject>
 #include <QJsonObject>
 #include <QQueue>
 #include <QString>
-
-class ConsoleConnector;
 
 enum class PCAPAction {
     ReadInterfaces,
@@ -45,12 +44,15 @@ private:
     static QString fileNameFromPath(const QString &filePath);
     ModuleResponse startCapture(const ModuleRequest &request);
     ModuleResponse readCapture(const ModuleRequest &request);
+    void handleCaptureFinished(const ConsoleConnector::RunResult &result);
 
     ConsoleConnector *m_console = nullptr;
     bool m_busy = false;
     bool m_recording = false;
     QString m_lastFile;
+    qint64 m_captureRequestId = 0;
     QQueue<ModuleRequest> m_queue;
+    bool m_stopping = false;
 };
 
 #endif // PCAP_HPP
