@@ -40,8 +40,28 @@ cmake .. -DEVEREST_UI_QT_VERSION=5
 If `CMAKE_INSTALL_PREFIX` is not set explicitly, the default install path is:
 
 ```text
-[project-root]/install
+/usr/local
 ```
+
+For a cross-built target image, set the target prefix explicitly and use
+`DESTDIR` as the staging root. For example:
+
+```bash
+cmake -S . -B build-cross \
+  -DCMAKE_TOOLCHAIN_FILE=/tooling/EVerest_toolchain/toolchain.cmake \
+  -DCMAKE_SYSROOT=/sysroot \
+  -DCMAKE_INSTALL_PREFIX=/usr \
+  -DOE_QMAKE_PATH_EXTERNAL_HOST_BINS:STRING=/usr/bin \
+  -DEVEREST_UI_BUILD_TESTS=ON
+cmake --build build-cross -j4
+DESTDIR="$PWD/build-cross/install" cmake --install build-cross
+```
+
+This produces a complete target filesystem tree below
+`build-cross/install`, including `usr/bin`, `usr/libexec`, and
+`usr/share`, as well as the absolute system locations `etc` and `lib`.
+`CMAKE_INSTALL_PREFIX` is cached, so an existing build directory must be
+reconfigured when changing it.
 
 ## Configure the UI
 
@@ -109,7 +129,7 @@ ${prefix}/bin/webui
 If you use the default install prefix, that is:
 
 ```bash
-./install/bin/webui
+/usr/local/bin/webui
 ```
 
 The launcher `webui` starts the helper binaries from `${prefix}/libexec/everest-ui/`.

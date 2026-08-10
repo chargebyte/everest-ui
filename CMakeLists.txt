@@ -4,13 +4,6 @@ project(everest_ui LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
-if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-    set(CMAKE_INSTALL_PREFIX
-        "${CMAKE_SOURCE_DIR}/install"
-        CACHE PATH "Install path prefix" FORCE
-    )
-endif()
-
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
