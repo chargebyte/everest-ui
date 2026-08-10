@@ -329,7 +329,6 @@ void RequestHandler::handleAck(const QJsonObject &responseObj) {
     m_inFlightId.clear();
     m_inFlightResponse = QJsonObject();
     m_inFlightServerRequestId = -1;
-    emit responseAcknowledged(responseId);
     if (startsPcapTransfer && serverRequestId > 0) {
         emit pcapChunkRequested(serverRequestId, 0);
     }

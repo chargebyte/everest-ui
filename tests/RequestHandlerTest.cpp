@@ -95,11 +95,9 @@ private slots:
         QWebSocket client;
         QSignalSpy pcapRequests(&m_handler, &RequestHandler::pcapEnqueueRequested);
         QSignalSpy chunkRequests(&m_handler, &RequestHandler::pcapChunkRequested);
-        QSignalSpy acknowledgements(&m_handler, &RequestHandler::responseAcknowledged);
         QSignalSpy messages(&client, &QWebSocket::textMessageReceived);
         QVERIFY(pcapRequests.isValid());
         QVERIFY(chunkRequests.isValid());
-        QVERIFY(acknowledgements.isValid());
         QVERIFY(messages.isValid());
         connectClient(client);
 
@@ -115,7 +113,7 @@ private slots:
             .final = true,
         }));
         QVERIFY(waitForSignal(messages, 1000));
-        acknowledge(client, messages, acknowledgements);
+        acknowledge(messages);
 
         sendRequest(client, 11, QLatin1String(kGroupPcap), QLatin1String(kActionRead));
         QVERIFY(waitForSignal(pcapRequests, 1000));
@@ -132,7 +130,7 @@ private slots:
             .final = false,
         }));
         QVERIFY(waitForSignal(messages, 1000));
-        acknowledge(client, messages, acknowledgements);
+        acknowledge(messages);
         QVERIFY(waitForSignal(chunkRequests, 1000));
         QCOMPARE(qvariant_cast<qint64>(chunkRequests.takeFirst().constFirst()), readRequest.requestId);
 
@@ -148,7 +146,7 @@ private slots:
             .final = true,
         }));
         QVERIFY(waitForSignal(messages, 1000));
-        acknowledge(client, messages, acknowledgements);
+        acknowledge(messages);
 
         m_handler.enqueuePcapChunk(readRequest.requestId, 0, true, QByteArray("pcap"));
         m_handler.enqueueResponse(ResponseBuilder::buildResponse(ModuleResponse{
@@ -185,15 +183,13 @@ private:
         client.sendTextMessage(QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)));
     }
 
-    void acknowledge(QWebSocket &client, QSignalSpy &messages, QSignalSpy &acknowledgements) {
+    void acknowledge(QSignalSpy &messages) {
         const QJsonObject response = parseMessage(messages.takeLast());
-        acknowledgements.clear();
         const QJsonObject ack{
             {QLatin1String(kKeyType), QLatin1String(kTypeAck)},
             {QLatin1String(kKeyResponseId), response.value(QLatin1String(kKeyResponseId))},
         };
-        client.sendTextMessage(QString::fromUtf8(QJsonDocument(ack).toJson(QJsonDocument::Compact)));
-        QVERIFY(waitForSignal(acknowledgements, 1000));
+        m_handler.handleTextMessage(QString::fromUtf8(QJsonDocument(ack).toJson(QJsonDocument::Compact)));
     }
 
     static QJsonObject parseMessage(const QVariant &message) {

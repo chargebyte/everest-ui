@@ -32,7 +32,6 @@ public slots:
 signals:
     void pcapEnqueueRequested(const ModuleRequest &request);
     void pcapChunkRequested(qint64 serverRequestId, quint32 sequence);
-    void responseAcknowledged(const QString &responseId);
     void systemControlEnqueueRequested(const ModuleRequest &request);
 
 private:
