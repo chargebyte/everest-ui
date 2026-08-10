@@ -11,6 +11,7 @@ import { renderSafetyPage } from './pages/safety.js';
 import { renderOcppPage } from './pages/ocpp.js';
 import {
   handlePcapConnectionChange,
+  handlePcapBinaryMessage,
   handlePcapMessage,
   handlePcapRequestTimeout,
   isPcapMessage,
@@ -241,6 +242,9 @@ function createAppTransport(appContext) {
         handlePcapMessage(message, (logMessage) => addLog(appContext, logMessage));
       }
       appContext.state.page?.onMessage?.(message);
+    },
+    onBinaryMessage(data, transportApi) {
+      handlePcapBinaryMessage(data, (logMessage) => addLog(appContext, logMessage), transportApi);
     },
     onRequestTimeout({ requestId, moduleAction }) {
       addLog(appContext, `request timeout: ${moduleAction} (${requestId})`);

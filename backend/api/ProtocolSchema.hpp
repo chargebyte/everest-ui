@@ -35,6 +35,15 @@ inline constexpr const char kKeyResponseId[] = "responseId";
 inline constexpr const char kKeyParameters[] = "parameters";
 inline constexpr const char kKeyDataB64[] = "dataB64";
 inline constexpr const char kKeyFile[] = "file";
+inline constexpr const char kKeyTransfer[] = "transfer";
+inline constexpr const char kKeyChunkSizeBytes[] = "chunk_size_bytes";
+inline constexpr const char kKeyCaptureRequestId[] = "capture_request_id";
+inline constexpr const char kKeySequence[] = "sequence";
+inline constexpr const char kTransferBinary[] = "binary";
+inline constexpr const char kPcapChunkAckType[] = "pcap.chunk_ack";
+inline constexpr const char kPcapBinaryMagic[] = "PCAP";
+inline constexpr quint8 kPcapBinaryVersion = 1;
+inline constexpr int kPcapChunkSizeBytes = 64 * 1024;
 
 // Common group/action values
 inline constexpr const char kGroupPcap[] = "pcap";

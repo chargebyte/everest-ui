@@ -20,6 +20,7 @@
 #include <QDebug>
 #include <QStringList>
 #include <QTemporaryFile>
+#include <QStorageInfo>
 
 #include <stdexcept>
 
@@ -33,6 +34,7 @@ constexpr char kConfPcapPowerlineDrivers[] = "pcap_powerline_drivers";
 constexpr char kConfPcapMaxSizeBytes[] = "pcap_max_size_bytes";
 constexpr char kConfPcapMaxDurationSeconds[] = "pcap_max_duration_seconds";
 constexpr int kPcapLimitCheckIntervalMs = 100;
+constexpr int kPcapTransferTimeoutMs = 50000;
 constexpr char kInterfaceAny[] = "any";
 constexpr char kKeyInterfaces[] = "interfaces";
 constexpr char kKeyName[] = "name";
@@ -203,12 +205,22 @@ bool isInterfaceAvailable(const QString &iface) {
 } // namespace
 
 PCAP::PCAP(QObject *parent)
-    : QObject(parent), m_console(new ConsoleConnector(this)), m_limitTimer(new QTimer(this)) {
+    : QObject(parent), m_console(new ConsoleConnector(this)), m_limitTimer(new QTimer(this)),
+      m_transferTimer(new QTimer(this)), m_transferFile(new QFile(this)) {
     connect(m_console, &ConsoleConnector::streamingFinished, this, &PCAP::handleCaptureFinished);
     m_maxSizeBytes = configuredLimit(QLatin1String(kConfPcapMaxSizeBytes), 100 * 1024 * 1024);
     m_maxDurationSeconds = configuredLimit(QLatin1String(kConfPcapMaxDurationSeconds), 15 * 60);
+    const QStorageInfo storageInfo(QDir::tempPath());
+    if (storageInfo.isValid() && storageInfo.bytesAvailable() < m_maxSizeBytes) {
+        qWarning().noquote() << "PCAP temporary storage has only"
+                             << storageInfo.bytesAvailable() << "bytes available; capture limit is"
+                             << m_maxSizeBytes << "bytes";
+    }
     connect(m_limitTimer, &QTimer::timeout, this, &PCAP::checkCaptureLimits);
     m_limitTimer->setInterval(kPcapLimitCheckIntervalMs);
+    connect(m_transferTimer, &QTimer::timeout, this, &PCAP::handleTransferTimeout);
+    m_transferTimer->setSingleShot(true);
+    m_transferTimer->setInterval(kPcapTransferTimeoutMs);
 }
 
 void PCAP::handleCaptureFinished(const ConsoleConnector::RunResult &result) {
@@ -268,6 +280,10 @@ ModuleResponse PCAP::captureError(const char *error, const QString &details, qin
 
 void PCAP::cleanupCapture(bool removeFile) {
     m_limitTimer->stop();
+    m_transferTimer->stop();
+    if (m_transferFile->isOpen()) {
+        m_transferFile->close();
+    }
     if (removeFile && !m_lastFile.isEmpty()) {
         QFile::remove(m_lastFile);
     }
@@ -277,6 +293,9 @@ void PCAP::cleanupCapture(bool removeFile) {
     m_captureElapsed.invalidate();
     m_state = PCAPState::Idle;
     m_busy = false;
+    m_transferRequestId = 0;
+    m_transferCaptureRequestId = 0;
+    m_transferSequence = 0;
 }
 
 void PCAP::checkCaptureLimits() {
@@ -504,8 +523,11 @@ ModuleResponse PCAP::readCapture(const ModuleRequest &request) {
         const ConsoleConnector::RunResult result = m_console->executeTemplate(
             QLatin1String(kStopTemplate), {}, options, ConsoleConnector::ExecMode::Async);
         if (result.exitCode != 0) {
+            const qint64 captureRequestId = m_captureRequestId;
             cleanupCapture(true);
-            return response = captureError(kErrorPcapStopFailed, {}, request.requestId);
+            response = captureError(kErrorPcapStopFailed, {}, request.requestId);
+            response.parameters.insert(QLatin1String(kKeyCaptureRequestId), captureRequestId);
+            return response;
         }
     }
 
@@ -522,46 +544,82 @@ ModuleResponse PCAP::readCaptureFile(const ModuleRequest &request) {
         .success = false,
         .final = true,
     };
-    QFile file(m_lastFile);
-    if (!file.open(QIODevice::ReadOnly)) {
+    m_transferFile->setFileName(m_lastFile);
+    if (!m_transferFile->open(QIODevice::ReadOnly)) {
+        const qint64 captureRequestId = m_captureRequestId;
         cleanupCapture(true);
         return ModuleResponse{
             .requestId = request.requestId,
             .group = QLatin1String(kGroupPcap),
             .action = request.action,
-            .parameters = QJsonObject{{QLatin1String(kError), QLatin1String(kErrorFileIoFailed)}},
+            .parameters = QJsonObject{
+                {QLatin1String(kError), QLatin1String(kErrorFileIoFailed)},
+                {QLatin1String(kKeyCaptureRequestId), captureRequestId},
+            },
             .success = false,
             .final = true,
         };
     }
 
-    const QByteArray encoded = file.readAll().toBase64(QByteArray::Base64Encoding);
     const QString pcapFileName = fileNameFromPath(m_lastFile);
-
-    if (file.error() != QFile::NoError) {
-        file.close();
-        cleanupCapture(true);
-        return ModuleResponse{
-            .requestId = request.requestId,
-            .group = QLatin1String(kGroupPcap),
-            .action = request.action,
-            .parameters = QJsonObject{{QLatin1String(kError), QLatin1String(kErrorFileIoFailed)}},
-            .success = false,
-            .final = true,
-        };
-    }
-
-    file.close();
-    QFile::remove(m_lastFile);
-
+    m_transferRequestId = request.requestId;
+    m_transferCaptureRequestId = m_captureRequestId;
+    m_state = PCAPState::Transferring;
     response.parameters = QJsonObject{
         {QLatin1String(kKeyFile), pcapFileName},
-        {QLatin1String(kKeyDataB64), QString::fromLatin1(encoded)},
+        {QLatin1String(kKeyTransfer), QLatin1String(kTransferBinary)},
+        {QLatin1String(kKeyChunkSizeBytes), kPcapChunkSizeBytes},
+        {QLatin1String(kKeyCaptureRequestId), m_transferCaptureRequestId},
+        {QLatin1String(kParametersSizeBytes), static_cast<qint64>(m_transferFile->size())},
     };
     response.success = true;
-
-    cleanupCapture(true);
+    response.final = false;
+    m_transferTimer->start();
     return response;
+}
+
+void PCAP::sendNextChunk(qint64 requestId, quint32 sequence) {
+    if (m_state != PCAPState::Transferring || requestId != m_transferRequestId ||
+        sequence != m_transferSequence) {
+        return;
+    }
+
+    const QByteArray payload = m_transferFile->read(kPcapChunkSizeBytes);
+    if (m_transferFile->error() != QFile::NoError) {
+        finishTransferWithError(QLatin1String(kErrorFileIoFailed));
+        return;
+    }
+
+    const bool final = m_transferFile->atEnd();
+    const quint32 chunkSequence = sequence;
+    ++m_transferSequence;
+    emit binaryChunkReady(m_transferRequestId, chunkSequence, final, payload);
+    if (final) {
+        cleanupCapture(true);
+        processQueue();
+    } else {
+        m_transferTimer->start();
+    }
+}
+
+void PCAP::handleTransferTimeout() {
+    if (m_state == PCAPState::Transferring) {
+        finishTransferWithError(QLatin1String(kErrorFileIoFailed));
+    }
+}
+
+void PCAP::finishTransferWithError(const QString &error) {
+    const qint64 requestId = m_transferRequestId;
+    cleanupCapture(true);
+    emit responseReady(ResponseBuilder::buildResponse(ModuleResponse{
+        .requestId = requestId,
+        .group = QLatin1String(kGroupPcap),
+        .action = QLatin1String(kActionRead),
+        .parameters = QJsonObject{{QLatin1String(kError), error}},
+        .success = false,
+        .final = true,
+    }));
+    processQueue();
 }
 
 PCAPAction PCAP::toPcapAction(const QString &action) {

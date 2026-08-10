@@ -18,6 +18,7 @@ export const state = {
     recordingState: 'idle',
     activeCaptureRequestId: null,
     pendingReadRequestId: null,
+    captureTransfer: null,
     captureStartTs: null,
     lastPcapUrl: null,
     lastPcapName: ''

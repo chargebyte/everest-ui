@@ -8,6 +8,7 @@
 #include "ResponseBuilder.hpp"
 
 #include <QFile>
+#include <QDataStream>
 #include <QJsonDocument>
 #include <QWebSocket>
 
@@ -15,6 +16,10 @@ namespace {
 bool isAck(const QJsonObject &obj) {
     const QString type = obj.value(QLatin1String(kKeyType)).toString();
     return type == QLatin1String(kTypeAck);
+}
+
+bool isPcapChunkAck(const QJsonObject &obj) {
+    return obj.value(QLatin1String(kKeyType)).toString() == QLatin1String(kPcapChunkAckType);
 }
 } // namespace
 
@@ -69,6 +74,10 @@ void RequestHandler::handleTextMessage(const QString &message) {
     }
 
     const QJsonObject obj = doc.object();
+    if (isPcapChunkAck(obj)) {
+        handlePcapChunkAck(obj);
+        return;
+    }
     if (isAck(obj)) {
         handleAck(obj);
         return;
@@ -145,9 +154,22 @@ void RequestHandler::enqueueResponse(const QJsonObject &response) {
         return;
     }
 
-    const RequestContext context = contextIt.value();
+    RequestContext context = contextIt.value();
     QJsonObject clientResponse = response;
     clientResponse.insert(QLatin1String(kKeyRequestId), context.clientRequestId);
+
+    if (context.group == QLatin1String(kGroupPcap) &&
+        context.action == QLatin1String(kActionRead)) {
+        const QJsonObject parameters = response.value(QLatin1String(kKeyParameters)).toObject();
+        const QJsonValue captureRequestId = parameters.value(QLatin1String(kKeyCaptureRequestId));
+        if (captureRequestId.isDouble()) {
+            context.relatedPcapWriteRequestId = static_cast<qint64>(captureRequestId.toDouble());
+            m_requestContexts.insert(serverRequestId, context);
+            QJsonObject clientParameters = clientResponse.value(QLatin1String(kKeyParameters)).toObject();
+            clientParameters.remove(QLatin1String(kKeyCaptureRequestId));
+            clientResponse.insert(QLatin1String(kKeyParameters), clientParameters);
+        }
+    }
 
     const bool final = response.value(QLatin1String(kKeyFinal)).toBool(true);
     if (final && !retainContext(response, context)) {
@@ -155,7 +177,7 @@ void RequestHandler::enqueueResponse(const QJsonObject &response) {
     }
     if (final && context.group == QLatin1String(kGroupPcap) &&
         context.action == QLatin1String(kActionRead)) {
-        removePcapWriteContexts(context.connectionGeneration);
+        removePcapWriteContext(context.relatedPcapWriteRequestId);
     }
 
     enqueueResponseObject(clientResponse);
@@ -166,6 +188,7 @@ void RequestHandler::clearSession() {
     m_hasInFlight = false;
     m_inFlightId.clear();
     m_inFlightResponse = QJsonObject();
+    m_inFlightServerRequestId = -1;
     m_responseQueue.clear();
     m_requestContexts.clear();
 }
@@ -196,15 +219,73 @@ bool RequestHandler::retainContext(const QJsonObject &response, const RequestCon
                          QLatin1String(kErrorPcapLimitReached);
 }
 
-void RequestHandler::removePcapWriteContexts(quint64 connectionGeneration) {
-    for (auto it = m_requestContexts.begin(); it != m_requestContexts.end();) {
-        if (it->connectionGeneration == connectionGeneration &&
+void RequestHandler::removePcapWriteContext(qint64 serverRequestId) {
+    if (serverRequestId <= 0) {
+        return;
+    }
+    const auto it = m_requestContexts.constFind(serverRequestId);
+    if (it != m_requestContexts.constEnd() &&
+        it->connectionGeneration == m_connectionGeneration &&
+        it->group == QLatin1String(kGroupPcap) &&
+        it->action == QLatin1String(kActionWrite)) {
+        m_requestContexts.remove(serverRequestId);
+    }
+}
+
+qint64 RequestHandler::findPcapReadContext(qint64 clientRequestId) const {
+    qint64 result = -1;
+    for (auto it = m_requestContexts.constBegin(); it != m_requestContexts.constEnd(); ++it) {
+        if (it->connectionGeneration == m_connectionGeneration &&
+            it->clientRequestId == clientRequestId &&
             it->group == QLatin1String(kGroupPcap) &&
-            it->action == QLatin1String(kActionWrite)) {
-            it = m_requestContexts.erase(it);
-        } else {
-            ++it;
+            it->action == QLatin1String(kActionRead) && it.key() > result) {
+            result = it.key();
         }
+    }
+    return result;
+}
+
+void RequestHandler::handlePcapChunkAck(const QJsonObject &object) {
+    const QJsonValue requestIdValue = object.value(QLatin1String(kKeyRequestId));
+    const QJsonValue sequenceValue = object.value(QLatin1String(kKeySequence));
+    if (!requestIdValue.isDouble() || !sequenceValue.isDouble()) {
+        return;
+    }
+    const qint64 serverRequestId = findPcapReadContext(static_cast<qint64>(requestIdValue.toDouble()));
+    if (serverRequestId <= 0) {
+        return;
+    }
+    emit pcapChunkRequested(serverRequestId,
+                            static_cast<quint32>(sequenceValue.toDouble()) + 1);
+}
+
+void RequestHandler::enqueuePcapChunk(qint64 serverRequestId, quint32 sequence, bool final,
+                                      const QByteArray &payload) {
+    if (!m_socket) {
+        return;
+    }
+    const auto contextIt = m_requestContexts.constFind(serverRequestId);
+    if (contextIt == m_requestContexts.constEnd() ||
+        contextIt->connectionGeneration != m_connectionGeneration ||
+        contextIt->group != QLatin1String(kGroupPcap) ||
+        contextIt->action != QLatin1String(kActionRead)) {
+        return;
+    }
+
+    QByteArray frame;
+    QDataStream stream(&frame, QIODevice::WriteOnly);
+    stream.setByteOrder(QDataStream::BigEndian);
+    stream.writeRawData(kPcapBinaryMagic, 4);
+    stream << kPcapBinaryVersion << static_cast<quint8>(final ? 1 : 0)
+           << static_cast<quint16>(0) << static_cast<quint64>(contextIt->clientRequestId)
+           << sequence;
+    frame.append(payload);
+    m_socket->sendBinaryMessage(frame);
+
+    if (final) {
+        const qint64 relatedWriteRequestId = contextIt->relatedPcapWriteRequestId;
+        m_requestContexts.remove(serverRequestId);
+        removePcapWriteContext(relatedWriteRequestId);
     }
 }
 
@@ -220,6 +301,15 @@ void RequestHandler::trySendNextResponse() {
     m_socket->sendTextMessage(QString::fromUtf8(payload));
     m_inFlightResponse = response;
     m_inFlightId = responseId;
+    m_inFlightServerRequestId = -1;
+    for (auto it = m_requestContexts.constBegin(); it != m_requestContexts.constEnd(); ++it) {
+        if (it->connectionGeneration == m_connectionGeneration &&
+            it->clientRequestId == static_cast<qint64>(response.value(QLatin1String(kKeyRequestId)).toDouble()) &&
+            it->group == QLatin1String(kGroupPcap) && it->action == QLatin1String(kActionRead)) {
+            m_inFlightServerRequestId = it.key();
+            break;
+        }
+    }
     m_hasInFlight = true;
     m_ackTimer.start(2000);
 }
@@ -230,10 +320,18 @@ void RequestHandler::handleAck(const QJsonObject &responseObj) {
         return;
     }
 
+    const bool startsPcapTransfer =
+        m_inFlightResponse.value(QLatin1String(kKeyParameters)).toObject()
+            .value(QLatin1String(kKeyTransfer)).toString() == QLatin1String(kTransferBinary);
+    const qint64 serverRequestId = m_inFlightServerRequestId;
     m_ackTimer.stop();
     m_hasInFlight = false;
     m_inFlightId.clear();
     m_inFlightResponse = QJsonObject();
+    m_inFlightServerRequestId = -1;
+    if (startsPcapTransfer && serverRequestId > 0) {
+        emit pcapChunkRequested(serverRequestId, 0);
+    }
     trySendNextResponse();
 }
 

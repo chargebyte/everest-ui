@@ -7,6 +7,7 @@ export function createTransport({
   onOpen,
   onClose,
   onMessage,
+  onBinaryMessage,
   onRequestTimeout
 }) {
   let ws = null;
@@ -84,6 +85,10 @@ export function createTransport({
     pendingRequest.timeoutId = schedulePendingTimeout(requestIdKey);
   }
 
+  function completePendingRequest(requestId) {
+    clearPendingRequest(String(requestId));
+  }
+
   function handlePendingTimeout(requestIdKey) {
     const pendingRequest = pendingRequests.get(requestIdKey);
     if (!pendingRequest) {
@@ -119,6 +124,7 @@ export function createTransport({
     const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const url = `${scheme}://${window.location.host}${wsPath}`;
     ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
       onOpen(url);
@@ -143,6 +149,14 @@ export function createTransport({
     };
 
     ws.onmessage = (event) => {
+      if (typeof event.data !== 'string') {
+        onBinaryMessage?.(event.data, {
+          send,
+          refreshRequestTimeout: refreshPendingRequestTimeout,
+          completeRequest: completePendingRequest
+        });
+        return;
+      }
       let msg = null;
       try {
         msg = JSON.parse(event.data);

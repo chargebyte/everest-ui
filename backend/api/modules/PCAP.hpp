@@ -15,6 +15,8 @@
 #include <QElapsedTimer>
 #include <QTimer>
 
+class QFile;
+
 enum class PCAPAction {
     ReadInterfaces,
     Read,
@@ -28,6 +30,7 @@ enum class PCAPState {
     Recording,
     Stopping,
     Ready,
+    Transferring,
 };
 
 class PCAP final : public QObject {
@@ -42,11 +45,15 @@ public:
 
 public slots:
     void enqueueRequest(const ModuleRequest &request);
+    void sendNextChunk(qint64 requestId, quint32 sequence);
     void handleClientDisconnected();
     void shutdown();
+    void handleTransferTimeout();
 
 signals:
     void responseReady(const QJsonObject &response);
+    void binaryChunkReady(qint64 requestId, quint32 sequence, bool final,
+                          const QByteArray &payload);
 
 private:
     void processQueue();
@@ -63,6 +70,7 @@ private:
     void cleanupCapture(bool removeFile);
     ModuleResponse captureError(const char *error, const QString &details = {}, qint64 requestId = -1) const;
     ModuleResponse readCaptureFile(const ModuleRequest &request);
+    void finishTransferWithError(const QString &error);
 
     ConsoleConnector *m_console = nullptr;
     bool m_busy = false;
@@ -72,9 +80,14 @@ private:
     QQueue<ModuleRequest> m_queue;
     QString m_startFailureDetails;
     QTimer *m_limitTimer = nullptr;
+    QTimer *m_transferTimer = nullptr;
     QElapsedTimer m_captureElapsed;
     qint64 m_maxSizeBytes = 0;
     qint64 m_maxDurationSeconds = 0;
+    QFile *m_transferFile = nullptr;
+    qint64 m_transferRequestId = 0;
+    qint64 m_transferCaptureRequestId = 0;
+    quint32 m_transferSequence = 0;
 };
 
 #endif // PCAP_HPP

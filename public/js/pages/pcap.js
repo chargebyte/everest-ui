@@ -39,7 +39,17 @@ export function handlePcapMessage(message, addLog) {
       return true;
     }
     addLog('pcap.read.result received');
-    setCaptureResult(message.parameters || {});
+    const parameters = message.parameters || {};
+    if (parameters.transfer === 'binary') {
+      pcapState.captureTransfer = {
+        chunks: [],
+        nextSequence: 0,
+        fileName: fileNameFromPath(parameters.file),
+        sizeBytes: Number(parameters.size_bytes) || 0
+      };
+      return true;
+    }
+    setCaptureResult(parameters);
     return true;
   }
 
@@ -82,6 +92,54 @@ export function handlePcapMessage(message, addLog) {
   return true;
 }
 
+export function handlePcapBinaryMessage(data, addLog, transport) {
+  if (!(data instanceof ArrayBuffer)) {
+    return false;
+  }
+
+  const view = new DataView(data);
+  if (view.byteLength < 20) {
+    return false;
+  }
+  const magic = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+  if (magic !== 'PCAP' || view.getUint8(4) !== 1) {
+    return false;
+  }
+
+  const flags = view.getUint8(5);
+  const requestId = view.getUint32(8) * 0x100000000 + view.getUint32(12);
+  const sequence = view.getUint32(16);
+  const pcapState = state.pcap;
+  if (!requestMatches({ requestId }, pcapState.pendingReadRequestId) ||
+      !pcapState.captureTransfer ||
+      sequence !== pcapState.captureTransfer.nextSequence) {
+    return true;
+  }
+
+  pcapState.captureTransfer.chunks.push(data.slice(20));
+  pcapState.captureTransfer.nextSequence += 1;
+  transport.refreshRequestTimeout(String(pcapState.pendingReadRequestId));
+
+  if ((flags & 1) === 0) {
+    transport.send({
+      type: 'pcap.chunk_ack',
+      requestId: pcapState.pendingReadRequestId,
+      sequence
+    });
+    return true;
+  }
+
+  clearLastCaptureResult();
+  pcapState.lastPcapUrl = URL.createObjectURL(new Blob(pcapState.captureTransfer.chunks,
+                                                       { type: 'application/vnd.tcpdump.pcap' }));
+  pcapState.lastPcapName = pcapState.captureTransfer.fileName || `pcap_${Date.now()}.pcap`;
+  pcapState.captureTransfer = null;
+  transport.completeRequest(requestId);
+  addLog('pcap binary transfer completed');
+  resetCaptureState();
+  return true;
+}
+
 export function handlePcapConnectionChange(connected) {
   state.pcap.connected = connected === true;
   if (!state.pcap.connected) {
@@ -114,12 +172,7 @@ function clearLastCaptureResult() {
 
 function setCaptureResult(parameters) {
   clearLastCaptureResult();
-
-  const dataB64 = parameters.dataB64 || '';
-  if (dataB64) {
-    state.pcap.lastPcapUrl = toBlobUrl(dataB64);
-    state.pcap.lastPcapName = fileNameFromPath(parameters.file) || `pcap_${Date.now()}.pcap`;
-  }
+  state.pcap.lastPcapName = fileNameFromPath(parameters.file) || `pcap_${Date.now()}.pcap`;
 
   state.pcap.recordingState = 'idle';
   state.pcap.captureStartTs = null;
@@ -127,6 +180,7 @@ function setCaptureResult(parameters) {
   state.pcap.captureValues = null;
   state.pcap.activeCaptureRequestId = null;
   state.pcap.pendingReadRequestId = null;
+  state.pcap.captureTransfer = null;
 }
 
 function resetCaptureState() {
@@ -136,6 +190,7 @@ function resetCaptureState() {
   state.pcap.captureValues = null;
   state.pcap.activeCaptureRequestId = null;
   state.pcap.pendingReadRequestId = null;
+  state.pcap.captureTransfer = null;
 }
 
 export function renderPcapPage(container, {
@@ -290,16 +345,6 @@ function isCaptureActiveState(pcapState) {
 function requestMatches(message, requestId) {
   return requestId !== null && requestId !== undefined &&
     String(message.requestId) === String(requestId);
-}
-
-function toBlobUrl(base64Data) {
-  const bytes = atob(base64Data || '');
-  const out = new Uint8Array(bytes.length);
-  for (let index = 0; index < bytes.length; index += 1) {
-    out[index] = bytes.charCodeAt(index);
-  }
-  const blob = new Blob([out], { type: 'application/octet-stream' });
-  return URL.createObjectURL(blob);
 }
 
 function fileNameFromPath(filePath) {

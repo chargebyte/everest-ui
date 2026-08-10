@@ -73,6 +73,10 @@ MinimalWebSocketServer::MinimalWebSocketServer(QObject *parent)
             &SystemControl::enqueueRequest);
     connect(m_pcap, &PCAP::responseReady, m_handler,
             &RequestHandler::enqueueResponse, Qt::QueuedConnection);
+    connect(m_handler, &RequestHandler::pcapChunkRequested, m_pcap,
+            &PCAP::sendNextChunk, Qt::QueuedConnection);
+    connect(m_pcap, &PCAP::binaryChunkReady, m_handler,
+            &RequestHandler::enqueuePcapChunk, Qt::QueuedConnection);
     connect(m_systemControl, &SystemControl::responseReady, m_handler,
             &RequestHandler::enqueueResponse);
 }
