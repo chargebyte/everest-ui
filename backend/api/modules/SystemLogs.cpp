@@ -197,47 +197,67 @@ ModuleResponse handleExtractRequest(const ModuleRequest &request) {
         return response;
     }
 
-    QStringList args{
+    const QStringList commonArgs{
         QStringLiteral("--no-pager"),
         QStringLiteral("--quiet"),
         QStringLiteral("--output=%1").arg(QLatin1String(kJournalOutput)),
     };
+    QStringList boots;
     if (boot == QLatin1String(kJournalBootCurrent)) {
-        args << QStringLiteral("--boot=0");
+        boots << QStringLiteral("0");
     } else if (boot == QLatin1String(kJournalBootTwo)) {
-        args << QStringLiteral("--boot=0") << QStringLiteral("--boot=-1");
+        boots << QStringLiteral("-1") << QStringLiteral("0");
+    } else {
+        boots << QString();
     }
 
-    if (parameters.value(QLatin1String(kJournalService)).toBool(false)) {
-        args << QStringLiteral("--unit=%1").arg(QLatin1String(kJournalServiceUnit));
+    QByteArray journalData;
+    for (const QString &bootId : boots) {
+        QStringList args = commonArgs;
+        if (!bootId.isEmpty()) {
+            args << QStringLiteral("--boot=%1").arg(bootId);
+        }
+        if (parameters.value(QLatin1String(kJournalService)).toBool(false)) {
+            args << QStringLiteral("--unit=%1").arg(QLatin1String(kJournalServiceUnit));
+        }
+
+        QProcess process;
+        process.start(QLatin1String(kJournalctlPath), args);
+        if (!process.waitForStarted(2000)) {
+            if (bootId == QLatin1String("-1")) {
+                continue;
+            }
+            response.parameters = QJsonObject{
+                {QLatin1String(kError), QLatin1String(kErrorJournalStartFailed)},
+            };
+            return response;
+        }
+
+        if (!process.waitForFinished(30000)) {
+            process.kill();
+            process.waitForFinished(1000);
+            if (bootId == QLatin1String("-1")) {
+                continue;
+            }
+            response.parameters = QJsonObject{
+                {QLatin1String(kError), QLatin1String(kErrorJournalTimeout)},
+            };
+            return response;
+        }
+
+        if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+            if (bootId == QLatin1String("-1")) {
+                continue;
+            }
+            response.parameters = QJsonObject{
+                {QLatin1String(kError), QLatin1String(kErrorJournalFailed)},
+            };
+            return response;
+        }
+
+        journalData.append(process.readAllStandardOutput());
     }
 
-    QProcess process;
-    process.start(QLatin1String(kJournalctlPath), args);
-    if (!process.waitForStarted(2000)) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), QLatin1String(kErrorJournalStartFailed)},
-        };
-        return response;
-    }
-
-    if (!process.waitForFinished(30000)) {
-        process.kill();
-        process.waitForFinished(1000);
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), QLatin1String(kErrorJournalTimeout)},
-        };
-        return response;
-    }
-
-    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), QLatin1String(kErrorJournalFailed)},
-        };
-        return response;
-    }
-
-    const QByteArray journalData = process.readAllStandardOutput();
     response.parameters = QJsonObject{
         {QLatin1String(kKeyFile), QLatin1String(kJournalFileName)},
         {QLatin1String(kKeyDataB64), QString::fromLatin1(journalData.toBase64())},
