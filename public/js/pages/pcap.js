@@ -8,6 +8,191 @@ import { buildRequest } from '../protocol/requestBuilder.js';
 import { state } from '../state.js';
 import { renderCaptureBlock } from '../ui/capture.js';
 
+export function isPcapMessage(message) {
+  return typeof message?.type === 'string' && message.type.startsWith('pcap.');
+}
+
+export function handlePcapMessage(message, addLog) {
+  const pcapState = state.pcap;
+  if (!isPcapMessage(message)) {
+    return false;
+  }
+
+  if (message.type === 'pcap.read_interfaces.result' && message.ok === true) {
+    pcapState.interfaces = message.parameters?.interfaces || [];
+    addLog('pcap.read_interfaces.result received');
+    return true;
+  }
+
+  if (message.type === 'pcap.write.ack' && message.ok === true) {
+    if (!requestMatches(message, pcapState.activeCaptureRequestId)) {
+      return true;
+    }
+    addLog('pcap.write.ack received');
+    pcapState.recordingState = 'running';
+    pcapState.captureStartTs = Date.now();
+    return true;
+  }
+
+  if (message.type === 'pcap.read.result' && message.ok === true) {
+    if (!requestMatches(message, pcapState.pendingReadRequestId)) {
+      return true;
+    }
+    addLog('pcap.read.result received');
+    const parameters = message.parameters || {};
+    if (parameters.transfer === 'binary') {
+      pcapState.captureTransfer = {
+        chunks: [],
+        nextSequence: 0,
+        fileName: fileNameFromPath(parameters.file),
+        sizeBytes: Number(parameters.size_bytes) || 0
+      };
+      return true;
+    }
+    setCaptureResult(parameters);
+    return true;
+  }
+
+  if (message.type === 'pcap.write.error') {
+    if (!requestMatches(message, pcapState.activeCaptureRequestId)) {
+      return true;
+    }
+    const error = message.parameters?.error;
+    const details = message.parameters?.details;
+    addLog(`pcap.write.error: ${error}${details ? ` (${details})` : ''}`);
+    if (error === 'pcap_limit_reached') {
+      pcapState.recordingState = 'ready';
+      return true;
+    }
+    resetCaptureState();
+    return true;
+  }
+
+  if (message.type === 'pcap.read.error') {
+    if (!requestMatches(message, pcapState.pendingReadRequestId)) {
+      return true;
+    }
+    addLog(`pcap.read.error: ${message.parameters?.error}`);
+    resetCaptureState();
+    return true;
+  }
+
+  if (message.type === 'pcap.read_interfaces.error') {
+    addLog(`pcap.read_interfaces.error: ${message.parameters?.error || 'unknown_error'}`);
+    return true;
+  }
+
+  if (message.ok === false &&
+      (requestMatches(message, pcapState.activeCaptureRequestId) ||
+       requestMatches(message, pcapState.pendingReadRequestId))) {
+    const error = message.parameters?.error || message.error || 'unknown_error';
+    addLog(`pcap backend error: ${error}`);
+    resetCaptureState();
+  }
+  return true;
+}
+
+export function handlePcapBinaryMessage(data, addLog, transport) {
+  if (!(data instanceof ArrayBuffer)) {
+    return false;
+  }
+
+  const view = new DataView(data);
+  if (view.byteLength < 20) {
+    return false;
+  }
+  const magic = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+  if (magic !== 'PCAP' || view.getUint8(4) !== 1) {
+    return false;
+  }
+
+  const flags = view.getUint8(5);
+  const requestId = view.getUint32(8) * 0x100000000 + view.getUint32(12);
+  const sequence = view.getUint32(16);
+  const pcapState = state.pcap;
+  if (!requestMatches({ requestId }, pcapState.pendingReadRequestId) ||
+      !pcapState.captureTransfer ||
+      sequence !== pcapState.captureTransfer.nextSequence) {
+    return true;
+  }
+
+  pcapState.captureTransfer.chunks.push(data.slice(20));
+  pcapState.captureTransfer.nextSequence += 1;
+  transport.refreshRequestTimeout(String(pcapState.pendingReadRequestId));
+
+  if ((flags & 1) === 0) {
+    transport.send({
+      type: 'pcap.chunk_ack',
+      requestId: pcapState.pendingReadRequestId,
+      sequence
+    });
+    return true;
+  }
+
+  clearLastCaptureResult();
+  pcapState.lastPcapUrl = URL.createObjectURL(new Blob(pcapState.captureTransfer.chunks,
+                                                       { type: 'application/vnd.tcpdump.pcap' }));
+  pcapState.lastPcapName = pcapState.captureTransfer.fileName || `pcap_${Date.now()}.pcap`;
+  pcapState.captureTransfer = null;
+  transport.completeRequest(requestId);
+  addLog('pcap binary transfer completed');
+  resetCaptureState();
+  return true;
+}
+
+export function handlePcapConnectionChange(connected) {
+  state.pcap.connected = connected === true;
+  if (!state.pcap.connected) {
+    resetCaptureState();
+  }
+}
+
+export function handlePcapRequestTimeout(requestId, moduleAction) {
+  const [group, action] = String(moduleAction || '').split(':');
+  if (group !== 'pcap') {
+    return false;
+  }
+
+  const pcapState = state.pcap;
+  if ((action === 'write' && requestMatches({ requestId }, pcapState.activeCaptureRequestId)) ||
+      (action === 'read' && requestMatches({ requestId }, pcapState.pendingReadRequestId))) {
+    resetCaptureState();
+    return true;
+  }
+  return false;
+}
+
+function clearLastCaptureResult() {
+  if (state.pcap.lastPcapUrl) {
+    URL.revokeObjectURL(state.pcap.lastPcapUrl);
+    state.pcap.lastPcapUrl = null;
+    state.pcap.lastPcapName = '';
+  }
+}
+
+function setCaptureResult(parameters) {
+  clearLastCaptureResult();
+  state.pcap.lastPcapName = fileNameFromPath(parameters.file) || `pcap_${Date.now()}.pcap`;
+
+  state.pcap.recordingState = 'idle';
+  state.pcap.captureStartTs = null;
+  state.pcap.interfaceName = '';
+  state.pcap.captureValues = null;
+  state.pcap.activeCaptureRequestId = null;
+  state.pcap.pendingReadRequestId = null;
+  state.pcap.captureTransfer = null;
+}
+
+function resetCaptureState() {
+  state.pcap.recordingState = 'idle';
+  state.pcap.captureStartTs = null;
+  state.pcap.interfaceName = '';
+  state.pcap.captureValues = null;
+  state.pcap.activeCaptureRequestId = null;
+  state.pcap.pendingReadRequestId = null;
+  state.pcap.captureTransfer = null;
+}
+
 export function renderPcapPage(container, {
   parameterCatalog,
   sendPayload,
@@ -29,64 +214,32 @@ export function renderPcapPage(container, {
     capture.setViewState(pcapState);
   }
 
-  function buildInterfaceValues(interfaceName) {
-    const values = structuredClone(capture.requestResponseObject);
-
-    Object.values(values).forEach((entry) => {
-      if (entry.backend_path === 'general.interface') {
-        entry.value = interfaceName;
-      }
-    });
-
-    return values;
-  }
-
-  function clearLastCaptureResult() {
-    if (pcapState.lastPcapUrl) {
-      URL.revokeObjectURL(pcapState.lastPcapUrl);
-      pcapState.lastPcapUrl = null;
-      pcapState.lastPcapName = '';
-    }
-  }
-
-  function setCaptureResult(parameters) {
-    clearLastCaptureResult();
-
-    const dataB64 = parameters.dataB64 || '';
-    if (dataB64) {
-      pcapState.lastPcapUrl = toBlobUrl(dataB64);
-      pcapState.lastPcapName = fileNameFromPath(parameters.file) || `pcap_${Date.now()}.pcap`;
-    }
-
-    pcapState.recordingState = 'idle';
-    pcapState.captureStartTs = null;
-    pcapState.interfaceName = '';
-  }
-
-  function resetCaptureState() {
-    pcapState.recordingState = 'idle';
-    pcapState.captureStartTs = null;
-    pcapState.interfaceName = '';
-  }
-
   capture.bindSubmit(() => {
     clearLastCaptureResult();
     const values = capture.getValues(capture.requestResponseObject);
     pcapState.interfaceName = values.interface?.value || '';
-    syncCaptureView();
+    pcapState.captureValues = values;
 
     const writePcapRequest = buildRequest(
       pageConfig.actions.write.group,
       pageConfig.actions.write.action,
       values
     );
-    sendPcapRequest(
+    pcapState.recordingState = 'starting';
+    pcapState.activeCaptureRequestId = writePcapRequest.requestId;
+    pcapState.pendingReadRequestId = null;
+    syncCaptureView();
+    const sent = sendPcapRequest(
       sendPayload,
       addLog,
       writePcapRequest,
       pageConfig.actions.write.group,
       pageConfig.actions.write.action
     );
+    if (!sent) {
+      resetCaptureState();
+      syncCaptureView();
+    }
   });
 
   capture.bindDownload(() => {
@@ -101,6 +254,7 @@ export function renderPcapPage(container, {
   });
 
   capture.bindStop(() => {
+    const previousState = pcapState.recordingState;
     pcapState.recordingState = 'processing';
     syncCaptureView();
 
@@ -109,6 +263,7 @@ export function renderPcapPage(container, {
       pageConfig.actions.read.action,
       {}
     );
+    pcapState.pendingReadRequestId = readPcapRequest.requestId;
     const ok = sendPcapRequest(
       sendPayload,
       addLog,
@@ -116,9 +271,9 @@ export function renderPcapPage(container, {
       pageConfig.actions.read.group,
       pageConfig.actions.read.action
     );
-
     if (!ok) {
-      pcapState.recordingState = 'running';
+      pcapState.pendingReadRequestId = null;
+      pcapState.recordingState = previousState;
       syncCaptureView();
     }
   });
@@ -127,66 +282,54 @@ export function renderPcapPage(container, {
   container.appendChild(pageElement);
 
   pcapState.connected = state.connection.connected === true;
-  if (isCaptureActiveState(pcapState) && pcapState.interfaceName) {
-    capture.setValues(buildInterfaceValues(pcapState.interfaceName));
+  if (isCaptureActiveState(pcapState) && pcapState.captureValues) {
+    capture.setValues(pcapState.captureValues);
   } else {
     pcapState.interfaceName = '';
   }
+  capture.setInterfaceOptions(pcapState.interfaces);
   syncCaptureView();
 
   return {
     onMessage(message) {
-      if (message.type === 'pcap.write.ack' && message.ok === true) {
-        addLog('pcap.write.ack received');
-        pcapState.recordingState = 'running';
-        pcapState.captureStartTs = Date.now();
-        syncCaptureView();
+      if (!isPcapMessage(message)) {
         return;
       }
-
-      if (message.type === 'pcap.read.result' && message.ok === true) {
-        addLog('pcap.read.result received');
-        setCaptureResult(message.parameters || {});
-        syncCaptureView();
-        return;
+      capture.setInterfaceOptions(pcapState.interfaces);
+      if (isCaptureActiveState(pcapState) && pcapState.captureValues) {
+        capture.setValues(pcapState.captureValues);
       }
-
-      if (message.type === 'pcap.write.error') {
-        const error = message.parameters?.error;
-        addLog(`pcap.write.error: ${error}`);
-        resetCaptureState();
-        syncCaptureView();
-        return;
-      }
-
-      if (message.type === 'pcap.read.error') {
-        const error = message.parameters?.error;
-        addLog(`pcap.read.error: ${error}`);
-        resetCaptureState();
-        syncCaptureView();
-        return;
-      }
-
-      if (message.ok === false) {
-        const error = message.parameters?.error || message.error || 'unknown_error';
-        addLog(`pcap backend error: ${error}`);
-        resetCaptureState();
-        syncCaptureView();
-      }
+      syncCaptureView();
     },
     onConnectionChange(connected) {
-      pcapState.connected = connected === true;
-      if (!pcapState.connected && pcapState.recordingState === 'processing') {
-        pcapState.recordingState = 'idle';
-        pcapState.captureStartTs = null;
-        pcapState.interfaceName = '';
+      handlePcapConnectionChange(connected);
+      if (pcapState.connected) {
+        requestInterfaces();
       }
+      syncCaptureView();
+    },
+    onPcapStateChange() {
       syncCaptureView();
     },
     destroy() {
       capture.destroy();
     }
   };
+
+  function requestInterfaces() {
+    const request = buildRequest(
+      pageConfig.actions.read_interfaces.group,
+      pageConfig.actions.read_interfaces.action,
+      {}
+    );
+    sendPcapRequest(
+      sendPayload,
+      addLog,
+      request,
+      pageConfig.actions.read_interfaces.group,
+      pageConfig.actions.read_interfaces.action
+    );
+  }
 }
 
 function sendPcapRequest(sendPayload, addLog, request, group, action) {
@@ -196,17 +339,12 @@ function sendPcapRequest(sendPayload, addLog, request, group, action) {
 }
 
 function isCaptureActiveState(pcapState) {
-  return pcapState.recordingState === 'running' || pcapState.recordingState === 'processing';
+  return pcapState.recordingState !== 'idle';
 }
 
-function toBlobUrl(base64Data) {
-  const bytes = atob(base64Data || '');
-  const out = new Uint8Array(bytes.length);
-  for (let index = 0; index < bytes.length; index += 1) {
-    out[index] = bytes.charCodeAt(index);
-  }
-  const blob = new Blob([out], { type: 'application/octet-stream' });
-  return URL.createObjectURL(blob);
+function requestMatches(message, requestId) {
+  return requestId !== null && requestId !== undefined &&
+    String(message.requestId) === String(requestId);
 }
 
 function fileNameFromPath(filePath) {

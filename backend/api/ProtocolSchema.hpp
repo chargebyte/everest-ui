@@ -35,6 +35,15 @@ inline constexpr const char kKeyResponseId[] = "responseId";
 inline constexpr const char kKeyParameters[] = "parameters";
 inline constexpr const char kKeyDataB64[] = "dataB64";
 inline constexpr const char kKeyFile[] = "file";
+inline constexpr const char kKeyTransfer[] = "transfer";
+inline constexpr const char kKeyChunkSizeBytes[] = "chunk_size_bytes";
+inline constexpr const char kKeyCaptureRequestId[] = "capture_request_id";
+inline constexpr const char kKeySequence[] = "sequence";
+inline constexpr const char kTransferBinary[] = "binary";
+inline constexpr const char kPcapChunkAckType[] = "pcap.chunk_ack";
+inline constexpr const char kPcapBinaryMagic[] = "PCAP";
+inline constexpr quint8 kPcapBinaryVersion = 1;
+inline constexpr int kPcapChunkSizeBytes = 64 * 1024;
 
 // Common group/action values
 inline constexpr const char kGroupPcap[] = "pcap";
@@ -46,6 +55,7 @@ inline constexpr const char kGroupSystemLogs[] = "system_logs";
 inline constexpr const char kGroupSystem[] = "system";
 
 inline constexpr const char kActionRead[] = "read";
+inline constexpr const char kActionReadInterfaces[] = "read_interfaces";
 inline constexpr const char kActionWrite[] = "write";
 inline constexpr const char kActionReadConfigParameters[] = "read_config_parameters";
 inline constexpr const char kActionWriteConfigParameters[] = "write_config_parameters";
@@ -68,6 +78,8 @@ inline constexpr const char kActionReadAppTitle[] = "read_app_title";
 // Parameter keys
 inline constexpr const char kKeyGeneral[] = "general";
 inline constexpr const char kKeyInterface[] = "interface";
+inline constexpr const char kKeyFilters[] = "filters";
+inline constexpr const char kKeyV2gHlc[] = "v2g_hlc";
 
 // Response types
 inline constexpr const char kTypeAck[] = "ack";
@@ -81,6 +93,8 @@ inline constexpr const char kErrorEverestStateNotAllowed[] = "everest_state_not_
 inline constexpr const char kErrorNotRecording[] = "not_recording";
 inline constexpr const char kErrorPcapBusy[] = "pcap_busy";
 inline constexpr const char kErrorPcapStopFailed[] = "pcap_stop_failed";
+inline constexpr const char kErrorPcapCaptureFailed[] = "pcap_capture_failed";
+inline constexpr const char kErrorPcapLimitReached[] = "pcap_limit_reached";
 inline constexpr const char kErrorFileIoFailed[] = "file_io_failed";
 inline constexpr const char kErrorFlashFailed[] = "flash_failed";
 inline constexpr const char kErrorFileNotFound[] = "file_not_found";
@@ -91,6 +105,8 @@ inline constexpr const char kErrorReadFailed[] = "read_failed";
 inline constexpr const char kParametersSizeBytes[] = "size_bytes";
 inline constexpr const char kParametersFileName[] = "file_name";
 inline constexpr const char kParametersImage[] = "image";
+inline constexpr const char kKeyDetails[] = "details";
+inline constexpr const char kKeyLimit[] = "limit";
 
 // EVerest Config Keys
 inline constexpr const char kEverestConfActiveModules[] = "active_modules";

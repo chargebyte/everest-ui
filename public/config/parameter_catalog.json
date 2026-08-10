@@ -289,6 +289,11 @@
           "group": "pcap",
           "action": "read",
           "parameters_mode": "empty"
+        },
+        "read_interfaces": {
+          "group": "pcap",
+          "action": "read_interfaces",
+          "parameters_mode": "empty"
         }
       },
       "capture": {
@@ -296,9 +301,17 @@
           {
             "id": "interface",
             "display_name": "Interface",
-            "description": "",
-            "value_type": "string",
+            "description": "Select the network interface to capture.",
+            "value_type": "interface",
             "backend_path": "general.interface"
+          },
+          {
+            "id": "v2g_hlc",
+            "display_name": "IPv6 or SLAC MME (V2G HLC traffic)",
+            "description": "Capture only IPv6 or HomePlug Green PHY traffic used by V2G high-level communication.",
+            "value_type": "boolean",
+            "default_value": false,
+            "backend_path": "general.filters.v2g_hlc"
           }
         ]
       }

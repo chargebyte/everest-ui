@@ -13,6 +13,7 @@
 #include "SystemControlHandler.hpp"
 
 #include <QCoreApplication>
+#include <QMetaObject>
 #include <QMetaType>
 #include <QThread>
 #include <QWebSocket>
@@ -72,12 +73,19 @@ MinimalWebSocketServer::MinimalWebSocketServer(QObject *parent)
             &SystemControl::enqueueRequest);
     connect(m_pcap, &PCAP::responseReady, m_handler,
             &RequestHandler::enqueueResponse, Qt::QueuedConnection);
+    connect(m_handler, &RequestHandler::pcapChunkRequested, m_pcap,
+            &PCAP::sendNextChunk, Qt::QueuedConnection);
+    connect(m_pcap, &PCAP::binaryChunkReady, m_handler,
+            &RequestHandler::enqueuePcapChunk, Qt::QueuedConnection);
     connect(m_systemControl, &SystemControl::responseReady, m_handler,
             &RequestHandler::enqueueResponse);
 }
 
 MinimalWebSocketServer::~MinimalWebSocketServer() {
     if (m_pcapThread) {
+        if (m_pcap && m_pcapThread->isRunning()) {
+            QMetaObject::invokeMethod(m_pcap, "shutdown", Qt::BlockingQueuedConnection);
+        }
         m_pcapThread->quit();
         m_pcapThread->wait();
     }
@@ -128,6 +136,9 @@ void MinimalWebSocketServer::handleDisconnected() {
     qInfo() << "Client disconnected";
 
     FirmwareUpdate::runtime().handleClientDisconnected();
+    if (m_pcap) {
+        QMetaObject::invokeMethod(m_pcap, "handleClientDisconnected", Qt::QueuedConnection);
+    }
 
     if (m_handler) {
         QObject::disconnect(m_client, nullptr, m_handler, nullptr);

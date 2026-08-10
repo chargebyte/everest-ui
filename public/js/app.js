@@ -9,7 +9,14 @@ import { setUiLog, bindUiLogResize } from './ui/uiLog.js';
 import { renderEverestPage } from './pages/everest.js';
 import { renderSafetyPage } from './pages/safety.js';
 import { renderOcppPage } from './pages/ocpp.js';
-import { renderPcapPage } from './pages/pcap.js';
+import {
+  handlePcapConnectionChange,
+  handlePcapBinaryMessage,
+  handlePcapMessage,
+  handlePcapRequestTimeout,
+  isPcapMessage,
+  renderPcapPage
+} from './pages/pcap.js';
 import { renderFirmwarePage } from './pages/firmware.js';
 import { renderSystemLogsPage } from './pages/systemLogs.js';
 
@@ -219,20 +226,32 @@ function createAppTransport(appContext) {
     wsPath: '/ws',
     onOpen() {
       state.connection.connected = true;
+      handlePcapConnectionChange(true);
       appContext.state.page?.onConnectionChange?.(true);
     },
     onClose(event) {
       state.connection.connected = false;
+      handlePcapConnectionChange(false);
       appContext.state.page?.onConnectionChange?.(false);
       if (event?.reason === 'ui already in use') {
         renderBusyGate(createAppRoot(), appContext.appTitle);
       }
     },
     onMessage(message) {
+      if (isPcapMessage(message)) {
+        handlePcapMessage(message, (logMessage) => addLog(appContext, logMessage));
+      }
       appContext.state.page?.onMessage?.(message);
+    },
+    onBinaryMessage(data, transportApi) {
+      handlePcapBinaryMessage(data, (logMessage) => addLog(appContext, logMessage), transportApi);
+      appContext.state.page?.onPcapStateChange?.();
     },
     onRequestTimeout({ requestId, moduleAction }) {
       addLog(appContext, `request timeout: ${moduleAction} (${requestId})`);
+      if (handlePcapRequestTimeout(requestId, moduleAction)) {
+        appContext.state.page?.onPcapStateChange?.();
+      }
     }
   });
 }

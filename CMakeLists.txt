@@ -15,6 +15,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
+option(EVEREST_UI_BUILD_TESTS "Build EVerest UI tests" OFF)
+
 set(EVEREST_UI_INSTALL_CONFIG_DIR
     "/etc/everest-ui")
 set(EVEREST_UI_INSTALL_BACKEND_CONFIG
@@ -67,3 +69,8 @@ else()
 endif()
 
 add_subdirectory(backend)
+
+if(EVEREST_UI_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

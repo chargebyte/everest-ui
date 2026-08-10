@@ -65,6 +65,26 @@
   align-items: center;
 }
 
+.capture-interface-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.capture-interface-hint {
+  color: #5a647d;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.capture-interface-hint.warning {
+  color: #8a6500;
+}
+
+.capture-interface-hint.recommendation {
+  color: #23634a;
+}
+
 .safety-grid {
   display: grid;
   grid-template-columns: 240px minmax(220px, 420px);

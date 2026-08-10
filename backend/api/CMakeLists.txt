@@ -1,5 +1,5 @@
 find_package(yaml-cpp REQUIRED)
-find_package(${QT_PACKAGE_NAME} COMPONENTS Core)
+find_package(${QT_PACKAGE_NAME} COMPONENTS Core Network)
 
 add_executable(api
     server.cpp
@@ -23,6 +23,7 @@ add_executable(api
 
 target_link_libraries(api
     ${QT_PACKAGE_NAME}::Core
+    ${QT_PACKAGE_NAME}::Network
     ${QT_PACKAGE_NAME}::WebSockets
     ${QT_PACKAGE_NAME}::DBus
     yaml-cpp

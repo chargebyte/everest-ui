@@ -62,6 +62,17 @@ The authentication database is created on first setup at:
 
 The EVerest paths are configured in [`backend.conf`](./backend/api/config/backend.conf).
 
+PCAP captures are bounded by these backend settings:
+
+- `pcap_max_size_bytes`
+  Maximum capture file size. The default is 100 MiB.
+
+- `pcap_max_duration_seconds`
+  Maximum capture duration. The default is 15 minutes.
+
+When a limit is reached, the partial capture remains available for download.
+The size limit is checked periodically and can be exceeded slightly while tcpdump is being stopped.
+
 The following three configuration entries define the paths of the EVerest configuration files:
 
 - `everest_config_path`
