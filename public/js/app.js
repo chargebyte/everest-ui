@@ -245,6 +245,7 @@ function createAppTransport(appContext) {
     },
     onBinaryMessage(data, transportApi) {
       handlePcapBinaryMessage(data, (logMessage) => addLog(appContext, logMessage), transportApi);
+      appContext.state.page?.onPcapStateChange?.();
     },
     onRequestTimeout({ requestId, moduleAction }) {
       addLog(appContext, `request timeout: ${moduleAction} (${requestId})`);
