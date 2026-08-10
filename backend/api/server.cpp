@@ -13,6 +13,7 @@
 #include "SystemControlHandler.hpp"
 
 #include <QCoreApplication>
+#include <QMetaObject>
 #include <QMetaType>
 #include <QThread>
 #include <QWebSocket>
@@ -128,6 +129,9 @@ void MinimalWebSocketServer::handleDisconnected() {
     qInfo() << "Client disconnected";
 
     FirmwareUpdate::runtime().handleClientDisconnected();
+    if (m_pcap) {
+        QMetaObject::invokeMethod(m_pcap, "handleClientDisconnected", Qt::QueuedConnection);
+    }
 
     if (m_handler) {
         QObject::disconnect(m_client, nullptr, m_handler, nullptr);

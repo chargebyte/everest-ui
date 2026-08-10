@@ -65,9 +65,15 @@ export function renderCaptureBlock(blockConfig, options = {}) {
     if (currentViewState.recordingState === 'running') {
       dotClass = 'running';
       statusText = 'Capturing...';
+    } else if (currentViewState.recordingState === 'starting') {
+      dotClass = 'processing';
+      statusText = 'Starting...';
     } else if (currentViewState.recordingState === 'processing') {
       dotClass = 'processing';
       statusText = 'Processing...';
+    } else if (currentViewState.recordingState === 'ready') {
+      dotClass = 'processing';
+      statusText = 'Partial capture ready';
     }
 
     const statusDotElement = document.createElement('span');
@@ -78,7 +84,11 @@ export function renderCaptureBlock(blockConfig, options = {}) {
       currentViewState.recordingState !== 'idle' ||
       !hasStartParameters(fieldMap);
     controls.stopBtn.disabled =
-      !currentViewState.connected || currentViewState.recordingState !== 'running';
+      !currentViewState.connected ||
+      !['running', 'ready'].includes(currentViewState.recordingState);
+    controls.stopBtn.textContent = currentViewState.recordingState === 'ready'
+      ? 'Download Partial Capture'
+      : 'Stop Recording';
     controls.downloadBtn.disabled =
       !currentViewState.lastPcapUrl ||
       currentViewState.recordingState === 'running' ||
@@ -425,8 +435,11 @@ function hasStartParameters(fieldMap) {
     if (fieldElement.type === 'checkbox') {
       return true;
     }
-    const selectedOption = fieldElement.options[fieldElement.selectedIndex];
-    return fieldElement.value.trim() !== '' && !selectedOption?.disabled;
+    if (fieldElement.tagName === 'SELECT') {
+      const selectedOption = fieldElement.options[fieldElement.selectedIndex];
+      return fieldElement.value.trim() !== '' && !selectedOption?.disabled;
+    }
+    return fieldElement.value.trim() !== '';
   });
 }
 

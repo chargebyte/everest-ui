@@ -36,6 +36,7 @@ void RequestHandler::setSocket(QWebSocket *socket) {
             m_hasInFlight = false;
             m_inFlightId.clear();
             m_inFlightResponse = QJsonObject();
+            m_responseQueue.clear();
         });
     }
     trySendNextResponse();

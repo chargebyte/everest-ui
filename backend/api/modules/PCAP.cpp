@@ -30,6 +30,8 @@ constexpr char kPlaceholderInterface[] = "<interface>";
 constexpr char kPlaceholderFileName[] = "<file_name>";
 constexpr char kPcapTmpFileName[] = "pcap_XXXXXX.pcap";
 constexpr char kConfPcapPowerlineDrivers[] = "pcap_powerline_drivers";
+constexpr char kConfPcapMaxSizeBytes[] = "pcap_max_size_bytes";
+constexpr char kConfPcapMaxDurationSeconds[] = "pcap_max_duration_seconds";
 constexpr char kInterfaceAny[] = "any";
 constexpr char kKeyInterfaces[] = "interfaces";
 constexpr char kKeyName[] = "name";
@@ -200,12 +202,22 @@ bool isInterfaceAvailable(const QString &iface) {
 } // namespace
 
 PCAP::PCAP(QObject *parent)
-    : QObject(parent), m_console(new ConsoleConnector(this)) {
+    : QObject(parent), m_console(new ConsoleConnector(this)), m_limitTimer(new QTimer(this)) {
     connect(m_console, &ConsoleConnector::streamingFinished, this, &PCAP::handleCaptureFinished);
+    m_maxSizeBytes = configuredLimit(QLatin1String(kConfPcapMaxSizeBytes), 100 * 1024 * 1024);
+    m_maxDurationSeconds = configuredLimit(QLatin1String(kConfPcapMaxDurationSeconds), 15 * 60);
+    connect(m_limitTimer, &QTimer::timeout, this, &PCAP::checkCaptureLimits);
+    m_limitTimer->setInterval(1000);
 }
 
 void PCAP::handleCaptureFinished(const ConsoleConnector::RunResult &result) {
-    if (!m_recording || m_stopping) {
+    if (m_state == PCAPState::Starting) {
+        const QString details = QString::fromLocal8Bit(result.stderrData).trimmed();
+        cleanupCapture(true);
+        m_startFailureDetails = details;
+        return;
+    }
+    if (m_state != PCAPState::Recording) {
         return;
     }
 
@@ -214,20 +226,106 @@ void PCAP::handleCaptureFinished(const ConsoleConnector::RunResult &result) {
                          << "with code" << result.exitCode
                          << (details.isEmpty() ? QString() : QStringLiteral(": ") + details);
 
-    if (!m_lastFile.isEmpty()) {
-        QFile::remove(m_lastFile);
-    }
-    m_lastFile.clear();
-    m_recording = false;
-    m_busy = false;
+    const qint64 requestId = m_captureRequestId;
+    cleanupCapture(true);
+    emit responseReady(ResponseBuilder::buildResponse(ModuleResponse{
+        .requestId = requestId,
+        .group = QLatin1String(kGroupPcap),
+        .action = QLatin1String(kActionWrite),
+        .parameters = captureError(kErrorPcapCaptureFailed, details, requestId).parameters,
+        .success = false,
+        .final = true,
+    }));
+}
 
+qint64 PCAP::configuredLimit(const QString &key, qint64 defaultValue) {
+    bool ok = false;
+    const qint64 value = readBackendConfigValue(key).toLongLong(&ok);
+    if (!ok || value <= 0) {
+        qWarning() << "Invalid or missing PCAP limit" << key << "; using" << defaultValue;
+        return defaultValue;
+    }
+    return value;
+}
+
+ModuleResponse PCAP::captureError(const char *error, const QString &details, qint64 requestId) const {
     QJsonObject parameters{
-        {QLatin1String(kError), QLatin1String(kErrorPcapCaptureFailed)},
+        {QLatin1String(kError), QLatin1String(error)},
     };
     if (!details.isEmpty()) {
         parameters.insert(QLatin1String(kKeyDetails), details);
     }
+    return ModuleResponse{
+        .requestId = requestId >= 0 ? requestId : m_captureRequestId,
+        .group = QLatin1String(kGroupPcap),
+        .action = QLatin1String(kActionWrite),
+        .parameters = parameters,
+        .success = false,
+        .final = true,
+    };
+}
 
+void PCAP::cleanupCapture(bool removeFile) {
+    m_limitTimer->stop();
+    if (removeFile && !m_lastFile.isEmpty()) {
+        QFile::remove(m_lastFile);
+    }
+    m_lastFile.clear();
+    m_captureRequestId = 0;
+    m_startFailureDetails.clear();
+    m_captureElapsed.invalidate();
+    m_state = PCAPState::Idle;
+    m_busy = false;
+}
+
+void PCAP::checkCaptureLimits() {
+    if (m_state != PCAPState::Recording) {
+        return;
+    }
+
+    if (QFileInfo(m_lastFile).size() >= m_maxSizeBytes) {
+        stopCaptureForLimit(QStringLiteral("size"));
+        return;
+    }
+    if (m_captureElapsed.isValid() &&
+        m_captureElapsed.elapsed() >= m_maxDurationSeconds * 1000) {
+        stopCaptureForLimit(QStringLiteral("duration"));
+    }
+}
+
+void PCAP::stopCaptureForLimit(const QString &limitName) {
+    if (m_state != PCAPState::Recording) {
+        return;
+    }
+
+    m_state = PCAPState::Stopping;
+    m_busy = true;
+    ConsoleConnector::ExecOptions options;
+    options.stop = true;
+    const ConsoleConnector::RunResult result = m_console->executeTemplate(
+        QLatin1String(kStopTemplate), {}, options, ConsoleConnector::ExecMode::Async);
+    if (result.exitCode != 0) {
+        const qint64 requestId = m_captureRequestId;
+        cleanupCapture(true);
+        emit responseReady(ResponseBuilder::buildResponse(ModuleResponse{
+            .requestId = requestId,
+            .group = QLatin1String(kGroupPcap),
+            .action = QLatin1String(kActionWrite),
+            .parameters = captureError(kErrorPcapCaptureFailed,
+                                        QStringLiteral("Failed to stop after %1 limit").arg(limitName),
+                                        requestId).parameters,
+            .success = false,
+            .final = true,
+        }));
+        processQueue();
+        return;
+    }
+
+    m_limitTimer->stop();
+    m_state = PCAPState::Ready;
+    m_busy = false;
+    QJsonObject parameters = captureError(kErrorPcapLimitReached, limitName).parameters;
+    parameters.insert(QLatin1String(kKeyLimit), limitName);
     emit responseReady(ResponseBuilder::buildResponse(ModuleResponse{
         .requestId = m_captureRequestId,
         .group = QLatin1String(kGroupPcap),
@@ -236,6 +334,19 @@ void PCAP::handleCaptureFinished(const ConsoleConnector::RunResult &result) {
         .success = false,
         .final = true,
     }));
+    processQueue();
+}
+
+void PCAP::handleClientDisconnected() {
+    m_queue.clear();
+    if (m_state == PCAPState::Recording || m_state == PCAPState::Starting) {
+        m_state = PCAPState::Stopping;
+        ConsoleConnector::ExecOptions options;
+        options.stop = true;
+        m_console->executeTemplate(QLatin1String(kStopTemplate), {}, options,
+                                    ConsoleConnector::ExecMode::Async);
+    }
+    cleanupCapture(true);
 }
 
 ModuleResponse PCAP::handleRequest(const ModuleRequest &request) {
@@ -301,7 +412,7 @@ ModuleResponse PCAP::startCapture(const ModuleRequest &request) {
         .final = true,
     };
 
-    if (m_busy || m_recording) {
+    if (m_busy || m_state != PCAPState::Idle) {
         response.parameters = QJsonObject{
             {QLatin1String(kError), QLatin1String(kErrorPcapBusy)},
         };
@@ -329,7 +440,8 @@ ModuleResponse PCAP::startCapture(const ModuleRequest &request) {
     }
     m_lastFile = tempPath;
     m_captureRequestId = request.requestId;
-    m_stopping = false;
+    m_state = PCAPState::Starting;
+    m_startFailureDetails.clear();
 
     ConsoleConnector::ExecOptions options;
     options.stop = false;
@@ -339,17 +451,18 @@ ModuleResponse PCAP::startCapture(const ModuleRequest &request) {
         options,
         ConsoleConnector::ExecMode::StreamingAsync);
     if (result.exitCode != 0) {
-        m_busy = false;
-        QFile::remove(m_lastFile);
-        m_lastFile.clear();
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), QLatin1String(kErrorInvalidParams)},
-        };
-        return response;
+        const QString details = m_startFailureDetails;
+        cleanupCapture(true);
+        return captureError(kErrorPcapCaptureFailed, details, request.requestId);
+    }
+    if (m_state != PCAPState::Starting) {
+        return captureError(kErrorPcapCaptureFailed, m_startFailureDetails, request.requestId);
     }
 
-    m_recording = true;
+    m_state = PCAPState::Recording;
     m_busy = false;
+    m_captureElapsed.start();
+    m_limitTimer->start();
     response.success = true;
     return response;
 }
@@ -370,43 +483,67 @@ ModuleResponse PCAP::readCapture(const ModuleRequest &request) {
         };
         return response;
     }
-    if (!m_recording || m_lastFile.isEmpty()) {
+    if ((m_state != PCAPState::Recording && m_state != PCAPState::Ready) || m_lastFile.isEmpty()) {
         response.parameters = QJsonObject{
             {QLatin1String(kError), QLatin1String(kErrorNotRecording)},
         };
         return response;
     }
 
-    m_busy = true;
-    m_stopping = true;
-    ConsoleConnector::ExecOptions options;
-    options.stop = true;
-    const ConsoleConnector::RunResult result = m_console->executeTemplate(
-        QLatin1String(kStopTemplate),
-        QHash<QString, QString>(),
-        options,
-        ConsoleConnector::ExecMode::Async);
-    if (result.exitCode != 0) {
-        m_stopping = false;
-        m_busy = false;
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), QLatin1String(kErrorPcapStopFailed)},
-        };
-        return response;
+    if (m_state == PCAPState::Recording) {
+        m_state = PCAPState::Stopping;
+        m_busy = true;
+        ConsoleConnector::ExecOptions options;
+        options.stop = true;
+        const ConsoleConnector::RunResult result = m_console->executeTemplate(
+            QLatin1String(kStopTemplate), {}, options, ConsoleConnector::ExecMode::Async);
+        if (result.exitCode != 0) {
+            cleanupCapture(true);
+            return response = captureError(kErrorPcapStopFailed, {}, request.requestId);
+        }
     }
 
+    return readCaptureFile(request);
+}
+
+ModuleResponse PCAP::readCaptureFile(const ModuleRequest &request) {
+    m_busy = true;
+    ModuleResponse response{
+        .requestId = request.requestId,
+        .group = QLatin1String(kGroupPcap),
+        .action = request.action,
+        .parameters = QJsonObject{},
+        .success = false,
+        .final = true,
+    };
     QFile file(m_lastFile);
     if (!file.open(QIODevice::ReadOnly)) {
-        m_stopping = false;
-        m_busy = false;
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), QLatin1String(kErrorFileIoFailed)},
+        cleanupCapture(true);
+        return ModuleResponse{
+            .requestId = request.requestId,
+            .group = QLatin1String(kGroupPcap),
+            .action = request.action,
+            .parameters = QJsonObject{{QLatin1String(kError), QLatin1String(kErrorFileIoFailed)}},
+            .success = false,
+            .final = true,
         };
-        return response;
     }
 
     const QByteArray encoded = file.readAll().toBase64(QByteArray::Base64Encoding);
     const QString pcapFileName = fileNameFromPath(m_lastFile);
+
+    if (file.error() != QFile::NoError) {
+        file.close();
+        cleanupCapture(true);
+        return ModuleResponse{
+            .requestId = request.requestId,
+            .group = QLatin1String(kGroupPcap),
+            .action = request.action,
+            .parameters = QJsonObject{{QLatin1String(kError), QLatin1String(kErrorFileIoFailed)}},
+            .success = false,
+            .final = true,
+        };
+    }
 
     file.close();
     QFile::remove(m_lastFile);
@@ -417,10 +554,7 @@ ModuleResponse PCAP::readCapture(const ModuleRequest &request) {
     };
     response.success = true;
 
-    m_lastFile.clear();
-    m_recording = false;
-    m_busy = false;
-    m_stopping = false;
+    cleanupCapture(true);
     return response;
 }
 

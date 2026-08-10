@@ -50,6 +50,8 @@ export function renderPcapPage(container, {
     pcapState.captureStartTs = null;
     pcapState.interfaceName = '';
     pcapState.captureValues = null;
+    pcapState.activeCaptureRequestId = null;
+    pcapState.pendingReadRequestId = null;
   }
 
   function resetCaptureState() {
@@ -57,6 +59,8 @@ export function renderPcapPage(container, {
     pcapState.captureStartTs = null;
     pcapState.interfaceName = '';
     pcapState.captureValues = null;
+    pcapState.activeCaptureRequestId = null;
+    pcapState.pendingReadRequestId = null;
   }
 
   capture.bindSubmit(() => {
@@ -64,20 +68,27 @@ export function renderPcapPage(container, {
     const values = capture.getValues(capture.requestResponseObject);
     pcapState.interfaceName = values.interface?.value || '';
     pcapState.captureValues = values;
-    syncCaptureView();
 
     const writePcapRequest = buildRequest(
       pageConfig.actions.write.group,
       pageConfig.actions.write.action,
       values
     );
-    sendPcapRequest(
+    pcapState.recordingState = 'starting';
+    pcapState.activeCaptureRequestId = writePcapRequest.requestId;
+    pcapState.pendingReadRequestId = null;
+    syncCaptureView();
+    const sent = sendPcapRequest(
       sendPayload,
       addLog,
       writePcapRequest,
       pageConfig.actions.write.group,
       pageConfig.actions.write.action
     );
+    if (!sent) {
+      resetCaptureState();
+      syncCaptureView();
+    }
   });
 
   capture.bindDownload(() => {
@@ -92,6 +103,7 @@ export function renderPcapPage(container, {
   });
 
   capture.bindStop(() => {
+    const previousState = pcapState.recordingState;
     pcapState.recordingState = 'processing';
     syncCaptureView();
 
@@ -100,6 +112,7 @@ export function renderPcapPage(container, {
       pageConfig.actions.read.action,
       {}
     );
+    pcapState.pendingReadRequestId = readPcapRequest.requestId;
     const ok = sendPcapRequest(
       sendPayload,
       addLog,
@@ -107,9 +120,9 @@ export function renderPcapPage(container, {
       pageConfig.actions.read.group,
       pageConfig.actions.read.action
     );
-
     if (!ok) {
-      pcapState.recordingState = 'running';
+      pcapState.pendingReadRequestId = null;
+      pcapState.recordingState = previousState;
       syncCaptureView();
     }
   });
@@ -140,6 +153,9 @@ export function renderPcapPage(container, {
       }
 
       if (message.type === 'pcap.write.ack' && message.ok === true) {
+        if (!requestMatches(message, pcapState.activeCaptureRequestId)) {
+          return;
+        }
         addLog('pcap.write.ack received');
         pcapState.recordingState = 'running';
         pcapState.captureStartTs = Date.now();
@@ -148,6 +164,9 @@ export function renderPcapPage(container, {
       }
 
       if (message.type === 'pcap.read.result' && message.ok === true) {
+        if (!requestMatches(message, pcapState.pendingReadRequestId)) {
+          return;
+        }
         addLog('pcap.read.result received');
         setCaptureResult(message.parameters || {});
         syncCaptureView();
@@ -155,15 +174,26 @@ export function renderPcapPage(container, {
       }
 
       if (message.type === 'pcap.write.error') {
+        if (!requestMatches(message, pcapState.activeCaptureRequestId)) {
+          return;
+        }
         const error = message.parameters?.error;
         const details = message.parameters?.details;
         addLog(`pcap.write.error: ${error}${details ? ` (${details})` : ''}`);
+        if (error === 'pcap_limit_reached') {
+          pcapState.recordingState = 'ready';
+          syncCaptureView();
+          return;
+        }
         resetCaptureState();
         syncCaptureView();
         return;
       }
 
       if (message.type === 'pcap.read.error') {
+        if (!requestMatches(message, pcapState.pendingReadRequestId)) {
+          return;
+        }
         const error = message.parameters?.error;
         addLog(`pcap.read.error: ${error}`);
         resetCaptureState();
@@ -176,7 +206,9 @@ export function renderPcapPage(container, {
         return;
       }
 
-      if (message.ok === false) {
+      if (message.ok === false &&
+          (requestMatches(message, pcapState.activeCaptureRequestId) ||
+           requestMatches(message, pcapState.pendingReadRequestId))) {
         const error = message.parameters?.error || message.error || 'unknown_error';
         addLog(`pcap backend error: ${error}`);
         resetCaptureState();
@@ -189,9 +221,9 @@ export function renderPcapPage(container, {
         requestInterfaces();
       }
       if (!pcapState.connected && pcapState.recordingState === 'processing') {
-        pcapState.recordingState = 'idle';
-        pcapState.captureStartTs = null;
-        pcapState.interfaceName = '';
+        resetCaptureState();
+      } else if (!pcapState.connected && pcapState.recordingState !== 'idle') {
+        resetCaptureState();
       }
       syncCaptureView();
     },
@@ -223,7 +255,12 @@ function sendPcapRequest(sendPayload, addLog, request, group, action) {
 }
 
 function isCaptureActiveState(pcapState) {
-  return pcapState.recordingState === 'running' || pcapState.recordingState === 'processing';
+  return pcapState.recordingState !== 'idle';
+}
+
+function requestMatches(message, requestId) {
+  return requestId !== null && requestId !== undefined &&
+    String(message.requestId) === String(requestId);
 }
 
 function toBlobUrl(base64Data) {
