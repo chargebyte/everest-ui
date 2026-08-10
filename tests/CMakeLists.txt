@@ -22,3 +22,23 @@ target_link_libraries(pcap_test
 )
 
 add_test(NAME pcap_test COMMAND pcap_test)
+
+add_executable(request_handler_test
+    RequestHandlerTest.cpp
+    ../backend/api/RequestHandler.cpp
+    ../backend/api/libs/ResponseBuilder.cpp
+)
+
+target_include_directories(request_handler_test PRIVATE
+    "${CMAKE_SOURCE_DIR}/backend/api"
+    "${CMAKE_SOURCE_DIR}/backend/api/libs"
+)
+
+target_link_libraries(request_handler_test
+    ${QT_PACKAGE_NAME}::Core
+    ${QT_PACKAGE_NAME}::Network
+    ${QT_PACKAGE_NAME}::WebSockets
+    ${QT_PACKAGE_NAME}::Test
+)
+
+add_test(NAME request_handler_test COMMAND request_handler_test)

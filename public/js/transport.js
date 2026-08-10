@@ -161,21 +161,17 @@ export function createTransport({
       }
 
       const requestIdKey = String(responseRequestId);
+      if (msg.responseId) {
+        send({ type: 'ack', responseId: msg.responseId });
+      }
       if (!pendingRequests.has(requestIdKey)) {
         if (typeof msg.type === 'string' && msg.type.endsWith('.error')) {
-          if (msg.responseId) {
-            send({ type: 'ack', responseId: msg.responseId });
-          }
           onMessage(msg);
         }
         return;
       }
 
       // ACK only valid, correlated responses.
-      if (msg.responseId) {
-        send({ type: 'ack', responseId: msg.responseId });
-      }
-
       const isFinal = msg.final !== false;
       if (isFinal) {
         clearPendingRequest(requestIdKey);

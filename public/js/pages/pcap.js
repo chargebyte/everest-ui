@@ -8,6 +8,136 @@ import { buildRequest } from '../protocol/requestBuilder.js';
 import { state } from '../state.js';
 import { renderCaptureBlock } from '../ui/capture.js';
 
+export function isPcapMessage(message) {
+  return typeof message?.type === 'string' && message.type.startsWith('pcap.');
+}
+
+export function handlePcapMessage(message, addLog) {
+  const pcapState = state.pcap;
+  if (!isPcapMessage(message)) {
+    return false;
+  }
+
+  if (message.type === 'pcap.read_interfaces.result' && message.ok === true) {
+    pcapState.interfaces = message.parameters?.interfaces || [];
+    addLog('pcap.read_interfaces.result received');
+    return true;
+  }
+
+  if (message.type === 'pcap.write.ack' && message.ok === true) {
+    if (!requestMatches(message, pcapState.activeCaptureRequestId)) {
+      return true;
+    }
+    addLog('pcap.write.ack received');
+    pcapState.recordingState = 'running';
+    pcapState.captureStartTs = Date.now();
+    return true;
+  }
+
+  if (message.type === 'pcap.read.result' && message.ok === true) {
+    if (!requestMatches(message, pcapState.pendingReadRequestId)) {
+      return true;
+    }
+    addLog('pcap.read.result received');
+    setCaptureResult(message.parameters || {});
+    return true;
+  }
+
+  if (message.type === 'pcap.write.error') {
+    if (!requestMatches(message, pcapState.activeCaptureRequestId)) {
+      return true;
+    }
+    const error = message.parameters?.error;
+    const details = message.parameters?.details;
+    addLog(`pcap.write.error: ${error}${details ? ` (${details})` : ''}`);
+    if (error === 'pcap_limit_reached') {
+      pcapState.recordingState = 'ready';
+      return true;
+    }
+    resetCaptureState();
+    return true;
+  }
+
+  if (message.type === 'pcap.read.error') {
+    if (!requestMatches(message, pcapState.pendingReadRequestId)) {
+      return true;
+    }
+    addLog(`pcap.read.error: ${message.parameters?.error}`);
+    resetCaptureState();
+    return true;
+  }
+
+  if (message.type === 'pcap.read_interfaces.error') {
+    addLog(`pcap.read_interfaces.error: ${message.parameters?.error || 'unknown_error'}`);
+    return true;
+  }
+
+  if (message.ok === false &&
+      (requestMatches(message, pcapState.activeCaptureRequestId) ||
+       requestMatches(message, pcapState.pendingReadRequestId))) {
+    const error = message.parameters?.error || message.error || 'unknown_error';
+    addLog(`pcap backend error: ${error}`);
+    resetCaptureState();
+  }
+  return true;
+}
+
+export function handlePcapConnectionChange(connected) {
+  state.pcap.connected = connected === true;
+  if (!state.pcap.connected) {
+    resetCaptureState();
+  }
+}
+
+export function handlePcapRequestTimeout(requestId, moduleAction) {
+  const [group, action] = String(moduleAction || '').split(':');
+  if (group !== 'pcap') {
+    return false;
+  }
+
+  const pcapState = state.pcap;
+  if ((action === 'write' && requestMatches({ requestId }, pcapState.activeCaptureRequestId)) ||
+      (action === 'read' && requestMatches({ requestId }, pcapState.pendingReadRequestId))) {
+    resetCaptureState();
+    return true;
+  }
+  return false;
+}
+
+function clearLastCaptureResult() {
+  if (state.pcap.lastPcapUrl) {
+    URL.revokeObjectURL(state.pcap.lastPcapUrl);
+    state.pcap.lastPcapUrl = null;
+    state.pcap.lastPcapName = '';
+  }
+}
+
+function setCaptureResult(parameters) {
+  clearLastCaptureResult();
+
+  const dataB64 = parameters.dataB64 || '';
+  if (dataB64) {
+    state.pcap.lastPcapUrl = toBlobUrl(dataB64);
+    state.pcap.lastPcapName = fileNameFromPath(parameters.file) || `pcap_${Date.now()}.pcap`;
+  }
+
+  state.pcap.recordingState = 'idle';
+  state.pcap.captureStartTs = null;
+  state.pcap.interfaceName = '';
+  state.pcap.captureValues = null;
+  state.pcap.activeCaptureRequestId = null;
+  state.pcap.pendingReadRequestId = null;
+}
+
+function resetCaptureState() {
+  state.pcap.recordingState = 'idle';
+  state.pcap.captureStartTs = null;
+  state.pcap.interfaceName = '';
+  state.pcap.captureValues = null;
+  state.pcap.activeCaptureRequestId = null;
+  state.pcap.pendingReadRequestId = null;
+}
+
 export function renderPcapPage(container, {
   parameterCatalog,
   sendPayload,
@@ -27,40 +157,6 @@ export function renderPcapPage(container, {
 
   function syncCaptureView() {
     capture.setViewState(pcapState);
-  }
-
-  function clearLastCaptureResult() {
-    if (pcapState.lastPcapUrl) {
-      URL.revokeObjectURL(pcapState.lastPcapUrl);
-      pcapState.lastPcapUrl = null;
-      pcapState.lastPcapName = '';
-    }
-  }
-
-  function setCaptureResult(parameters) {
-    clearLastCaptureResult();
-
-    const dataB64 = parameters.dataB64 || '';
-    if (dataB64) {
-      pcapState.lastPcapUrl = toBlobUrl(dataB64);
-      pcapState.lastPcapName = fileNameFromPath(parameters.file) || `pcap_${Date.now()}.pcap`;
-    }
-
-    pcapState.recordingState = 'idle';
-    pcapState.captureStartTs = null;
-    pcapState.interfaceName = '';
-    pcapState.captureValues = null;
-    pcapState.activeCaptureRequestId = null;
-    pcapState.pendingReadRequestId = null;
-  }
-
-  function resetCaptureState() {
-    pcapState.recordingState = 'idle';
-    pcapState.captureStartTs = null;
-    pcapState.interfaceName = '';
-    pcapState.captureValues = null;
-    pcapState.activeCaptureRequestId = null;
-    pcapState.pendingReadRequestId = null;
   }
 
   capture.bindSubmit(() => {
@@ -141,90 +237,23 @@ export function renderPcapPage(container, {
 
   return {
     onMessage(message) {
-      if (message.type === 'pcap.read_interfaces.result' && message.ok === true) {
-        pcapState.interfaces = message.parameters?.interfaces || [];
-        capture.setInterfaceOptions(pcapState.interfaces);
-        if (isCaptureActiveState(pcapState) && pcapState.captureValues) {
-          capture.setValues(pcapState.captureValues);
-        }
-        addLog('pcap.read_interfaces.result received');
-        syncCaptureView();
+      if (!isPcapMessage(message)) {
         return;
       }
-
-      if (message.type === 'pcap.write.ack' && message.ok === true) {
-        if (!requestMatches(message, pcapState.activeCaptureRequestId)) {
-          return;
-        }
-        addLog('pcap.write.ack received');
-        pcapState.recordingState = 'running';
-        pcapState.captureStartTs = Date.now();
-        syncCaptureView();
-        return;
+      capture.setInterfaceOptions(pcapState.interfaces);
+      if (isCaptureActiveState(pcapState) && pcapState.captureValues) {
+        capture.setValues(pcapState.captureValues);
       }
-
-      if (message.type === 'pcap.read.result' && message.ok === true) {
-        if (!requestMatches(message, pcapState.pendingReadRequestId)) {
-          return;
-        }
-        addLog('pcap.read.result received');
-        setCaptureResult(message.parameters || {});
-        syncCaptureView();
-        return;
-      }
-
-      if (message.type === 'pcap.write.error') {
-        if (!requestMatches(message, pcapState.activeCaptureRequestId)) {
-          return;
-        }
-        const error = message.parameters?.error;
-        const details = message.parameters?.details;
-        addLog(`pcap.write.error: ${error}${details ? ` (${details})` : ''}`);
-        if (error === 'pcap_limit_reached') {
-          pcapState.recordingState = 'ready';
-          syncCaptureView();
-          return;
-        }
-        resetCaptureState();
-        syncCaptureView();
-        return;
-      }
-
-      if (message.type === 'pcap.read.error') {
-        if (!requestMatches(message, pcapState.pendingReadRequestId)) {
-          return;
-        }
-        const error = message.parameters?.error;
-        addLog(`pcap.read.error: ${error}`);
-        resetCaptureState();
-        syncCaptureView();
-        return;
-      }
-
-      if (message.type === 'pcap.read_interfaces.error') {
-        addLog(`pcap.read_interfaces.error: ${message.parameters?.error || 'unknown_error'}`);
-        return;
-      }
-
-      if (message.ok === false &&
-          (requestMatches(message, pcapState.activeCaptureRequestId) ||
-           requestMatches(message, pcapState.pendingReadRequestId))) {
-        const error = message.parameters?.error || message.error || 'unknown_error';
-        addLog(`pcap backend error: ${error}`);
-        resetCaptureState();
-        syncCaptureView();
-      }
+      syncCaptureView();
     },
     onConnectionChange(connected) {
-      pcapState.connected = connected === true;
+      handlePcapConnectionChange(connected);
       if (pcapState.connected) {
         requestInterfaces();
       }
-      if (!pcapState.connected && pcapState.recordingState === 'processing') {
-        resetCaptureState();
-      } else if (!pcapState.connected && pcapState.recordingState !== 'idle') {
-        resetCaptureState();
-      }
+      syncCaptureView();
+    },
+    onPcapStateChange() {
       syncCaptureView();
     },
     destroy() {
