@@ -185,15 +185,20 @@ private:
 
     void acknowledge(QSignalSpy &messages) {
         const QJsonObject response = parseMessage(messages.takeLast());
+        const QString responseId = response.value(QLatin1String(kKeyResponseId)).toString();
+        QVERIFY(!responseId.isEmpty());
         const QJsonObject ack{
             {QLatin1String(kKeyType), QLatin1String(kTypeAck)},
-            {QLatin1String(kKeyResponseId), response.value(QLatin1String(kKeyResponseId))},
+            {QLatin1String(kKeyResponseId), responseId},
         };
         m_handler.handleTextMessage(QString::fromUtf8(QJsonDocument(ack).toJson(QJsonDocument::Compact)));
     }
 
-    static QJsonObject parseMessage(const QVariant &message) {
-        return QJsonDocument::fromJson(message.toString().toUtf8()).object();
+    static QJsonObject parseMessage(const QVariantList &arguments) {
+        if (arguments.isEmpty()) {
+            return {};
+        }
+        return QJsonDocument::fromJson(arguments.constFirst().toString().toUtf8()).object();
     }
 
     QWebSocketServer m_server{QStringLiteral("RequestHandlerTest"), QWebSocketServer::NonSecureMode};
