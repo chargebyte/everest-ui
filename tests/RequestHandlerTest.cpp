@@ -87,8 +87,8 @@ private slots:
         QVERIFY(waitForSignal(messagesB, 1000));
         const QJsonObject response = QJsonDocument::fromJson(messagesB.takeFirst().constFirst().toString().toUtf8()).object();
         QCOMPARE(static_cast<qint64>(response.value(QLatin1String(kKeyRequestId)).toDouble()), qint64(1));
-        QCOMPARE(response.value(QLatin1String(kKeyParameters)).toObject().value(QStringLiteral("appTitle")),
-                 QJsonValue(QStringLiteral("new client")));
+        QCOMPARE(response.value(QLatin1String(kKeyParameters)).toObject().value(QStringLiteral("appTitle")).toString(),
+                 QStringLiteral("new client"));
     }
 
 private:

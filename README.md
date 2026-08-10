@@ -71,6 +71,7 @@ PCAP captures are bounded by these backend settings:
   Maximum capture duration. The default is 15 minutes.
 
 When a limit is reached, the partial capture remains available for download.
+The size limit is checked periodically and can be exceeded slightly while tcpdump is being stopped.
 
 The following three configuration entries define the paths of the EVerest configuration files:
 
