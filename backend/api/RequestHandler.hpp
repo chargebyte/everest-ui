@@ -7,6 +7,7 @@
 
 #include "RequestResponseTypes.hpp"
 #include <QObject>
+#include <QHash>
 #include <QJsonObject>
 #include <QQueue>
 #include <QTimer>
@@ -30,9 +31,21 @@ signals:
     void systemControlEnqueueRequested(const ModuleRequest &request);
 
 private:
+    struct RequestContext {
+        qint64 clientRequestId = 0;
+        quint64 connectionGeneration = 0;
+        QString group;
+        QString action;
+    };
+
     void trySendNextResponse();
     void handleAck(const QJsonObject &responseObj);
     void resendInFlight();
+    void clearSession();
+    void enqueueCurrentResponse(const QJsonObject &response);
+    void enqueueResponseObject(const QJsonObject &response);
+    bool retainContext(const QJsonObject &response, const RequestContext &context) const;
+    void removePcapWriteContexts(quint64 connectionGeneration);
     static bool isValidTemplate(const QJsonObject &obj);
     static ModuleRequest toModuleRequest(const QJsonObject &obj);
     static ModuleGroup toModuleGroup(const QString &group);
@@ -43,6 +56,9 @@ private:
     QString m_inFlightId;
     bool m_hasInFlight = false;
     qint64 m_responseIdCounter = 0;
+    qint64 m_serverRequestIdCounter = 0;
+    quint64 m_connectionGeneration = 0;
+    QHash<qint64, RequestContext> m_requestContexts;
     QTimer m_ackTimer;
 };
 

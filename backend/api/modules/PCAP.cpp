@@ -32,6 +32,7 @@ constexpr char kPcapTmpFileName[] = "pcap_XXXXXX.pcap";
 constexpr char kConfPcapPowerlineDrivers[] = "pcap_powerline_drivers";
 constexpr char kConfPcapMaxSizeBytes[] = "pcap_max_size_bytes";
 constexpr char kConfPcapMaxDurationSeconds[] = "pcap_max_duration_seconds";
+constexpr int kPcapLimitCheckIntervalMs = 100;
 constexpr char kInterfaceAny[] = "any";
 constexpr char kKeyInterfaces[] = "interfaces";
 constexpr char kKeyName[] = "name";
@@ -207,7 +208,7 @@ PCAP::PCAP(QObject *parent)
     m_maxSizeBytes = configuredLimit(QLatin1String(kConfPcapMaxSizeBytes), 100 * 1024 * 1024);
     m_maxDurationSeconds = configuredLimit(QLatin1String(kConfPcapMaxDurationSeconds), 15 * 60);
     connect(m_limitTimer, &QTimer::timeout, this, &PCAP::checkCaptureLimits);
-    m_limitTimer->setInterval(1000);
+    m_limitTimer->setInterval(kPcapLimitCheckIntervalMs);
 }
 
 void PCAP::handleCaptureFinished(const ConsoleConnector::RunResult &result) {
@@ -338,8 +339,13 @@ void PCAP::stopCaptureForLimit(const QString &limitName) {
 }
 
 void PCAP::handleClientDisconnected() {
+    shutdown();
+}
+
+void PCAP::shutdown() {
     m_queue.clear();
-    if (m_state == PCAPState::Recording || m_state == PCAPState::Starting) {
+    if (m_state == PCAPState::Recording || m_state == PCAPState::Starting ||
+        m_state == PCAPState::Stopping) {
         m_state = PCAPState::Stopping;
         ConsoleConnector::ExecOptions options;
         options.stop = true;

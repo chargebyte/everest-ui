@@ -43,6 +43,7 @@ public:
 public slots:
     void enqueueRequest(const ModuleRequest &request);
     void handleClientDisconnected();
+    void shutdown();
 
 signals:
     void responseReady(const QJsonObject &response);

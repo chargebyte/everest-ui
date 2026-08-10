@@ -79,6 +79,9 @@ MinimalWebSocketServer::MinimalWebSocketServer(QObject *parent)
 
 MinimalWebSocketServer::~MinimalWebSocketServer() {
     if (m_pcapThread) {
+        if (m_pcap && m_pcapThread->isRunning()) {
+            QMetaObject::invokeMethod(m_pcap, "shutdown", Qt::BlockingQueuedConnection);
+        }
         m_pcapThread->quit();
         m_pcapThread->wait();
     }

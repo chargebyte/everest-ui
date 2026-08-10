@@ -27,16 +27,24 @@ RequestHandler::RequestHandler(QObject *parent)
 void RequestHandler::setSocket(QWebSocket *socket) {
     if (m_socket) {
         QObject::disconnect(m_socket, nullptr, this, nullptr);
+        clearSession();
+        m_socket = nullptr;
+    }
+
+    if (!socket) {
+        clearSession();
+        m_socket = nullptr;
+        return;
     }
 
     m_socket = socket;
+    ++m_connectionGeneration;
     if (m_socket) {
         connect(m_socket, &QWebSocket::disconnected, this, [this]() {
-            m_ackTimer.stop();
-            m_hasInFlight = false;
-            m_inFlightId.clear();
-            m_inFlightResponse = QJsonObject();
-            m_responseQueue.clear();
+            if (sender() == m_socket) {
+                clearSession();
+                m_socket = nullptr;
+            }
         });
     }
     trySendNextResponse();
@@ -47,7 +55,7 @@ void RequestHandler::handleTextMessage(const QString &message) {
     const QJsonDocument doc = QJsonDocument::fromJson(message.toUtf8(), &error);
     if (error.error != QJsonParseError::NoError || !doc.isObject()) {
         qWarning() << "JSON parse error" << error.errorString();
-        enqueueResponse(ResponseBuilder::buildResponse(ModuleResponse{
+        enqueueCurrentResponse(ResponseBuilder::buildResponse(ModuleResponse{
             .requestId = 0,
             .group = QStringLiteral("request"),
             .action = QStringLiteral("parse"),
@@ -68,7 +76,7 @@ void RequestHandler::handleTextMessage(const QString &message) {
 
     if (!isValidTemplate(obj)) {
         qWarning() << "JSON template mismatch";
-        enqueueResponse(ResponseBuilder::buildResponse(ModuleResponse{
+        enqueueCurrentResponse(ResponseBuilder::buildResponse(ModuleResponse{
             .requestId = 0,
             .group = QStringLiteral("request"),
             .action = QStringLiteral("template"),
@@ -82,12 +90,21 @@ void RequestHandler::handleTextMessage(const QString &message) {
     }
 
     const ModuleRequest request = toModuleRequest(obj);
-    if (request.group == ModuleGroup::Unknown) {
+    const qint64 clientRequestId = request.requestId;
+    ModuleRequest routedRequest = request;
+    routedRequest.requestId = ++m_serverRequestIdCounter;
+    m_requestContexts.insert(routedRequest.requestId, RequestContext{
+        .clientRequestId = clientRequestId,
+        .connectionGeneration = m_connectionGeneration,
+        .group = obj.value(FieldNameKey(FieldName::Group)).toString(),
+        .action = routedRequest.action,
+    });
+    if (routedRequest.group == ModuleGroup::Unknown) {
         const QString group = obj.value(FieldNameKey(FieldName::Group)).toString();
         enqueueResponse(ResponseBuilder::buildResponse(ModuleResponse{
-            .requestId = request.requestId,
+            .requestId = routedRequest.requestId,
             .group = group,
-            .action = request.action,
+            .action = routedRequest.action,
             .parameters = QJsonObject{
                 {QLatin1String(kError), QStringLiteral("unsupported_group")},
             },
@@ -97,9 +114,9 @@ void RequestHandler::handleTextMessage(const QString &message) {
         return;
     }
 
-    switch (request.group) {
+    switch (routedRequest.group) {
     case ModuleGroup::PCAP:
-        emit pcapEnqueueRequested(request);
+        emit pcapEnqueueRequested(routedRequest);
         return;
     case ModuleGroup::EverestConfig:
     case ModuleGroup::SafetyController:
@@ -108,14 +125,87 @@ void RequestHandler::handleTextMessage(const QString &message) {
     case ModuleGroup::SystemLogs:
     case ModuleGroup::System:
     case ModuleGroup::Unknown:
-        emit systemControlEnqueueRequested(request);
+        emit systemControlEnqueueRequested(routedRequest);
         return;
     }
 }
 
 void RequestHandler::enqueueResponse(const QJsonObject &response) {
+    if (!m_socket) {
+        return;
+    }
+
+    const qint64 serverRequestId = static_cast<qint64>(response.value(QLatin1String(kKeyRequestId)).toDouble());
+    const auto contextIt = m_requestContexts.constFind(serverRequestId);
+    if (contextIt == m_requestContexts.constEnd()) {
+        return;
+    }
+    if (contextIt->connectionGeneration != m_connectionGeneration) {
+        m_requestContexts.remove(serverRequestId);
+        return;
+    }
+
+    const RequestContext context = contextIt.value();
+    QJsonObject clientResponse = response;
+    clientResponse.insert(QLatin1String(kKeyRequestId), context.clientRequestId);
+
+    const bool final = response.value(QLatin1String(kKeyFinal)).toBool(true);
+    if (final && !retainContext(response, context)) {
+        m_requestContexts.remove(serverRequestId);
+    }
+    if (final && context.group == QLatin1String(kGroupPcap) &&
+        context.action == QLatin1String(kActionRead)) {
+        removePcapWriteContexts(context.connectionGeneration);
+    }
+
+    enqueueResponseObject(clientResponse);
+}
+
+void RequestHandler::clearSession() {
+    m_ackTimer.stop();
+    m_hasInFlight = false;
+    m_inFlightId.clear();
+    m_inFlightResponse = QJsonObject();
+    m_responseQueue.clear();
+    m_requestContexts.clear();
+}
+
+void RequestHandler::enqueueCurrentResponse(const QJsonObject &response) {
+    if (!m_socket) {
+        return;
+    }
+    enqueueResponseObject(response);
+}
+
+void RequestHandler::enqueueResponseObject(const QJsonObject &response) {
     m_responseQueue.enqueue(response);
     trySendNextResponse();
+}
+
+bool RequestHandler::retainContext(const QJsonObject &response, const RequestContext &context) const {
+    if (!response.value(QLatin1String(kKeyFinal)).toBool(true)) {
+        return true;
+    }
+    if (context.group != QLatin1String(kGroupPcap) || context.action != QLatin1String(kActionWrite)) {
+        return false;
+    }
+
+    const bool success = response.value(QLatin1String(kKeyOk)).toBool(false);
+    const QJsonObject parameters = response.value(QLatin1String(kKeyParameters)).toObject();
+    return success || parameters.value(QLatin1String(kError)).toString() ==
+                         QLatin1String(kErrorPcapLimitReached);
+}
+
+void RequestHandler::removePcapWriteContexts(quint64 connectionGeneration) {
+    for (auto it = m_requestContexts.begin(); it != m_requestContexts.end();) {
+        if (it->connectionGeneration == connectionGeneration &&
+            it->group == QLatin1String(kGroupPcap) &&
+            it->action == QLatin1String(kActionWrite)) {
+            it = m_requestContexts.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 void RequestHandler::trySendNextResponse() {
