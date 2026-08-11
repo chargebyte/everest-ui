@@ -138,9 +138,12 @@ function writeTextTab(tab, text) {
       return false;
     }
 
-    documentObject.title = 'System Log Extract';
     documentObject.body.replaceChildren();
     documentObject.head.replaceChildren();
+
+    const titleElement = documentObject.createElement('title');
+    titleElement.textContent = 'System Log Extract';
+    documentObject.head.appendChild(titleElement);
 
     const styleElement = documentObject.createElement('style');
     styleElement.textContent = `
