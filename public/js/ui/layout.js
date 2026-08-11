@@ -25,6 +25,12 @@ export function renderLayout(root) {
     logoutButton: root.querySelector('#logout-button'),
     uiLog: root.querySelector('#ui-log'),
     uiLogResizeHandle: root.querySelector('#ui-log-resize-handle'),
-    navItems: root.querySelectorAll('.nav-item')
+    navItems: root.querySelectorAll('.nav-item'),
+    setPageAvailable(page, available) {
+      const item = root.querySelector(`.nav-item[data-page="${page}"]`);
+      if (item) {
+        item.hidden = !available;
+      }
+    }
   };
 }

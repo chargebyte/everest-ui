@@ -117,8 +117,7 @@ QJsonObject interfaceDescription(const QNetworkInterface &netIf) {
     const QString driver = interfaceDriver(netIf.name());
     const bool driverMatches = configuredPowerlineDrivers().contains(driver, Qt::CaseInsensitive);
     const bool operational = up && running;
-    const bool likelyPowerline = !loopback && !bridgeMember && operational && ipv6LinkLocal && !ipv4 &&
-        !ipv6Configured && driverMatches;
+    const bool likelyPowerline = !loopback && !bridgeMember && operational && ipv6LinkLocal && driverMatches;
 
     QJsonObject description{
         {QLatin1String(kKeyName), netIf.name()},

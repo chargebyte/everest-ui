@@ -104,6 +104,20 @@ The following three configuration entries define the paths of the EVerest config
 - `everest_config_overlay_path`
   Points to the location of the configuration file that holds the parameters set with the UI.
 
+The optional `available_features` entry in `backend.conf` is a comma-separated list of enabled UI features.
+If it is omitted, all features are enabled. The Network Configuration page is enabled when `network` is
+listed; for example, `available_features=network`. Other feature names are reserved for future use.
+
+## Network Configuration
+
+The Network Configuration page reads the effective systemd-networkd file reported by `networkctl status`.
+It never modifies distribution files under `/lib/systemd/network/`. Saving creates or updates the corresponding
+user configuration at `/etc/systemd/network/<interface>.network`, preserving unrelated settings where possible.
+
+Save and Apply are separate actions. Apply reloads systemd-networkd and reconfigures the selected interface.
+Changing the interface used to access the Web UI can disconnect the browser and may require reconnecting with
+the new address.
+
 ### UI ports
 
 Two relevant ports can be specified.

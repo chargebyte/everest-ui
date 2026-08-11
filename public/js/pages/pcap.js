@@ -333,7 +333,8 @@ export function renderPcapPage(container, {
 }
 
 function sendPcapRequest(sendPayload, addLog, request, group, action) {
-  const ok = sendPayload(request);
+  const result = sendPayload(request);
+  const ok = result.ok;
   addLog(`${group}.${action} ${ok ? 'sent' : 'rejected'}`);
   return ok;
 }
