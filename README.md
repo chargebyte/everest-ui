@@ -114,9 +114,13 @@ The Network Configuration page reads the effective systemd-networkd file reporte
 It never modifies distribution files under `/lib/systemd/network/`. Saving creates or updates the corresponding
 user configuration at `/etc/systemd/network/<interface>.network`, preserving unrelated settings where possible.
 
-Save and Apply are separate actions. Apply reloads systemd-networkd and reconfigures the selected interface.
+Save and Apply are separate actions. Apply reloads systemd-networkd, which applies changed or removed network
+files to all affected interfaces.
 Changing the interface used to access the Web UI can disconnect the browser and may require reconnecting with
 the new address.
+
+When a Web UI override exists, Reset to factory defaults removes `/etc/systemd/network/<interface>.network`
+and loads the matching distribution configuration. It does not apply the change; press Apply separately.
 
 ### UI ports
 

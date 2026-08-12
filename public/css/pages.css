@@ -72,6 +72,12 @@
   background: linear-gradient(180deg, var(--cb-accent), var(--cb-accent-dark));
 }
 
+.network-actions .network-reset {
+  color: #765900;
+  background: #fff8df;
+  border-color: #e3bd54;
+}
+
 .section h2 {
   margin: 0 0 12px;
   font-size: 21px;

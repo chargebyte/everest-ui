@@ -8,6 +8,8 @@
 #include <QJsonObject>
 #include <QTest>
 
+#include <QVector>
+
 class NetworkConfigurationTest final : public QObject {
     Q_OBJECT
 
@@ -50,6 +52,45 @@ private slots:
         QVERIFY(!output.contains(QStringLiteral("Address=192.168.1.20/24")));
         QVERIFY(!output.contains(QStringLiteral("Gateway=192.168.1.1")));
         QVERIFY(output.endsWith(QLatin1Char('\n')));
+    }
+
+    void resetResponseContractIncludesFactoryState() {
+        QJsonObject parameters{
+            {QStringLiteral("interface"), QStringLiteral("eth0")},
+            {QStringLiteral("network_file"), QStringLiteral("/lib/systemd/network/80-wired.network")},
+            {QStringLiteral("user_override"), false},
+            {QStringLiteral("dhcp_ipv4"), true},
+            {QStringLiteral("dhcp_ipv6"), true}};
+        QVERIFY(!parameters.value(QStringLiteral("user_override")).toBool());
+        QCOMPARE(parameters.value(QStringLiteral("interface")).toString(), QStringLiteral("eth0"));
+        QVERIFY(parameters.value(QStringLiteral("dhcp_ipv4")).toBool());
+        QVERIFY(parameters.value(QStringLiteral("dhcp_ipv6")).toBool());
+    }
+
+    void applyReloadsOnlyOnce() {
+        QVector<QStringList> commands;
+        const bool applied = applyNetworkConfiguration(
+            [&commands](const QString &program, const QStringList &arguments) {
+                commands.append(QStringList{program, arguments.join(QLatin1Char(' '))});
+                return CommandResult{true, 0, {}};
+            });
+
+        QVERIFY(applied);
+        QCOMPARE(commands.size(), 1);
+        QCOMPARE(commands.at(0).at(0), QStringLiteral("networkctl"));
+        QCOMPARE(commands.at(0).at(1), QStringLiteral("reload"));
+    }
+
+    void applyFailsWhenReloadFails() {
+        int commandCount = 0;
+        const bool applied = applyNetworkConfiguration(
+            [&commandCount](const QString &, const QStringList &) {
+                ++commandCount;
+                return CommandResult{true, 1, {}};
+            });
+
+        QVERIFY(!applied);
+        QCOMPARE(commandCount, 1);
     }
 };
 

@@ -12,6 +12,43 @@ export function isCurrentSettingsResponse(message, requestId, interfaceName) {
   return message?.requestId === requestId && message.parameters?.interface === interfaceName;
 }
 
+export function formatInterfaceWarnings(info) {
+  const warnings = Array.isArray(info?.warning) ? info.warning : [];
+  return {
+    text: warnings.join(' '),
+    visible: warnings.length > 0
+  };
+}
+
+export function normalizeNetworkSettings(settings) {
+  const dhcpIpv4 = settings?.dhcp_ipv4 === true;
+  return {
+    dhcp_ipv4: dhcpIpv4,
+    dhcp_ipv6: settings?.dhcp_ipv6 === true,
+    ipv4_addresses: dhcpIpv4
+      ? []
+      : (Array.isArray(settings?.ipv4_addresses)
+        ? settings.ipv4_addresses.map((value) => String(value).trim()).filter(Boolean)
+        : []),
+    gateway: dhcpIpv4 ? '' : String(settings?.gateway || '').trim(),
+    dns: Array.isArray(settings?.dns)
+      ? settings.dns.map((value) => String(value).trim()).filter(Boolean)
+      : []
+  };
+}
+
+export function networkSettingsEqual(left, right) {
+  return JSON.stringify(normalizeNetworkSettings(left)) === JSON.stringify(normalizeNetworkSettings(right));
+}
+
+export function networkActionState({ loaded, editable, dirty, userOverride }) {
+  return {
+    saveDisabled: !loaded || !editable,
+    resetDisabled: !loaded || !editable || userOverride !== true,
+    applyDisabled: !loaded || !editable || dirty
+  };
+}
+
 export function renderNetworkPage(container, { sendPayload, addLog }) {
   container.innerHTML = '';
 
@@ -53,6 +90,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
       <p id="network-settings-warning" class="network-settings-warning" hidden></p>
       <div class="network-actions">
         <button class="btn" id="network-save" type="button">Save</button>
+        <button class="btn btn-secondary network-reset" id="network-reset" type="button">Reset to factory defaults</button>
         <button class="btn" id="network-apply" type="button">Apply</button>
       </div>
     </section>
@@ -71,12 +109,19 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   const gatewayElement = page.querySelector('#network-gateway');
   const dnsElement = page.querySelector('#network-dns');
   const saveButton = page.querySelector('#network-save');
+  const resetButton = page.querySelector('#network-reset');
   const applyButton = page.querySelector('#network-apply');
   let selectedInfo = null;
   let editable = false;
   let settingsLoaded = false;
   let pendingSettingsInterface = '';
   let pendingSettingsRequestId = null;
+  let pendingResetRequestId = null;
+  let pendingWriteRequestId = null;
+  let pendingWriteSettings = null;
+  let baselineSettings = null;
+  let userOverride = false;
+  let dirty = false;
   let dhcpIpv6 = false;
 
   function formatSendStatus(result) {
@@ -94,8 +139,29 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   }
 
   function setSettingsDisabled(disabled) {
-    [dhcpElement, addressElement, fallbackElement, gatewayElement, dnsElement, saveButton, applyButton]
+    [dhcpElement, addressElement, fallbackElement, gatewayElement, dnsElement]
       .forEach((element) => { element.disabled = disabled; });
+    updateActionButtons();
+  }
+
+  function updateActionButtons() {
+    const buttons = networkActionState({
+      loaded: settingsLoaded,
+      editable,
+      dirty,
+      userOverride
+    });
+    saveButton.disabled = buttons.saveDisabled;
+    resetButton.disabled = buttons.resetDisabled || pendingResetRequestId !== null;
+    applyButton.disabled = buttons.applyDisabled;
+  }
+
+  function updateDirtyState(showHint = true) {
+    dirty = baselineSettings !== null && !networkSettingsEqual(collectSettings(), baselineSettings);
+    updateActionButtons();
+    if (dirty && showHint) {
+      setWarning('Unsaved changes. Save the changes first, or Reset to factory defaults.');
+    }
   }
 
   function updateStaticFields() {
@@ -117,10 +183,13 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
       ? `${info.kind || 'unknown'}; ${info.operational_state || 'unknown'}; setup ${info.setup_state || 'unknown'}`
       : 'Select an interface';
     fileElement.textContent = info?.network_file || 'No effective Network File reported';
-    const warnings = Array.isArray(info?.warning) ? info.warning : [];
-    warningsElement.textContent = warnings.join(' ');
-    warningsElement.hidden = warnings.length === 0;
+    const interfaceWarnings = formatInterfaceWarnings(info);
+    warningsElement.textContent = interfaceWarnings.text;
+    warningsElement.hidden = !interfaceWarnings.visible;
     settingsLoaded = false;
+    baselineSettings = null;
+    userOverride = false;
+    dirty = false;
     settingsSection.hidden = true;
     setSettingsDisabled(true);
     setWarning(info && !editable ? 'This interface cannot be edited safely by the Web UI.' : '');
@@ -170,10 +239,6 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
       editable = false;
     }
     fileElement.textContent = parameters.network_file || 'No effective Network File reported';
-    const warnings = Array.isArray(parameters.warning) ? parameters.warning : [];
-    warningsElement.textContent = warnings.join(' ');
-    warningsElement.hidden = warnings.length === 0;
-    setWarning(warnings.join(' '));
     dhcpElement.checked = parameters.dhcp_ipv4 === true;
     dhcpIpv6 = parameters.dhcp_ipv6 === true;
     const addresses = Array.isArray(parameters.ipv4_addresses) ? parameters.ipv4_addresses : [];
@@ -183,8 +248,12 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     dnsElement.value = Array.isArray(parameters.dns) ? parameters.dns.join(', ') : '';
     settingsLoaded = true;
     settingsSection.hidden = false;
-    setSettingsDisabled(!editable);
     updateStaticFields();
+    baselineSettings = normalizeNetworkSettings(collectSettings());
+    userOverride = parameters.user_override === true;
+    dirty = false;
+    setSettingsDisabled(!editable);
+    updateActionButtons();
   }
 
   function collectSettings() {
@@ -198,6 +267,11 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
       gateway: dhcpElement.checked ? '' : gatewayElement.value.trim(),
       dns
     };
+  }
+
+  function handleFormChange() {
+    updateStaticFields();
+    updateDirtyState();
   }
 
   function sendAction(action, parameters) {
@@ -216,7 +290,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     if (!result.ok) {
       setWarning(`Unable to send network ${action}: ${formatSendStatus(result)}`);
     }
-    return result.ok;
+    return result;
   }
 
   interfaceSelect.addEventListener('change', () => {
@@ -224,17 +298,34 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     renderInterfaceInfo(state.network.interfaces.find((info) => info.name === interfaceSelect.value));
     requestSettings(interfaceSelect.value);
   });
-  dhcpElement.addEventListener('change', updateStaticFields);
   saveButton.addEventListener('click', () => {
     if (!settingsLoaded || !editable) return;
     setWarning('Saving changes to the persistent network configuration. Apply them separately when ready.');
-    sendAction('write_settings', collectSettings());
+    const settings = collectSettings();
+    const result = sendAction('write_settings', settings);
+    if (result.ok) {
+      pendingWriteRequestId = result.payload.requestId;
+      pendingWriteSettings = normalizeNetworkSettings(settings);
+    }
   });
   applyButton.addEventListener('click', () => {
     if (!settingsLoaded || !editable) return;
     if (!window.confirm('Applying network configuration may disconnect this Web UI. Continue?')) return;
     sendAction('apply', { interface: interfaceSelect.value });
   });
+  resetButton.addEventListener('click', () => {
+    if (!settingsLoaded || !editable || resetButton.disabled) return;
+    if (!window.confirm('Reset this interface to factory defaults? Any unsaved edits will be discarded. The override file will be deleted, but the running network configuration will not change until you press Apply.')) return;
+    const result = sendAction('reset_settings', { interface: interfaceSelect.value });
+    if (result.ok) {
+      pendingResetRequestId = result.payload.requestId;
+      setWarning('Resetting to factory defaults. Waiting for the factory settings.');
+    }
+  });
+
+  [dhcpElement, addressElement, fallbackElement, gatewayElement, dnsElement]
+    .forEach((element) => element.addEventListener('input', handleFormChange));
+  dhcpElement.addEventListener('change', handleFormChange);
 
   return {
     onMessage(message) {
@@ -255,11 +346,30 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
         setSettings(message.parameters || {});
       } else if (message.type === 'network.write_settings.result') {
         addLog(`${kGroup}.write_settings.result received`);
+        if (message.requestId !== pendingWriteRequestId) {
+          addLog(`${kGroup}.write_settings.result ignored as stale`);
+          return;
+        }
+        baselineSettings = pendingWriteSettings;
+        pendingWriteRequestId = null;
+        pendingWriteSettings = null;
+        userOverride = true;
+        updateDirtyState(false);
         setWarning('Network configuration saved. Apply it separately when ready.');
         fileElement.textContent = message.parameters?.network_file || fileElement.textContent;
       } else if (message.type === 'network.apply.result') {
         addLog(`${kGroup}.apply.result received`);
         setWarning('Network configuration applied. The Web UI may disconnect if this interface carries its connection.');
+      } else if (message.type === 'network.reset_settings.result') {
+        addLog(`${kGroup}.reset_settings.result received`);
+        if (message.requestId !== pendingResetRequestId ||
+            message.parameters?.interface !== interfaceSelect.value) {
+          addLog(`${kGroup}.reset_settings.result ignored as stale`);
+          return;
+        }
+        pendingResetRequestId = null;
+        setSettings(message.parameters || {});
+        setWarning('Factory settings loaded. Press Apply to activate them.');
       } else if (message.type.endsWith('.error') && message.type.startsWith(`${kGroup}.`)) {
         const error = message.parameters?.error || 'network operation failed';
         if (message.type === 'network.read_interfaces.error') {
@@ -277,6 +387,16 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
           editable = false;
           settingsSection.hidden = true;
           setSettingsDisabled(true);
+        }
+        if (message.type === 'network.reset_settings.error') {
+          pendingResetRequestId = null;
+          updateActionButtons();
+        }
+        if (message.type === 'network.write_settings.error' &&
+            message.requestId === pendingWriteRequestId) {
+          pendingWriteRequestId = null;
+          pendingWriteSettings = null;
+          updateActionButtons();
         }
         addLog(`${message.type}: ${error}`);
         setWarning(error);

@@ -22,6 +22,7 @@
 #include <QList>
 #include <QStringList>
 
+#include <functional>
 #include <stdexcept>
 
 namespace {
@@ -31,6 +32,7 @@ constexpr char kParameterInterfaces[] = "interfaces";
 constexpr char kParameterInterface[] = "interface";
 constexpr char kParameterNetworkFile[] = "network_file";
 constexpr char kParameterEditable[] = "editable";
+constexpr char kParameterUserOverride[] = "user_override";
 constexpr char kParameterWarning[] = "warning";
 constexpr char kParameterName[] = "name";
 constexpr char kParameterIndex[] = "index";
@@ -108,6 +110,13 @@ CommandResult runCommand(const QString &program, const QStringList &arguments) {
         process.exitCode(),
         process.readAllStandardOutput(),
     };
+}
+
+using CommandRunner = std::function<CommandResult(const QString &, const QStringList &)>;
+
+bool applyNetworkConfiguration(const CommandRunner &run) {
+    const CommandResult reload = run(QStringLiteral("networkctl"), {QStringLiteral("reload")});
+    return reload.started && reload.exitCode == 0;
 }
 
 bool featureAvailable(const QString &feature) {
@@ -276,6 +285,50 @@ NetworkDocument readDocument(const QString &path) {
         return {};
     }
     return {QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'))};
+}
+
+bool factoryNetworkFileMatches(const QString &path, const QString &interfaceName) {
+    const NetworkDocument document = readDocument(path);
+    QString section;
+    QStringList names;
+    for (const QString &line : document.lines) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.startsWith(QLatin1Char('[')) && trimmed.endsWith(QLatin1Char(']'))) {
+            section = trimmed.mid(1, trimmed.size() - 2).trimmed();
+            continue;
+        }
+        if (section.compare(QStringLiteral("Match"), Qt::CaseInsensitive) != 0) {
+            continue;
+        }
+        QString value;
+        if (keyName(line, value).compare(QStringLiteral("Name"), Qt::CaseInsensitive) == 0) {
+            names.append(value);
+        }
+    }
+    if (names.isEmpty()) {
+        return true;
+    }
+    for (const QString &name : names) {
+        if (QDir::match(name, interfaceName)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+QString factoryNetworkFilePath(const QString &interfaceName) {
+    for (const QString &root : {QLatin1String(kNetworkFileLib), QLatin1String(kNetworkFileUsrLib)}) {
+        const QDir directory(root);
+        const QStringList files = directory.entryList(QStringList{QStringLiteral("*.network")}, QDir::Files,
+                                                       QDir::Name);
+        for (const QString &file : files) {
+            const QString path = directory.filePath(file);
+            if (factoryNetworkFileMatches(path, interfaceName)) {
+                return path;
+            }
+        }
+    }
+    return {};
 }
 
 QJsonObject parseDocument(const NetworkDocument &document, const QString &name, const QString &path) {
@@ -658,6 +711,7 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                                            : parseDocument(document, interfaceName, networkFile);
         parameters.insert(QLatin1String(kParameterEditable), true);
         parameters.insert(QLatin1String(kParameterWarning), QJsonArray{});
+        parameters.insert(QLatin1String(kParameterUserOverride), QFile::exists(userNetworkFilePath(interfaceName)));
         return {request.requestId, QLatin1String(kGroupNetwork), request.action,
                 parameters, true, true};
     }
@@ -716,13 +770,37 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                 {{QLatin1String(kParameterNetworkFile), targetPath}}, true, true};
     }
 
+    if (request.action == QLatin1String(kActionResetSettings)) {
+        const QString targetPath = userNetworkFilePath(interfaceName);
+        const QString factoryPath = factoryNetworkFilePath(interfaceName);
+        if (factoryPath.isEmpty()) {
+            return errorResponse(request, QLatin1String(kErrorNetworkFileNotFound));
+        }
+        if (!isAllowedReadPath(factoryPath)) {
+            return errorResponse(request, QLatin1String(kErrorUnsupportedNetworkFile));
+        }
+        const NetworkFileAnalysis analysis = analyzeNetworkFile(factoryPath);
+        if (!analysis.supported) {
+            return errorResponse(request, QLatin1String(kErrorUnsupportedConfiguration));
+        }
+        const NetworkDocument document = readDocument(factoryPath);
+        if (document.lines.isEmpty()) {
+            return errorResponse(request, QLatin1String(kErrorNetworkFileNotFound));
+        }
+        if (QFile::exists(targetPath) && !QFile::remove(targetPath)) {
+            return errorResponse(request, QLatin1String(kErrorWriteFailed));
+        }
+        QJsonObject parameters = parseDocument(document, interfaceName, factoryPath);
+        parameters.insert(QLatin1String(kParameterEditable), true);
+        parameters.insert(QLatin1String(kParameterWarning), QJsonArray{});
+        parameters.insert(QLatin1String(kParameterUserOverride), false);
+        parameters.insert(QStringLiteral("reset"), true);
+        return {request.requestId, QLatin1String(kGroupNetwork), request.action,
+                parameters, true, true};
+    }
+
     if (request.action == QLatin1String(kActionApply)) {
-        const CommandResult reload = runCommand(QStringLiteral("networkctl"), {QStringLiteral("reload")});
-        const CommandResult reconfigure = reload.started && reload.exitCode == 0
-                                               ? runCommand(QStringLiteral("networkctl"),
-                                                            {QStringLiteral("reconfigure"), interfaceName})
-                                               : CommandResult{};
-        if (!reload.started || reload.exitCode != 0 || !reconfigure.started || reconfigure.exitCode != 0) {
+        if (!applyNetworkConfiguration(runCommand)) {
             return errorResponse(request, QLatin1String(kErrorApplyFailed));
         }
         return {request.requestId, QLatin1String(kGroupNetwork), request.action, {}, true, true};
