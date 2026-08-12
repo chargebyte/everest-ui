@@ -33,6 +33,7 @@ constexpr char kParameterInterface[] = "interface";
 constexpr char kParameterNetworkFile[] = "network_file";
 constexpr char kParameterEditable[] = "editable";
 constexpr char kParameterUserOverride[] = "user_override";
+constexpr char kParameterResetStaged[] = "reset_staged";
 constexpr char kParameterWarning[] = "warning";
 constexpr char kParameterName[] = "name";
 constexpr char kParameterIndex[] = "index";
@@ -45,6 +46,7 @@ constexpr char kParameterLoopback[] = "loopback";
 constexpr char kParameterProbablyPlc[] = "probably_plc";
 constexpr char kParameterDhcpIpv4[] = "dhcp_ipv4";
 constexpr char kParameterDhcpIpv6[] = "dhcp_ipv6";
+constexpr char kParameterDhcpIpv4Static[] = "dhcp_ipv4_static";
 constexpr char kParameterIpv4Addresses[] = "ipv4_addresses";
 constexpr char kParameterGateway[] = "gateway";
 constexpr char kParameterDns[] = "dns";
@@ -61,6 +63,8 @@ constexpr char kErrorApplyFailed[] = "network_config_apply_failed";
 constexpr char kNetworkFileEtc[] = "/etc/systemd/network/";
 constexpr char kNetworkFileLib[] = "/lib/systemd/network/";
 constexpr char kNetworkFileUsrLib[] = "/usr/lib/systemd/network/";
+constexpr char kNetworkFileUsrLocalLib[] = "/usr/local/lib/systemd/network/";
+constexpr char kNetworkFileRun[] = "/run/systemd/network/";
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
 constexpr auto kSkipEmptyParts = Qt::SkipEmptyParts;
@@ -95,6 +99,72 @@ struct NetworkFileAnalysis {
     bool supported = true;
     QString warning;
 };
+
+QString keyName(const QString &line, QString &value);
+NetworkDocument readDocument(const QString &path);
+bool isIpv4Cidr(const QString &value);
+
+struct StructuredAddressInfo {
+    int sectionCount = 0;
+    int addressCount = 0;
+    int networkAddressCount = 0;
+    int fallbackSectionCount = 0;
+    bool currentSectionFallback = false;
+    bool invalid = false;
+};
+
+StructuredAddressInfo inspectStructuredAddresses(const NetworkDocument &document) {
+    StructuredAddressInfo info;
+    QString section;
+    bool addressEntryInSection = false;
+    auto finishSection = [&]() {
+        if (section.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0 &&
+            !addressEntryInSection) {
+            info.invalid = true;
+        }
+        if (section.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0 &&
+            info.currentSectionFallback) {
+            ++info.fallbackSectionCount;
+        }
+    };
+
+    for (const QString &line : document.lines) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.startsWith(QLatin1Char('[')) && trimmed.endsWith(QLatin1Char(']'))) {
+            finishSection();
+            section = trimmed.mid(1, trimmed.size() - 2).trimmed();
+            addressEntryInSection = false;
+            info.currentSectionFallback = false;
+            if (section.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0) {
+                ++info.sectionCount;
+            }
+            continue;
+        }
+
+        QString value;
+        const QString key = keyName(line, value);
+        if (key.compare(QStringLiteral("Label"), Qt::CaseInsensitive) == 0 &&
+            section.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0 &&
+            value.endsWith(QStringLiteral(":fallback"), Qt::CaseInsensitive)) {
+            info.currentSectionFallback = true;
+        }
+        if (key.compare(QStringLiteral("Address"), Qt::CaseInsensitive) != 0) {
+            continue;
+        }
+        if (section.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0) {
+            addressEntryInSection = true;
+            ++info.addressCount;
+            if (!isIpv4Cidr(value)) {
+                info.invalid = true;
+            }
+        } else if (section.compare(QStringLiteral("Network"), Qt::CaseInsensitive) == 0 &&
+                   isIpv4Cidr(value)) {
+            ++info.networkAddressCount;
+        }
+    }
+    finishSection();
+    return info;
+}
 
 CommandResult runCommand(const QString &program, const QStringList &arguments) {
     QProcess process;
@@ -214,16 +284,23 @@ bool isAllowedReadPath(const QString &path) {
     }
     return cleanPath.startsWith(QLatin1String(kNetworkFileEtc)) ||
            cleanPath.startsWith(QLatin1String(kNetworkFileLib)) ||
-           cleanPath.startsWith(QLatin1String(kNetworkFileUsrLib));
+           cleanPath.startsWith(QLatin1String(kNetworkFileUsrLib)) ||
+           cleanPath.startsWith(QLatin1String(kNetworkFileUsrLocalLib)) ||
+           cleanPath.startsWith(QLatin1String(kNetworkFileRun));
 }
 
 QString userNetworkFilePath(const QString &name) {
     return QString::fromLatin1(kNetworkFileEtc) + name + QStringLiteral(".network");
 }
 
+bool removeUserNetworkOverride(const QString &path) {
+    return !QFile::exists(path) || QFile::remove(path);
+}
+
 QStringList networkFileRoots() {
     return {QLatin1String(kNetworkFileEtc), QLatin1String(kNetworkFileLib),
-            QLatin1String(kNetworkFileUsrLib)};
+            QLatin1String(kNetworkFileUsrLib), QLatin1String(kNetworkFileUsrLocalLib),
+            QLatin1String(kNetworkFileRun)};
 }
 
 NetworkFileAnalysis analyzeNetworkFile(const QString &path) {
@@ -232,6 +309,30 @@ NetworkFileAnalysis analyzeNetworkFile(const QString &path) {
     }
 
     const QFileInfo fileInfo(path);
+    const NetworkDocument document = readDocument(path);
+    const StructuredAddressInfo addressInfo = inspectStructuredAddresses(document);
+    if (addressInfo.sectionCount > 0 &&
+        (addressInfo.invalid || addressInfo.sectionCount != 1 || addressInfo.addressCount != 1 ||
+         addressInfo.fallbackSectionCount > 1 ||
+         (addressInfo.networkAddressCount > 0 && addressInfo.fallbackSectionCount == 0))) {
+        return {false, QStringLiteral("This network file contains multiple or ambiguous structured Address settings that the Web UI cannot safely edit.")};
+    }
+    QString section;
+    for (const QString &line : document.lines) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.startsWith(QLatin1Char('[')) && trimmed.endsWith(QLatin1Char(']'))) {
+            section = trimmed.mid(1, trimmed.size() - 2).trimmed();
+            continue;
+        }
+        if (section.compare(QStringLiteral("Route"), Qt::CaseInsensitive) == 0) {
+            QString value;
+            const QString key = keyName(line, value);
+            const bool allowed = key.compare(QStringLiteral("Gateway"), Qt::CaseInsensitive) == 0;
+            if (!key.isEmpty() && !allowed) {
+                return {false, QStringLiteral("This network file contains structured Address or Route settings that the Web UI cannot safely edit.")};
+            }
+        }
+    }
     const QString dropInName = fileInfo.fileName() + QStringLiteral(".d");
     for (const QString &root : networkFileRoots()) {
         const QDir dropInDirectory(root + dropInName);
@@ -287,55 +388,14 @@ NetworkDocument readDocument(const QString &path) {
     return {QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'))};
 }
 
-bool factoryNetworkFileMatches(const QString &path, const QString &interfaceName) {
-    const NetworkDocument document = readDocument(path);
-    QString section;
-    QStringList names;
-    for (const QString &line : document.lines) {
-        const QString trimmed = line.trimmed();
-        if (trimmed.startsWith(QLatin1Char('[')) && trimmed.endsWith(QLatin1Char(']'))) {
-            section = trimmed.mid(1, trimmed.size() - 2).trimmed();
-            continue;
-        }
-        if (section.compare(QStringLiteral("Match"), Qt::CaseInsensitive) != 0) {
-            continue;
-        }
-        QString value;
-        if (keyName(line, value).compare(QStringLiteral("Name"), Qt::CaseInsensitive) == 0) {
-            names.append(value);
-        }
-    }
-    if (names.isEmpty()) {
-        return true;
-    }
-    for (const QString &name : names) {
-        if (QDir::match(name, interfaceName)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-QString factoryNetworkFilePath(const QString &interfaceName) {
-    for (const QString &root : {QLatin1String(kNetworkFileLib), QLatin1String(kNetworkFileUsrLib)}) {
-        const QDir directory(root);
-        const QStringList files = directory.entryList(QStringList{QStringLiteral("*.network")}, QDir::Files,
-                                                       QDir::Name);
-        for (const QString &file : files) {
-            const QString path = directory.filePath(file);
-            if (factoryNetworkFileMatches(path, interfaceName)) {
-                return path;
-            }
-        }
-    }
-    return {};
-}
-
 QJsonObject parseDocument(const NetworkDocument &document, const QString &name, const QString &path) {
     QString section;
     QString dhcp;
     QString gateway;
-    QStringList addresses;
+    QString primaryAddress;
+    QString fallbackAddress;
+    bool structuredFallback = false;
+    QString structuredLabel;
     QStringList dns;
 
     for (const QString &line : document.lines) {
@@ -354,7 +414,19 @@ QJsonObject parseDocument(const NetworkDocument &document, const QString &name, 
                     section.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0) &&
                    key.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0 &&
                    isIpv4Cidr(value)) {
-            addresses.append(value);
+            if (section.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0) {
+                if (structuredLabel.endsWith(QStringLiteral(":fallback"), Qt::CaseInsensitive)) {
+                    fallbackAddress = value;
+                    structuredFallback = true;
+                } else {
+                    primaryAddress = value;
+                }
+            } else {
+                primaryAddress = value;
+            }
+        } else if (section.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0 &&
+                   key.compare(QStringLiteral("Label"), Qt::CaseInsensitive) == 0) {
+            structuredLabel = value;
         } else if ((section.compare(QStringLiteral("Network"), Qt::CaseInsensitive) == 0 ||
                     section.compare(QStringLiteral("Route"), Qt::CaseInsensitive) == 0) &&
                    key.compare(QStringLiteral("Gateway"), Qt::CaseInsensitive) == 0 &&
@@ -368,8 +440,11 @@ QJsonObject parseDocument(const NetworkDocument &document, const QString &name, 
     }
 
     QJsonArray addressArray;
-    for (const QString &address : addresses) {
-        addressArray.append(address);
+    if (!primaryAddress.isEmpty() || structuredFallback) {
+        addressArray.append(primaryAddress);
+    }
+    if (!fallbackAddress.isEmpty()) {
+        addressArray.append(fallbackAddress);
     }
     QJsonArray dnsArray;
     for (const QString &server : dns) {
@@ -383,22 +458,33 @@ QJsonObject parseDocument(const NetworkDocument &document, const QString &name, 
     const bool dhcpIpv6 = normalizedDhcp == QStringLiteral("yes") ||
                           normalizedDhcp == QStringLiteral("true") ||
                           normalizedDhcp == QStringLiteral("ipv6");
+    const bool dhcpIpv4Static = dhcpIpv4 && (!primaryAddress.isEmpty() || !fallbackAddress.isEmpty() || !gateway.isEmpty());
 
     return {
         {QLatin1String(kParameterInterface), name},
         {QLatin1String(kParameterNetworkFile), path},
         {QLatin1String(kParameterDhcpIpv4), dhcpIpv4},
         {QLatin1String(kParameterDhcpIpv6), dhcpIpv6},
+        {QLatin1String(kParameterDhcpIpv4Static), dhcpIpv4Static},
         {QLatin1String(kParameterIpv4Addresses), addressArray},
         {QLatin1String(kParameterGateway), gateway},
         {QLatin1String(kParameterDns), dnsArray},
     };
 }
 
-void replaceOwnedKeys(NetworkDocument &document, const QJsonObject &settings) {
+bool replaceOwnedKeys(NetworkDocument &document, const QJsonObject &settings) {
+    const StructuredAddressInfo addressInfo = inspectStructuredAddresses(document);
+    const bool structuredAddress = addressInfo.sectionCount == 1 && addressInfo.addressCount == 1;
+    const bool structuredFallback = structuredAddress && addressInfo.fallbackSectionCount == 1;
+    const QJsonArray addresses = settings.value(QLatin1String(kParameterIpv4Addresses)).toArray();
+    if (structuredAddress && !structuredFallback && addresses.size() > 1) {
+        return false;
+    }
+
     QStringList replacement;
     const bool dhcpIpv4 = settings.value(QLatin1String(kParameterDhcpIpv4)).toBool();
     const bool dhcpIpv6 = settings.value(QLatin1String(kParameterDhcpIpv6)).toBool();
+    const bool dhcpIpv4Static = settings.value(QLatin1String(kParameterDhcpIpv4Static)).toBool();
     QString dhcpValue = QStringLiteral("no");
     if (dhcpIpv4 && dhcpIpv6) {
         dhcpValue = QStringLiteral("yes");
@@ -409,10 +495,15 @@ void replaceOwnedKeys(NetworkDocument &document, const QJsonObject &settings) {
     }
     replacement.append(QStringLiteral("DHCP=") + dhcpValue);
 
-    if (!dhcpIpv4) {
-        for (const QJsonValue &value : settings.value(QLatin1String(kParameterIpv4Addresses)).toArray()) {
-            replacement.append(QStringLiteral("Address=") + value.toString());
-        }
+    const bool keepStaticIpv4 = !dhcpIpv4 || dhcpIpv4Static;
+    const QString primaryAddress = addresses.size() > 0 ? addresses.at(0).toString() : QString();
+    const QString fallbackAddress = structuredFallback && addresses.size() > 1
+                                        ? addresses.at(1).toString()
+                                        : QString();
+    if ((!structuredAddress || structuredFallback) && keepStaticIpv4 && !primaryAddress.isEmpty()) {
+        replacement.append(QStringLiteral("Address=") + primaryAddress);
+    }
+    if (keepStaticIpv4) {
         const QString gateway = settings.value(QLatin1String(kParameterGateway)).toString();
         if (!gateway.isEmpty()) {
             replacement.append(QStringLiteral("Gateway=") + gateway);
@@ -425,6 +516,8 @@ void replaceOwnedKeys(NetworkDocument &document, const QJsonObject &settings) {
     QStringList output;
     QString section;
     bool inserted = false;
+    bool networkSectionFound = false;
+    bool skipStructuredAddress = false;
     for (const QString &line : document.lines) {
         const QString trimmed = line.trimmed();
         if (trimmed.startsWith(QLatin1Char('[')) && trimmed.endsWith(QLatin1Char(']'))) {
@@ -441,7 +534,20 @@ void replaceOwnedKeys(NetworkDocument &document, const QJsonObject &settings) {
                 inserted = true;
             }
             section = trimmed.mid(1, trimmed.size() - 2).trimmed();
+            if (section.compare(QStringLiteral("Network"), Qt::CaseInsensitive) == 0) {
+                networkSectionFound = true;
+            }
+            skipStructuredAddress = structuredAddress &&
+                                     section.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0 &&
+                                     (!keepStaticIpv4 || (structuredFallback && fallbackAddress.isEmpty()));
+            if (skipStructuredAddress) {
+                continue;
+            }
             output.append(line);
+            continue;
+        }
+
+        if (skipStructuredAddress) {
             continue;
         }
 
@@ -450,6 +556,9 @@ void replaceOwnedKeys(NetworkDocument &document, const QJsonObject &settings) {
             section.compare(QStringLiteral("Route"), Qt::CaseInsensitive) == 0) {
             QString value;
             const QString key = keyName(line, value);
+            const bool isStructuredAddressKey =
+                structuredAddress && section.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0 &&
+                key.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0;
             const bool isIpv4OwnedKey =
                 ((section.compare(QStringLiteral("Network"), Qt::CaseInsensitive) == 0 ||
                   section.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0) &&
@@ -462,6 +571,14 @@ void replaceOwnedKeys(NetworkDocument &document, const QJsonObject &settings) {
                 (section.compare(QStringLiteral("Network"), Qt::CaseInsensitive) == 0 &&
                  key.compare(QStringLiteral("DNS"), Qt::CaseInsensitive) == 0 &&
                  isIpv4Address(value));
+            if (isStructuredAddressKey) {
+                if (keepStaticIpv4 && !fallbackAddress.isEmpty()) {
+                    output.append(QStringLiteral("Address=") + fallbackAddress);
+                } else if (keepStaticIpv4 && !structuredFallback && !primaryAddress.isEmpty()) {
+                    output.append(QStringLiteral("Address=") + primaryAddress);
+                }
+                continue;
+            }
             if ((section.compare(QStringLiteral("Network"), Qt::CaseInsensitive) == 0 &&
                  key.compare(QStringLiteral("DHCP"), Qt::CaseInsensitive) == 0) || isIpv4OwnedKey) {
                 continue;
@@ -470,7 +587,7 @@ void replaceOwnedKeys(NetworkDocument &document, const QJsonObject &settings) {
         output.append(line);
     }
 
-    if (section.compare(QStringLiteral("Network"), Qt::CaseInsensitive) != 0) {
+    if (!networkSectionFound) {
         if (!output.isEmpty() && !output.constLast().isEmpty()) {
             output.append(QString());
             output.append(QStringLiteral("[Network]"));
@@ -488,6 +605,7 @@ void replaceOwnedKeys(NetworkDocument &document, const QJsonObject &settings) {
         output.removeLast();
     }
     document.lines = output;
+    return true;
 }
 
 void restrictMatchToInterface(NetworkDocument &document, const QString &interfaceName) {
@@ -499,6 +617,9 @@ void restrictMatchToInterface(NetworkDocument &document, const QString &interfac
     for (const QString &line : document.lines) {
         const QString trimmed = line.trimmed();
         if (trimmed.startsWith(QLatin1Char('[')) && trimmed.endsWith(QLatin1Char(']'))) {
+            if (skippingMatch && !output.isEmpty() && !output.constLast().isEmpty()) {
+                output.append(QString());
+            }
             section = trimmed.mid(1, trimmed.size() - 2).trimmed();
             if (section.compare(QStringLiteral("Match"), Qt::CaseInsensitive) == 0) {
                 output.append(QStringLiteral("[Match]"));
@@ -527,9 +648,9 @@ bool validateSettings(const QJsonObject &settings, QString &error) {
         error = QStringLiteral("dhcp_ipv4 must be boolean");
         return false;
     }
-    if (settings.contains(QLatin1String(kParameterDhcpIpv6)) &&
-        !settings.value(QLatin1String(kParameterDhcpIpv6)).isBool()) {
-        error = QStringLiteral("dhcp_ipv6 must be boolean");
+    if (!settings.value(QLatin1String(kParameterDhcpIpv6)).isBool() ||
+        !settings.value(QLatin1String(kParameterDhcpIpv4Static)).isBool()) {
+        error = QStringLiteral("dhcp_ipv6 and dhcp_ipv4_static must be boolean");
         return false;
     }
 
@@ -538,8 +659,15 @@ bool validateSettings(const QJsonObject &settings, QString &error) {
         error = QStringLiteral("at most two IPv4 addresses are supported");
         return false;
     }
-    for (const QJsonValue &address : addresses) {
-        if (!address.isString() || !isIpv4Cidr(address.toString())) {
+    for (int index = 0; index < addresses.size(); ++index) {
+        const QJsonValue address = addresses.at(index);
+        const bool emptyAddress = address.isString() && address.toString().isEmpty();
+        const bool emptyPrimary = index == 0 && addresses.size() == 2 && emptyAddress &&
+                                  addresses.at(1).isString() && !addresses.at(1).toString().isEmpty();
+        const bool emptyFallback = index == 1 && addresses.size() == 2 && emptyAddress &&
+                                   addresses.at(0).isString() && !addresses.at(0).toString().isEmpty();
+        if ((!emptyPrimary && !emptyFallback) &&
+            (!address.isString() || !isIpv4Cidr(address.toString()))) {
             error = QStringLiteral("invalid IPv4 address");
             return false;
         }
@@ -558,6 +686,10 @@ bool validateSettings(const QJsonObject &settings, QString &error) {
     }
     if (!settings.value(QLatin1String(kParameterDhcpIpv4)).toBool() && addresses.isEmpty()) {
         error = QStringLiteral("a static IPv4 address is required when DHCP is disabled");
+        return false;
+    }
+    if (settings.value(QLatin1String(kParameterDhcpIpv4Static)).toBool() && addresses.isEmpty()) {
+        error = QStringLiteral("a static IPv4 address is required when mixed DHCP mode is enabled");
         return false;
     }
     return true;
@@ -705,6 +837,7 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                                                  {QLatin1String(kParameterNetworkFile), QString()},
                                                  {QLatin1String(kParameterDhcpIpv4), false},
                                                  {QLatin1String(kParameterDhcpIpv6), false},
+                                                 {QLatin1String(kParameterDhcpIpv4Static), false},
                                                  {QLatin1String(kParameterIpv4Addresses), QJsonArray{}},
                                                  {QLatin1String(kParameterGateway), QString()},
                                                  {QLatin1String(kParameterDns), QJsonArray{}}}
@@ -755,7 +888,9 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
             document.lines.append(QStringLiteral("[Network]"));
         }
         restrictMatchToInterface(document, interfaceName);
-        replaceOwnedKeys(document, request.parameters);
+        if (!replaceOwnedKeys(document, request.parameters)) {
+            return errorResponse(request, QLatin1String(kErrorUnsupportedConfiguration));
+        }
 
         QSaveFile file(targetPath);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
@@ -772,31 +907,14 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
 
     if (request.action == QLatin1String(kActionResetSettings)) {
         const QString targetPath = userNetworkFilePath(interfaceName);
-        const QString factoryPath = factoryNetworkFilePath(interfaceName);
-        if (factoryPath.isEmpty()) {
-            return errorResponse(request, QLatin1String(kErrorNetworkFileNotFound));
-        }
-        if (!isAllowedReadPath(factoryPath)) {
-            return errorResponse(request, QLatin1String(kErrorUnsupportedNetworkFile));
-        }
-        const NetworkFileAnalysis analysis = analyzeNetworkFile(factoryPath);
-        if (!analysis.supported) {
-            return errorResponse(request, QLatin1String(kErrorUnsupportedConfiguration));
-        }
-        const NetworkDocument document = readDocument(factoryPath);
-        if (document.lines.isEmpty()) {
-            return errorResponse(request, QLatin1String(kErrorNetworkFileNotFound));
-        }
-        if (QFile::exists(targetPath) && !QFile::remove(targetPath)) {
+        if (!removeUserNetworkOverride(targetPath)) {
             return errorResponse(request, QLatin1String(kErrorWriteFailed));
         }
-        QJsonObject parameters = parseDocument(document, interfaceName, factoryPath);
-        parameters.insert(QLatin1String(kParameterEditable), true);
-        parameters.insert(QLatin1String(kParameterWarning), QJsonArray{});
-        parameters.insert(QLatin1String(kParameterUserOverride), false);
-        parameters.insert(QStringLiteral("reset"), true);
         return {request.requestId, QLatin1String(kGroupNetwork), request.action,
-                parameters, true, true};
+                {{QLatin1String(kParameterInterface), interfaceName},
+                 {QLatin1String(kParameterUserOverride), false},
+                 {QLatin1String(kParameterResetStaged), true}},
+                true, true};
     }
 
     if (request.action == QLatin1String(kActionApply)) {

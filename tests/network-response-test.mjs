@@ -33,6 +33,7 @@ test('normalizes network settings for dirty-state comparison', () => {
   const baseline = {
     dhcp_ipv4: false,
     dhcp_ipv6: true,
+    dhcp_ipv4_static: false,
     ipv4_addresses: [' 192.168.1.20/24 '],
     gateway: ' 192.168.1.1 ',
     dns: ['192.168.1.1']
@@ -42,7 +43,39 @@ test('normalizes network settings for dirty-state comparison', () => {
   assert.deepEqual(normalizeNetworkSettings({ dhcp_ipv4: true, gateway: '192.168.1.1' }), {
     dhcp_ipv4: true,
     dhcp_ipv6: false,
+    dhcp_ipv4_static: false,
     ipv4_addresses: [],
+    gateway: '',
+    dns: []
+  });
+});
+
+test('preserves static IPv4 fields for explicit mixed DHCP mode', () => {
+  assert.deepEqual(normalizeNetworkSettings({
+    dhcp_ipv4: true,
+    dhcp_ipv4_static: true,
+    ipv4_addresses: ['192.168.1.20/24'],
+    gateway: '192.168.1.1'
+  }), {
+    dhcp_ipv4: true,
+    dhcp_ipv6: false,
+    dhcp_ipv4_static: true,
+    ipv4_addresses: ['192.168.1.20/24'],
+    gateway: '192.168.1.1',
+    dns: []
+  });
+});
+
+test('keeps an empty primary slot before a fallback address', () => {
+  assert.deepEqual(normalizeNetworkSettings({
+    dhcp_ipv4: true,
+    dhcp_ipv4_static: true,
+    ipv4_addresses: ['', '169.254.12.53/16']
+  }), {
+    dhcp_ipv4: true,
+    dhcp_ipv6: false,
+    dhcp_ipv4_static: true,
+    ipv4_addresses: ['', '169.254.12.53/16'],
     gateway: '',
     dns: []
   });
@@ -54,5 +87,6 @@ test('disables Apply for unsaved edits but keeps Save and Reset available', () =
     resetDisabled: false,
     applyDisabled: true
   });
+  assert.equal(networkActionState({ loaded: true, editable: true, dirty: true, userOverride: false, resetStaged: true }).applyDisabled, false);
   assert.equal(networkActionState({ loaded: true, editable: true, dirty: false, userOverride: true }).applyDisabled, false);
 });

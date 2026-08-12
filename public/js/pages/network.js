@@ -22,15 +22,21 @@ export function formatInterfaceWarnings(info) {
 
 export function normalizeNetworkSettings(settings) {
   const dhcpIpv4 = settings?.dhcp_ipv4 === true;
+  const dhcpIpv4Static = settings?.dhcp_ipv4_static === true;
+  const addresses = Array.isArray(settings?.ipv4_addresses)
+    ? settings.ipv4_addresses.map((value) => String(value).trim())
+    : [];
+  while (addresses.length > 0 && !addresses[addresses.length - 1]) {
+    addresses.pop();
+  }
   return {
     dhcp_ipv4: dhcpIpv4,
     dhcp_ipv6: settings?.dhcp_ipv6 === true,
-    ipv4_addresses: dhcpIpv4
+    dhcp_ipv4_static: dhcpIpv4Static,
+    ipv4_addresses: dhcpIpv4 && !dhcpIpv4Static
       ? []
-      : (Array.isArray(settings?.ipv4_addresses)
-        ? settings.ipv4_addresses.map((value) => String(value).trim()).filter(Boolean)
-        : []),
-    gateway: dhcpIpv4 ? '' : String(settings?.gateway || '').trim(),
+      : addresses,
+    gateway: dhcpIpv4 && !dhcpIpv4Static ? '' : String(settings?.gateway || '').trim(),
     dns: Array.isArray(settings?.dns)
       ? settings.dns.map((value) => String(value).trim()).filter(Boolean)
       : []
@@ -41,11 +47,11 @@ export function networkSettingsEqual(left, right) {
   return JSON.stringify(normalizeNetworkSettings(left)) === JSON.stringify(normalizeNetworkSettings(right));
 }
 
-export function networkActionState({ loaded, editable, dirty, userOverride }) {
+export function networkActionState({ loaded, editable, dirty, userOverride, resetStaged = false }) {
   return {
     saveDisabled: !loaded || !editable,
     resetDisabled: !loaded || !editable || userOverride !== true,
-    applyDisabled: !loaded || !editable || dirty
+    applyDisabled: !loaded || !editable || (dirty && !resetStaged)
   };
 }
 
@@ -78,8 +84,10 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
       <div class="form-grid network-settings-grid">
         <label class="label" for="network-dhcp">Use DHCP for IPv4</label>
         <input id="network-dhcp" type="checkbox" />
+        <label class="label" for="network-static-ip">Also use static IPv4 settings</label>
+        <input id="network-static-ip" type="checkbox" />
         <label class="label" for="network-address">IPv4 address</label>
-        <input class="input" id="network-address" type="text" placeholder="192.168.0.10/24" />
+        <input class="input" id="network-address" type="text" placeholder="Enter address/prefix, e.g. 192.168.0.10/24" />
         <label class="label" for="network-fallback-address">Fallback IPv4 address</label>
         <input class="input" id="network-fallback-address" type="text" placeholder="Optional" />
         <label class="label" for="network-gateway">IPv4 gateway</label>
@@ -104,6 +112,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   const settingsSection = page.querySelector('#network-settings-section');
   const warningElement = page.querySelector('#network-settings-warning');
   const dhcpElement = page.querySelector('#network-dhcp');
+  const staticIpv4Element = page.querySelector('#network-static-ip');
   const addressElement = page.querySelector('#network-address');
   const fallbackElement = page.querySelector('#network-fallback-address');
   const gatewayElement = page.querySelector('#network-gateway');
@@ -119,10 +128,12 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   let pendingResetRequestId = null;
   let pendingWriteRequestId = null;
   let pendingWriteSettings = null;
+  let pendingWriteInterface = '';
   let baselineSettings = null;
   let userOverride = false;
   let dirty = false;
   let dhcpIpv6 = false;
+  let resetStaged = false;
 
   function formatSendStatus(result) {
     if (result.ok) {
@@ -139,7 +150,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   }
 
   function setSettingsDisabled(disabled) {
-    [dhcpElement, addressElement, fallbackElement, gatewayElement, dnsElement]
+    [dhcpElement, staticIpv4Element, addressElement, fallbackElement, gatewayElement, dnsElement]
       .forEach((element) => { element.disabled = disabled; });
     updateActionButtons();
   }
@@ -149,7 +160,8 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
       loaded: settingsLoaded,
       editable,
       dirty,
-      userOverride
+      userOverride,
+      resetStaged
     });
     saveButton.disabled = buttons.saveDisabled;
     resetButton.disabled = buttons.resetDisabled || pendingResetRequestId !== null;
@@ -165,8 +177,8 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   }
 
   function updateStaticFields() {
-    const disabled = dhcpElement.checked || !editable;
-    if (dhcpElement.checked) {
+    const disabled = (dhcpElement.checked && !staticIpv4Element.checked) || !editable;
+    if (disabled) {
       addressElement.value = '';
       fallbackElement.value = '';
       gatewayElement.value = '';
@@ -190,6 +202,13 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     baselineSettings = null;
     userOverride = false;
     dirty = false;
+    pendingSettingsInterface = '';
+    pendingSettingsRequestId = null;
+    pendingResetRequestId = null;
+    pendingWriteRequestId = null;
+    pendingWriteSettings = null;
+    pendingWriteInterface = '';
+    resetStaged = false;
     settingsSection.hidden = true;
     setSettingsDisabled(true);
     setWarning(info && !editable ? 'This interface cannot be edited safely by the Web UI.' : '');
@@ -234,12 +253,18 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   function setSettings(parameters) {
     pendingSettingsInterface = '';
     pendingSettingsRequestId = null;
+    pendingWriteRequestId = null;
+    pendingWriteSettings = null;
+    pendingWriteInterface = '';
+    pendingResetRequestId = null;
+    resetStaged = false;
     selectedInfo = state.network.interfaces.find((info) => info.name === interfaceSelect.value) || selectedInfo;
     if (parameters.editable === false) {
       editable = false;
     }
     fileElement.textContent = parameters.network_file || 'No effective Network File reported';
     dhcpElement.checked = parameters.dhcp_ipv4 === true;
+    staticIpv4Element.checked = parameters.dhcp_ipv4_static === true;
     dhcpIpv6 = parameters.dhcp_ipv6 === true;
     const addresses = Array.isArray(parameters.ipv4_addresses) ? parameters.ipv4_addresses : [];
     addressElement.value = addresses[0] || '';
@@ -251,20 +276,26 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     updateStaticFields();
     baselineSettings = normalizeNetworkSettings(collectSettings());
     userOverride = parameters.user_override === true;
+    resetStaged = false;
     dirty = false;
     setSettingsDisabled(!editable);
     updateActionButtons();
   }
 
   function collectSettings() {
-    const addresses = [addressElement.value.trim(), fallbackElement.value.trim()].filter(Boolean);
+    const primaryAddress = addressElement.value.trim();
+    const fallbackAddress = fallbackElement.value.trim();
+    const addresses = primaryAddress || fallbackAddress
+      ? [primaryAddress, fallbackAddress]
+      : [];
     const dns = dnsElement.value.split(',').map((value) => value.trim()).filter(Boolean);
     return {
       interface: interfaceSelect.value,
       dhcp_ipv4: dhcpElement.checked,
       dhcp_ipv6: dhcpIpv6,
-      ipv4_addresses: dhcpElement.checked ? [] : addresses,
-      gateway: dhcpElement.checked ? '' : gatewayElement.value.trim(),
+      dhcp_ipv4_static: staticIpv4Element.checked,
+      ipv4_addresses: dhcpElement.checked && !staticIpv4Element.checked ? [] : addresses,
+      gateway: dhcpElement.checked && !staticIpv4Element.checked ? '' : gatewayElement.value.trim(),
       dns
     };
   }
@@ -306,6 +337,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     if (result.ok) {
       pendingWriteRequestId = result.payload.requestId;
       pendingWriteSettings = normalizeNetworkSettings(settings);
+      pendingWriteInterface = interfaceSelect.value;
     }
   });
   applyButton.addEventListener('click', () => {
@@ -319,13 +351,13 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     const result = sendAction('reset_settings', { interface: interfaceSelect.value });
     if (result.ok) {
       pendingResetRequestId = result.payload.requestId;
-      setWarning('Resetting to factory defaults. Waiting for the factory settings.');
+      setWarning('Factory reset staged. Press Apply to activate the factory configuration.');
     }
   });
 
-  [dhcpElement, addressElement, fallbackElement, gatewayElement, dnsElement]
+  [dhcpElement, staticIpv4Element, addressElement, fallbackElement, gatewayElement, dnsElement]
     .forEach((element) => element.addEventListener('input', handleFormChange));
-  dhcpElement.addEventListener('change', handleFormChange);
+  [dhcpElement, staticIpv4Element].forEach((element) => element.addEventListener('change', handleFormChange));
 
   return {
     onMessage(message) {
@@ -346,30 +378,41 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
         setSettings(message.parameters || {});
       } else if (message.type === 'network.write_settings.result') {
         addLog(`${kGroup}.write_settings.result received`);
-        if (message.requestId !== pendingWriteRequestId) {
+        if (message.requestId !== pendingWriteRequestId ||
+            pendingWriteInterface !== interfaceSelect.value) {
           addLog(`${kGroup}.write_settings.result ignored as stale`);
           return;
         }
         baselineSettings = pendingWriteSettings;
         pendingWriteRequestId = null;
         pendingWriteSettings = null;
+        pendingWriteInterface = '';
         userOverride = true;
+        resetStaged = false;
         updateDirtyState(false);
         setWarning('Network configuration saved. Apply it separately when ready.');
         fileElement.textContent = message.parameters?.network_file || fileElement.textContent;
       } else if (message.type === 'network.apply.result') {
         addLog(`${kGroup}.apply.result received`);
         setWarning('Network configuration applied. The Web UI may disconnect if this interface carries its connection.');
+        resetStaged = false;
+        requestSettings(interfaceSelect.value);
       } else if (message.type === 'network.reset_settings.result') {
         addLog(`${kGroup}.reset_settings.result received`);
         if (message.requestId !== pendingResetRequestId ||
             message.parameters?.interface !== interfaceSelect.value) {
+          if (message.requestId === pendingResetRequestId) {
+            pendingResetRequestId = null;
+            updateActionButtons();
+          }
           addLog(`${kGroup}.reset_settings.result ignored as stale`);
           return;
         }
         pendingResetRequestId = null;
-        setSettings(message.parameters || {});
-        setWarning('Factory settings loaded. Press Apply to activate them.');
+        resetStaged = message.parameters?.reset_staged === true;
+        userOverride = false;
+        updateActionButtons();
+        setWarning('Factory reset staged. Press Apply to activate the factory configuration.');
       } else if (message.type.endsWith('.error') && message.type.startsWith(`${kGroup}.`)) {
         const error = message.parameters?.error || 'network operation failed';
         if (message.type === 'network.read_interfaces.error') {
@@ -389,13 +432,17 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
           setSettingsDisabled(true);
         }
         if (message.type === 'network.reset_settings.error') {
-          pendingResetRequestId = null;
-          updateActionButtons();
+          if (message.requestId === pendingResetRequestId) {
+            pendingResetRequestId = null;
+            updateActionButtons();
+          }
         }
         if (message.type === 'network.write_settings.error' &&
-            message.requestId === pendingWriteRequestId) {
+            message.requestId === pendingWriteRequestId &&
+            pendingWriteInterface === interfaceSelect.value) {
           pendingWriteRequestId = null;
           pendingWriteSettings = null;
+          pendingWriteInterface = '';
           updateActionButtons();
         }
         addLog(`${message.type}: ${error}`);
