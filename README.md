@@ -120,8 +120,10 @@ files to all affected interfaces. The page exposes IPv4 DHCP and IPv6 DHCP indep
 Changing the interface used to access the Web UI can disconnect the browser and may require reconnecting with
 the new address.
 
-When a Web UI override exists, Reset to factory defaults removes `/etc/systemd/network/<interface>.network`
-and stages the distribution configuration again. It does not apply the change; press Apply separately.
+Reset to factory defaults stages removal of `/etc/systemd/network/<interface>.network`; the file is removed only
+when Apply succeeds. Apply uses a same-filesystem backup and restores all staged files if networkd reload fails.
+Cancel reset abandons the staged removal. Reset state is retained by the backend across page navigation and reloads,
+and it does not apply the change until Apply is pressed.
 
 The page edits simple `[Network]` IPv4 settings and a narrow structured `[Address]` form with exactly one IPv4
 address. Structured address metadata such as `Label=` and `DuplicateAddressDetection=` is preserved. Files with

@@ -21,9 +21,12 @@
 #include <QTextStream>
 #include <QList>
 #include <QStringList>
+#include <QSet>
 
 #include <functional>
+#include <algorithm>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 constexpr char kConfigAvailableFeatures[] = "available_features";
@@ -65,6 +68,8 @@ constexpr char kNetworkFileLib[] = "/lib/systemd/network/";
 constexpr char kNetworkFileUsrLib[] = "/usr/lib/systemd/network/";
 constexpr char kNetworkFileUsrLocalLib[] = "/usr/local/lib/systemd/network/";
 constexpr char kNetworkFileRun[] = "/run/systemd/network/";
+constexpr char kResetBackupSuffix[] = ".everest-ui-reset-backup";
+constexpr char kResetCommittedSuffix[] = ".everest-ui-reset-committed";
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
 constexpr auto kSkipEmptyParts = Qt::SkipEmptyParts;
@@ -100,14 +105,25 @@ struct NetworkFileAnalysis {
     QString warning;
 };
 
+struct ResetApplyResult {
+    bool success = false;
+    bool writeFailed = false;
+    bool applyFailed = false;
+};
+
+QSet<QString> g_pendingResetInterfaces;
+bool g_resetRecoveryDone = false;
+
 QString keyName(const QString &line, QString &value);
 NetworkDocument readDocument(const QString &path);
 bool isIpv4Cidr(const QString &value);
+bool isIpv4Address(const QString &value);
 
 struct StructuredAddressInfo {
     int sectionCount = 0;
     int addressCount = 0;
     int networkAddressCount = 0;
+    int gatewayCount = 0;
     int fallbackSectionCount = 0;
     bool currentSectionFallback = false;
     bool invalid = false;
@@ -149,6 +165,13 @@ StructuredAddressInfo inspectStructuredAddresses(const NetworkDocument &document
             info.currentSectionFallback = true;
         }
         if (key.compare(QStringLiteral("Address"), Qt::CaseInsensitive) != 0) {
+            if (key.compare(QStringLiteral("Gateway"), Qt::CaseInsensitive) == 0 &&
+                (section.compare(QStringLiteral("Network"), Qt::CaseInsensitive) == 0 ||
+                 section.compare(QStringLiteral("Route"), Qt::CaseInsensitive) == 0)) {
+                if (isIpv4Address(value)) {
+                    ++info.gatewayCount;
+                }
+            }
             continue;
         }
         if (section.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0) {
@@ -157,9 +180,10 @@ StructuredAddressInfo inspectStructuredAddresses(const NetworkDocument &document
             if (!isIpv4Cidr(value)) {
                 info.invalid = true;
             }
-        } else if (section.compare(QStringLiteral("Network"), Qt::CaseInsensitive) == 0 &&
-                   isIpv4Cidr(value)) {
-            ++info.networkAddressCount;
+        } else if (section.compare(QStringLiteral("Network"), Qt::CaseInsensitive) == 0) {
+            if (isIpv4Cidr(value)) {
+                ++info.networkAddressCount;
+            }
         }
     }
     finishSection();
@@ -244,9 +268,13 @@ QStringList configuredPlcDrivers() {
     return drivers;
 }
 
-bool validInterfaceName(const QString &name) {
+bool validInterfaceNameSyntax(const QString &name) {
     static const QRegularExpression pattern(QStringLiteral("^[A-Za-z0-9_.:@-]{1,15}$"));
-    return pattern.match(name).hasMatch() && QNetworkInterface::interfaceFromName(name).isValid();
+    return pattern.match(name).hasMatch();
+}
+
+bool validInterfaceName(const QString &name) {
+    return validInterfaceNameSyntax(name) && QNetworkInterface::interfaceFromName(name).isValid();
 }
 
 QString networkFileFromStatus(const QString &name, bool &ok) {
@@ -293,14 +321,158 @@ QString userNetworkFilePath(const QString &name) {
     return QString::fromLatin1(kNetworkFileEtc) + name + QStringLiteral(".network");
 }
 
+QString resetBackupPath(const QString &path) {
+    return path + QLatin1String(kResetBackupSuffix);
+}
+
+QString resetCommittedPath(const QString &path) {
+    return path + QLatin1String(kResetCommittedSuffix);
+}
+
 bool removeUserNetworkOverride(const QString &path) {
     return !QFile::exists(path) || QFile::remove(path);
+}
+
+bool recoverResetBackupsInDirectory(const QString &root,
+                                    const std::function<bool(const QString &)> &interfaceAvailable) {
+    bool recovered = true;
+    const QDir directory(root);
+    const QStringList committed = directory.entryList(
+        QStringList() << QStringLiteral("*.network") + QLatin1String(kResetCommittedSuffix), QDir::Files);
+    for (const QString &committedName : committed) {
+        const QString committedPath = directory.filePath(committedName);
+        if (!QFile::remove(committedPath)) {
+            qWarning() << "Unable to remove committed network reset backup" << committedPath;
+            recovered = false;
+        }
+    }
+
+    const QStringList backups = directory.entryList(
+        QStringList() << QStringLiteral("*.network") + QLatin1String(kResetBackupSuffix), QDir::Files);
+    for (const QString &backupName : backups) {
+        const int suffixLength = QLatin1String(kResetBackupSuffix).size();
+        const QString originalName = backupName.left(backupName.size() - suffixLength);
+        if (!originalName.endsWith(QStringLiteral(".network"))) {
+            continue;
+        }
+        const QString interfaceName = originalName.left(originalName.size() - QStringLiteral(".network").size());
+        if (!validInterfaceNameSyntax(interfaceName)) {
+            qWarning() << "Ignoring reset backup for invalid interface" << interfaceName;
+            continue;
+        }
+        if (!interfaceAvailable(interfaceName)) {
+            qWarning() << "Deferring reset backup recovery for unavailable interface" << interfaceName;
+            recovered = false;
+            continue;
+        }
+        const QString originalPath = directory.filePath(originalName);
+        const QString backupPath = directory.filePath(backupName);
+        if (QFile::exists(originalPath)) {
+            qWarning() << "Keeping reset backup because network override already exists" << backupPath;
+            continue;
+        }
+        if (!QFile::rename(backupPath, originalPath)) {
+            qCritical() << "Unable to recover network override from" << backupPath;
+            recovered = false;
+        }
+    }
+    return recovered;
+}
+
+void recoverResetBackups() {
+    if (g_resetRecoveryDone) {
+        return;
+    }
+    g_resetRecoveryDone = recoverResetBackupsInDirectory(
+        QString::fromLatin1(kNetworkFileEtc),
+        [](const QString &interfaceName) { return validInterfaceName(interfaceName); });
 }
 
 QStringList networkFileRoots() {
     return {QLatin1String(kNetworkFileEtc), QLatin1String(kNetworkFileLib),
             QLatin1String(kNetworkFileUsrLib), QLatin1String(kNetworkFileUsrLocalLib),
             QLatin1String(kNetworkFileRun)};
+}
+
+bool restoreResetBackups(const QList<QPair<QString, QString>> &backups) {
+    bool restored = true;
+    for (auto it = backups.crbegin(); it != backups.crend(); ++it) {
+        if (!QFile::exists(it->second)) {
+            continue;
+        }
+        if (QFile::exists(it->first) || !QFile::rename(it->second, it->first)) {
+            qCritical() << "Unable to restore network override" << it->first;
+            restored = false;
+        }
+    }
+    return restored;
+}
+
+bool revertCommittedBackups(const QList<QPair<QString, QString>> &backups) {
+    bool reverted = true;
+    for (auto it = backups.crbegin(); it != backups.crend(); ++it) {
+        const QString committedPath = resetCommittedPath(it->first);
+        if (!QFile::exists(committedPath)) {
+            continue;
+        }
+        if (QFile::exists(it->second) || !QFile::rename(committedPath, it->second)) {
+            qCritical() << "Unable to revert committed network reset backup" << committedPath;
+            reverted = false;
+        }
+    }
+    return reverted;
+}
+
+ResetApplyResult applyPendingResets(QSet<QString> &pendingInterfaces,
+                                    const std::function<QString(const QString &)> &pathForInterface,
+                                    const CommandRunner &run) {
+    QList<QPair<QString, QString>> backups;
+    QList<QPair<QString, QString>> committedBackups;
+    QStringList interfaces = pendingInterfaces.values();
+    std::sort(interfaces.begin(), interfaces.end());
+
+    for (const QString &interfaceName : interfaces) {
+        const QString originalPath = pathForInterface(interfaceName);
+        if (!QFile::exists(originalPath)) {
+            continue;
+        }
+        const QString backupPath = resetBackupPath(originalPath);
+        if (QFile::exists(backupPath) || !QFile::rename(originalPath, backupPath)) {
+            restoreResetBackups(backups);
+            return {false, true, false};
+        }
+        backups.append(qMakePair(originalPath, backupPath));
+    }
+
+    if (!applyNetworkConfiguration(run)) {
+        const bool restored = restoreResetBackups(backups);
+        if (restored) {
+            applyNetworkConfiguration(run);
+        }
+        return {false, false, true};
+    }
+
+    for (auto it = backups.begin(); it != backups.end(); ++it) {
+        const QString committedPath = resetCommittedPath(it->first);
+        if (QFile::exists(committedPath) || !QFile::rename(it->second, committedPath)) {
+            const bool reverted = revertCommittedBackups(committedBackups);
+            const bool restored = reverted && restoreResetBackups(backups);
+            if (restored) {
+                applyNetworkConfiguration(run);
+            }
+            return {false, false, true};
+        }
+        committedBackups.append(*it);
+    }
+
+    for (const auto &backup : backups) {
+        const QString committedPath = resetCommittedPath(backup.first);
+        if (QFile::exists(committedPath) && !QFile::remove(committedPath)) {
+            qWarning() << "Unable to remove committed network reset backup" << committedPath;
+        }
+    }
+    pendingInterfaces.clear();
+    return {true, false, false};
 }
 
 NetworkFileAnalysis analyzeNetworkFile(const QString &path) {
@@ -311,10 +483,11 @@ NetworkFileAnalysis analyzeNetworkFile(const QString &path) {
     const QFileInfo fileInfo(path);
     const NetworkDocument document = readDocument(path);
     const StructuredAddressInfo addressInfo = inspectStructuredAddresses(document);
-    if (addressInfo.sectionCount > 0 &&
-        (addressInfo.invalid || addressInfo.sectionCount != 1 || addressInfo.addressCount != 1 ||
-         addressInfo.fallbackSectionCount > 1 ||
-         (addressInfo.networkAddressCount > 0 && addressInfo.fallbackSectionCount == 0))) {
+    if (addressInfo.networkAddressCount > 1 || addressInfo.gatewayCount > 1 ||
+        (addressInfo.sectionCount > 0 &&
+         (addressInfo.invalid || addressInfo.sectionCount != 1 || addressInfo.addressCount != 1 ||
+          addressInfo.fallbackSectionCount > 1 ||
+          (addressInfo.networkAddressCount > 0 && addressInfo.fallbackSectionCount == 0)))) {
         return {false, QStringLiteral("This network file contains multiple or ambiguous structured Address settings that the Web UI cannot safely edit.")};
     }
     QString section;
@@ -395,8 +568,23 @@ QJsonObject parseDocument(const NetworkDocument &document, const QString &name, 
     QString primaryAddress;
     QString fallbackAddress;
     bool structuredFallback = false;
-    QString structuredLabel;
     QStringList dns;
+
+    QString structuredLabel;
+    QString scanSection;
+    for (const QString &line : document.lines) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.startsWith(QLatin1Char('[')) && trimmed.endsWith(QLatin1Char(']'))) {
+            scanSection = trimmed.mid(1, trimmed.size() - 2).trimmed();
+            continue;
+        }
+        QString value;
+        if (scanSection.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0 &&
+            keyName(line, value).compare(QStringLiteral("Label"), Qt::CaseInsensitive) == 0) {
+            structuredLabel = value;
+        }
+    }
+    const bool structuredLabelIsFallback = structuredLabel.endsWith(QStringLiteral(":fallback"), Qt::CaseInsensitive);
 
     for (const QString &line : document.lines) {
         const QString trimmed = line.trimmed();
@@ -415,7 +603,7 @@ QJsonObject parseDocument(const NetworkDocument &document, const QString &name, 
                    key.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0 &&
                    isIpv4Cidr(value)) {
             if (section.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0) {
-                if (structuredLabel.endsWith(QStringLiteral(":fallback"), Qt::CaseInsensitive)) {
+                if (structuredLabelIsFallback) {
                     fallbackAddress = value;
                     structuredFallback = true;
                 } else {
@@ -704,7 +892,7 @@ QJsonObject interfaceObject(const InterfaceInfo &info) {
         warnings.append(QStringLiteral("This interface probably belongs to a PLC/HomePlug adapter."));
     }
     if (info.bridgeMember) {
-        warnings.append(QStringLiteral("This interface is a bridge member; configure the bridge when appropriate."));
+        warnings.append(QStringLiteral("This interface has a network master; configure the master interface when appropriate."));
     }
     if (info.kind.compare(QStringLiteral("can"), Qt::CaseInsensitive) == 0) {
         warnings.append(QStringLiteral("CAN interfaces do not use IPv4 network configuration."));
@@ -777,6 +965,7 @@ ModuleResponse errorResponse(const ModuleRequest &request, const QString &error)
 
 namespace NetworkConfiguration {
 ModuleResponse handleRequest(const ModuleRequest &request) {
+    recoverResetBackups();
     if (request.action == QLatin1String(kActionReadInterfaces)) {
         if (!featureAvailable(QStringLiteral("network"))) {
             return {request.requestId, QLatin1String(kGroupNetwork), request.action,
@@ -845,6 +1034,7 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
         parameters.insert(QLatin1String(kParameterEditable), true);
         parameters.insert(QLatin1String(kParameterWarning), QJsonArray{});
         parameters.insert(QLatin1String(kParameterUserOverride), QFile::exists(userNetworkFilePath(interfaceName)));
+        parameters.insert(QLatin1String(kParameterResetStaged), g_pendingResetInterfaces.contains(interfaceName));
         return {request.requestId, QLatin1String(kGroupNetwork), request.action,
                 parameters, true, true};
     }
@@ -861,7 +1051,7 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
             bool statusOk = false;
             sourcePath = networkFileFromStatus(interfaceName, statusOk);
             if (!statusOk) {
-                sourcePath.clear();
+                return errorResponse(request, QLatin1String(kErrorStatusFailed));
             }
             if (!sourcePath.isEmpty() && !isAllowedReadPath(sourcePath)) {
                 return errorResponse(request, QLatin1String(kErrorUnsupportedNetworkFile));
@@ -880,6 +1070,9 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
         NetworkDocument document;
         if (!sourcePath.isEmpty()) {
             document = readDocument(sourcePath);
+            if (document.lines.isEmpty()) {
+                return errorResponse(request, QLatin1String(kErrorNetworkFileNotFound));
+            }
         }
         if (document.lines.isEmpty()) {
             document.lines.append(QStringLiteral("[Match]"));
@@ -906,20 +1099,37 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
     }
 
     if (request.action == QLatin1String(kActionResetSettings)) {
-        const QString targetPath = userNetworkFilePath(interfaceName);
-        if (!removeUserNetworkOverride(targetPath)) {
-            return errorResponse(request, QLatin1String(kErrorWriteFailed));
-        }
+        g_pendingResetInterfaces.insert(interfaceName);
         return {request.requestId, QLatin1String(kGroupNetwork), request.action,
                 {{QLatin1String(kParameterInterface), interfaceName},
-                 {QLatin1String(kParameterUserOverride), false},
+                 {QLatin1String(kParameterUserOverride), QFile::exists(userNetworkFilePath(interfaceName))},
                  {QLatin1String(kParameterResetStaged), true}},
                 true, true};
     }
 
+    if (request.action == QLatin1String(kActionCancelResetSettings)) {
+        g_pendingResetInterfaces.remove(interfaceName);
+        return {request.requestId, QLatin1String(kGroupNetwork), request.action,
+                {{QLatin1String(kParameterInterface), interfaceName},
+                 {QLatin1String(kParameterUserOverride), QFile::exists(userNetworkFilePath(interfaceName))},
+                 {QLatin1String(kParameterResetStaged), false}},
+                true, true};
+    }
+
     if (request.action == QLatin1String(kActionApply)) {
-        if (!applyNetworkConfiguration(runCommand)) {
-            return errorResponse(request, QLatin1String(kErrorApplyFailed));
+        const ResetApplyResult resetResult = applyPendingResets(
+            g_pendingResetInterfaces,
+            [](const QString &pendingInterface) { return userNetworkFilePath(pendingInterface); },
+            runCommand);
+        if (resetResult.writeFailed) {
+            return {request.requestId, QLatin1String(kGroupNetwork), request.action,
+                    {{QLatin1String(kError), QLatin1String(kErrorWriteFailed)},
+                     {QLatin1String(kParameterResetStaged), true}}, false, true};
+        }
+        if (resetResult.applyFailed) {
+            return {request.requestId, QLatin1String(kGroupNetwork), request.action,
+                    {{QLatin1String(kError), QLatin1String(kErrorApplyFailed)},
+                     {QLatin1String(kParameterResetStaged), true}}, false, true};
         }
         return {request.requestId, QLatin1String(kGroupNetwork), request.action, {}, true, true};
     }

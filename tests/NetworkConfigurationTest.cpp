@@ -92,6 +92,18 @@ private slots:
         QVERIFY(!document.lines.join(QLatin1Char('\n')).contains(QStringLiteral("Label=br0:fallback")));
     }
 
+    void parsesFallbackLabelAfterAddress() {
+        NetworkDocument document{{QStringLiteral("[Network]"), QStringLiteral("Address=192.168.0.38/24"),
+                                  QStringLiteral("[Address]"), QStringLiteral("Address=169.254.12.53/16"),
+                                  QStringLiteral("Label=br0:fallback")}};
+        const QJsonArray addresses = parseDocument(document, QStringLiteral("br0"), QStringLiteral("file"))
+                                         .value(QStringLiteral("ipv4_addresses"))
+                                         .toArray();
+        QCOMPARE(addresses.size(), 2);
+        QCOMPARE(addresses.at(0).toString(), QStringLiteral("192.168.0.38/24"));
+        QCOMPARE(addresses.at(1).toString(), QStringLiteral("169.254.12.53/16"));
+    }
+
     void rejectsAmbiguousStructuredAddresses() {
         NetworkDocument document{{QStringLiteral("[Address]"), QStringLiteral("Address=192.168.1.20/24"),
                                   QStringLiteral("Address=192.168.1.21/24")}};
@@ -143,6 +155,27 @@ private slots:
                                                QStringLiteral("169.254.12.53/16"))));
         QVERIFY(!validateAddresses(addressArray(QString(), QString())));
         QVERIFY(!validateAddresses(addressArray(QStringLiteral("192.168.99.99/24"), QStringLiteral("bad"))));
+    }
+
+    void rejectsRepeatedNetworkAddressesAndGateways() {
+        const auto writeAndAnalyze = [](const QStringList &lines) {
+            const QTemporaryDir directory;
+            if (!directory.isValid()) {
+                return true;
+            }
+            const QString path = directory.filePath(QStringLiteral("test.network"));
+            QFile file(path);
+            if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                return true;
+            }
+            file.write(lines.join(QLatin1Char('\n')).toUtf8());
+            file.close();
+            return analyzeNetworkFile(path).supported;
+        };
+        QVERIFY(!writeAndAnalyze({QStringLiteral("[Network]"), QStringLiteral("Address=192.168.1.20/24"),
+                                  QStringLiteral("Address=192.168.1.21/24")}));
+        QVERIFY(!writeAndAnalyze({QStringLiteral("[Network]"), QStringLiteral("DHCP=yes"),
+                                  QStringLiteral("Gateway=192.168.1.1"), QStringLiteral("Gateway=192.168.1.2")}));
     }
 
     void mixedDhcpPreservesStaticIpv4Settings() {
@@ -207,6 +240,203 @@ private slots:
         QVERIFY(!parameters.value(QStringLiteral("user_override")).toBool());
         QCOMPARE(parameters.value(QStringLiteral("interface")).toString(), QStringLiteral("eth0"));
         QVERIFY(parameters.value(QStringLiteral("reset_staged")).toBool());
+    }
+
+    void resetStateCanBeCancelled() {
+        const QString interfaceName = QStringLiteral("eth-test-reset");
+        g_pendingResetInterfaces.insert(interfaceName);
+        QVERIFY(g_pendingResetInterfaces.contains(interfaceName));
+        g_pendingResetInterfaces.remove(interfaceName);
+        QVERIFY(!g_pendingResetInterfaces.contains(interfaceName));
+    }
+
+    void resetApplyRemovesAllOverridesAfterSuccessfulReload() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QSet<QString> pending{QStringLiteral("eth0"), QStringLiteral("eth1")};
+        for (const QString &interfaceName : pending) {
+            QFile file(directory.filePath(interfaceName + QStringLiteral(".network")));
+            QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+            file.write(interfaceName.toUtf8());
+        }
+
+        const ResetApplyResult result = applyPendingResets(
+            pending,
+            [&directory](const QString &interfaceName) {
+                return directory.filePath(interfaceName + QStringLiteral(".network"));
+            },
+            [](const QString &, const QStringList &) { return CommandResult{true, 0, {}}; });
+
+        QVERIFY(result.success);
+        QVERIFY(pending.isEmpty());
+        for (const QString &interfaceName : {QStringLiteral("eth0"), QStringLiteral("eth1")}) {
+            QVERIFY(!QFile::exists(directory.filePath(interfaceName + QStringLiteral(".network"))));
+            QVERIFY(!QFile::exists(directory.filePath(interfaceName + QStringLiteral(".network") +
+                                                      QLatin1String(kResetBackupSuffix))));
+            QVERIFY(!QFile::exists(directory.filePath(interfaceName + QStringLiteral(".network") +
+                                                      QLatin1String(kResetCommittedSuffix))));
+        }
+    }
+
+    void resetApplyRestoresAllOverridesAfterReloadFailure() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QSet<QString> pending{QStringLiteral("eth0"), QStringLiteral("eth1")};
+        QHash<QString, QByteArray> contents;
+        for (const QString &interfaceName : pending) {
+            contents.insert(interfaceName, interfaceName.toUtf8());
+            QFile file(directory.filePath(interfaceName + QStringLiteral(".network")));
+            QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+            file.write(contents.value(interfaceName));
+        }
+
+        int reloadCount = 0;
+        const ResetApplyResult result = applyPendingResets(
+            pending,
+            [&directory](const QString &interfaceName) {
+                return directory.filePath(interfaceName + QStringLiteral(".network"));
+            },
+            [&reloadCount](const QString &, const QStringList &) {
+                ++reloadCount;
+                return CommandResult{true, 1, {}};
+            });
+
+        QVERIFY(!result.success);
+        QVERIFY(result.applyFailed);
+        QVERIFY(!result.writeFailed);
+        QCOMPARE(reloadCount, 2);
+        QCOMPARE(pending.size(), 2);
+        for (const QString &interfaceName : pending) {
+            QFile file(directory.filePath(interfaceName + QStringLiteral(".network")));
+            QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
+            QCOMPARE(file.readAll(), contents.value(interfaceName));
+            QVERIFY(!QFile::exists(directory.filePath(interfaceName + QStringLiteral(".network") +
+                                                       QLatin1String(kResetBackupSuffix))));
+        }
+    }
+
+    void resetApplyRollsBackWhenCommittedMarkerCreationFails() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QSet<QString> pending{QStringLiteral("eth0"), QStringLiteral("eth1")};
+        for (const QString &interfaceName : pending) {
+            QFile file(directory.filePath(interfaceName + QStringLiteral(".network")));
+            QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+            file.write(interfaceName.toUtf8());
+        }
+        QFile existingCommitted(directory.filePath(QStringLiteral("eth1.network") +
+                                                   QLatin1String(kResetCommittedSuffix)));
+        QVERIFY(existingCommitted.open(QIODevice::WriteOnly | QIODevice::Text));
+        existingCommitted.write("existing committed marker");
+        existingCommitted.close();
+
+        int reloadCount = 0;
+        const ResetApplyResult result = applyPendingResets(
+            pending,
+            [&directory](const QString &interfaceName) {
+                return directory.filePath(interfaceName + QStringLiteral(".network"));
+            },
+            [&reloadCount](const QString &, const QStringList &) {
+                ++reloadCount;
+                return CommandResult{true, 0, {}};
+            });
+
+        QVERIFY(!result.success);
+        QVERIFY(result.applyFailed);
+        QCOMPARE(reloadCount, 2);
+        for (const QString &interfaceName : pending) {
+            QVERIFY(QFile::exists(directory.filePath(interfaceName + QStringLiteral(".network"))));
+            QVERIFY(!QFile::exists(directory.filePath(interfaceName + QStringLiteral(".network") +
+                                                       QLatin1String(kResetBackupSuffix))));
+        }
+        QVERIFY(QFile::exists(directory.filePath(QStringLiteral("eth1.network") +
+                                                 QLatin1String(kResetCommittedSuffix))));
+    }
+
+    void resetApplyRestoresEarlierOverridesWhenStagingLaterOneFails() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QSet<QString> pending{QStringLiteral("eth0"), QStringLiteral("eth1")};
+        for (const QString &interfaceName : pending) {
+            QFile file(directory.filePath(interfaceName + QStringLiteral(".network")));
+            QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+            file.write(interfaceName.toUtf8());
+        }
+        QFile existingBackup(directory.filePath(QStringLiteral("eth1.network") +
+                                                QLatin1String(kResetBackupSuffix)));
+        QVERIFY(existingBackup.open(QIODevice::WriteOnly | QIODevice::Text));
+        existingBackup.write("existing backup");
+        existingBackup.close();
+
+        int reloadCount = 0;
+        const ResetApplyResult result = applyPendingResets(
+            pending,
+            [&directory](const QString &interfaceName) {
+                return directory.filePath(interfaceName + QStringLiteral(".network"));
+            },
+            [&reloadCount](const QString &, const QStringList &) {
+                ++reloadCount;
+                return CommandResult{true, 0, {}};
+            });
+
+        QVERIFY(!result.success);
+        QVERIFY(result.writeFailed);
+        QCOMPARE(reloadCount, 0);
+        QVERIFY(QFile::exists(directory.filePath(QStringLiteral("eth0.network"))));
+        QVERIFY(QFile::exists(directory.filePath(QStringLiteral("eth1.network"))));
+        QVERIFY(QFile::exists(directory.filePath(QStringLiteral("eth1.network") +
+                                                 QLatin1String(kResetBackupSuffix))));
+        QVERIFY(pending.contains(QStringLiteral("eth0")));
+        QVERIFY(pending.contains(QStringLiteral("eth1")));
+    }
+
+    void orphanedResetBackupIsRecovered() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString originalPath = directory.filePath(QStringLiteral("eth0.network"));
+        const QString backupPath = originalPath + QLatin1String(kResetBackupSuffix);
+        QFile backup(backupPath);
+        QVERIFY(backup.open(QIODevice::WriteOnly | QIODevice::Text));
+        backup.write("original");
+        backup.close();
+
+        QVERIFY(recoverResetBackupsInDirectory(
+            directory.path(), [](const QString &interfaceName) { return interfaceName == QStringLiteral("eth0"); }));
+        QVERIFY(QFile::exists(originalPath));
+        QVERIFY(!QFile::exists(backupPath));
+    }
+
+    void unavailableResetBackupIsRetried() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString originalPath = directory.filePath(QStringLiteral("eth1.network"));
+        const QString backupPath = originalPath + QLatin1String(kResetBackupSuffix);
+        QFile backup(backupPath);
+        QVERIFY(backup.open(QIODevice::WriteOnly | QIODevice::Text));
+        backup.write("original");
+        backup.close();
+
+        QVERIFY(!recoverResetBackupsInDirectory(directory.path(), [](const QString &) { return false; }));
+        QVERIFY(QFile::exists(backupPath));
+        QVERIFY(recoverResetBackupsInDirectory(
+            directory.path(), [](const QString &interfaceName) { return interfaceName == QStringLiteral("eth1"); }));
+        QVERIFY(QFile::exists(originalPath));
+        QVERIFY(!QFile::exists(backupPath));
+    }
+
+    void committedResetBackupIsRemovedWithoutRestoring() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString originalPath = directory.filePath(QStringLiteral("eth2.network"));
+        const QString committedPath = originalPath + QLatin1String(kResetCommittedSuffix);
+        QFile committed(committedPath);
+        QVERIFY(committed.open(QIODevice::WriteOnly | QIODevice::Text));
+        committed.write("old configuration");
+        committed.close();
+
+        QVERIFY(recoverResetBackupsInDirectory(directory.path(), [](const QString &) { return false; }));
+        QVERIFY(!QFile::exists(originalPath));
+        QVERIFY(!QFile::exists(committedPath));
     }
 
     void applyReloadsOnlyOnce() {

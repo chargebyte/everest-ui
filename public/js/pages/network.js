@@ -12,6 +12,10 @@ export function isCurrentSettingsResponse(message, requestId, interfaceName) {
   return message?.requestId === requestId && message.parameters?.interface === interfaceName;
 }
 
+export function isSuccessfulApplyResponse(message) {
+  return message?.type === 'network.apply.ack' || message?.type === 'network.apply.result';
+}
+
 export function formatInterfaceWarnings(info) {
   const warnings = Array.isArray(info?.warning) ? info.warning : [];
   return {
@@ -49,7 +53,7 @@ export function networkSettingsEqual(left, right) {
 
 export function networkActionState({ loaded, editable, dirty, userOverride, resetStaged = false }) {
   return {
-    saveDisabled: !loaded || !editable,
+    saveDisabled: !loaded || !editable || resetStaged,
     resetDisabled: !loaded || !editable || userOverride !== true,
     applyDisabled: !loaded || !editable || (dirty && !resetStaged)
   };
@@ -164,7 +168,8 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
       resetStaged
     });
     saveButton.disabled = buttons.saveDisabled;
-    resetButton.disabled = buttons.resetDisabled || pendingResetRequestId !== null;
+    resetButton.disabled = (!resetStaged && buttons.resetDisabled) || pendingResetRequestId !== null;
+    resetButton.textContent = resetStaged ? 'Cancel reset' : 'Reset to factory defaults';
     applyButton.disabled = buttons.applyDisabled;
   }
 
@@ -257,7 +262,6 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     pendingWriteSettings = null;
     pendingWriteInterface = '';
     pendingResetRequestId = null;
-    resetStaged = false;
     selectedInfo = state.network.interfaces.find((info) => info.name === interfaceSelect.value) || selectedInfo;
     if (parameters.editable === false) {
       editable = false;
@@ -276,9 +280,9 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     updateStaticFields();
     baselineSettings = normalizeNetworkSettings(collectSettings());
     userOverride = parameters.user_override === true;
-    resetStaged = false;
+    resetStaged = parameters.reset_staged === true;
     dirty = false;
-    setSettingsDisabled(!editable);
+    setSettingsDisabled(!editable || resetStaged);
     updateActionButtons();
   }
 
@@ -347,7 +351,15 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   });
   resetButton.addEventListener('click', () => {
     if (!settingsLoaded || !editable || resetButton.disabled) return;
-    if (!window.confirm('Reset this interface to factory defaults? Any unsaved edits will be discarded. The override file will be deleted, but the running network configuration will not change until you press Apply.')) return;
+    if (resetStaged) {
+      const result = sendAction('cancel_reset_settings', { interface: interfaceSelect.value });
+      if (result.ok) {
+        pendingResetRequestId = result.payload.requestId;
+        setWarning('Cancelling factory reset.');
+      }
+      return;
+    }
+    if (!window.confirm('Reset this interface to factory defaults? Any unsaved edits will be discarded. The override file will be removed when you press Apply.')) return;
     const result = sendAction('reset_settings', { interface: interfaceSelect.value });
     if (result.ok) {
       pendingResetRequestId = result.payload.requestId;
@@ -392,13 +404,19 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
         updateDirtyState(false);
         setWarning('Network configuration saved. Apply it separately when ready.');
         fileElement.textContent = message.parameters?.network_file || fileElement.textContent;
-      } else if (message.type === 'network.apply.result') {
-        addLog(`${kGroup}.apply.result received`);
+      } else if (isSuccessfulApplyResponse(message)) {
+        addLog(`${kGroup}.${message.type.split('.')[1]} received`);
         setWarning('Network configuration applied. The Web UI may disconnect if this interface carries its connection.');
+        const resetWasStaged = resetStaged;
         resetStaged = false;
+        if (resetWasStaged) {
+          userOverride = false;
+        }
+        setSettingsDisabled(!editable);
         requestSettings(interfaceSelect.value);
-      } else if (message.type === 'network.reset_settings.result') {
-        addLog(`${kGroup}.reset_settings.result received`);
+      } else if (message.type === 'network.reset_settings.result' ||
+                 message.type === 'network.cancel_reset_settings.result') {
+        addLog(`${kGroup}.${message.type.split('.')[1]}.result received`);
         if (message.requestId !== pendingResetRequestId ||
             message.parameters?.interface !== interfaceSelect.value) {
           if (message.requestId === pendingResetRequestId) {
@@ -410,9 +428,12 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
         }
         pendingResetRequestId = null;
         resetStaged = message.parameters?.reset_staged === true;
-        userOverride = false;
-        updateActionButtons();
-        setWarning('Factory reset staged. Press Apply to activate the factory configuration.');
+        userOverride = message.parameters?.user_override === true;
+        setSettingsDisabled(!editable || resetStaged);
+        requestSettings(interfaceSelect.value);
+        setWarning(resetStaged
+          ? 'Factory reset staged. Press Apply to activate the factory configuration.'
+          : 'Factory reset cancelled.');
       } else if (message.type.endsWith('.error') && message.type.startsWith(`${kGroup}.`)) {
         const error = message.parameters?.error || 'network operation failed';
         if (message.type === 'network.read_interfaces.error') {
@@ -431,7 +452,8 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
           settingsSection.hidden = true;
           setSettingsDisabled(true);
         }
-        if (message.type === 'network.reset_settings.error') {
+        if (message.type === 'network.reset_settings.error' ||
+            message.type === 'network.cancel_reset_settings.error') {
           if (message.requestId === pendingResetRequestId) {
             pendingResetRequestId = null;
             updateActionButtons();
@@ -444,6 +466,17 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
           pendingWriteSettings = null;
           pendingWriteInterface = '';
           updateActionButtons();
+        }
+        if (message.type === 'network.apply.error') {
+          const resetWasStaged = resetStaged;
+          if (typeof message.parameters?.reset_staged === 'boolean') {
+            resetStaged = message.parameters.reset_staged;
+          }
+          if (resetWasStaged && !resetStaged) {
+            userOverride = false;
+          }
+          setSettingsDisabled(!editable || resetStaged);
+          requestSettings(interfaceSelect.value);
         }
         addLog(`${message.type}: ${error}`);
         setWarning(error);

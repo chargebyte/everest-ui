@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   formatInterfaceWarnings,
   isCurrentSettingsResponse,
+  isSuccessfulApplyResponse,
   networkActionState,
   networkSettingsEqual,
   normalizeNetworkSettings
@@ -88,5 +89,12 @@ test('disables Apply for unsaved edits but keeps Save and Reset available', () =
     applyDisabled: true
   });
   assert.equal(networkActionState({ loaded: true, editable: true, dirty: true, userOverride: false, resetStaged: true }).applyDisabled, false);
+  assert.equal(networkActionState({ loaded: true, editable: true, dirty: false, userOverride: true, resetStaged: true }).saveDisabled, true);
   assert.equal(networkActionState({ loaded: true, editable: true, dirty: false, userOverride: true }).applyDisabled, false);
+});
+
+test('accepts both successful Apply acknowledgements and results', () => {
+  assert.equal(isSuccessfulApplyResponse({ type: 'network.apply.ack' }), true);
+  assert.equal(isSuccessfulApplyResponse({ type: 'network.apply.result' }), true);
+  assert.equal(isSuccessfulApplyResponse({ type: 'network.apply.error' }), false);
 });
