@@ -22,6 +22,12 @@ export const state = {
     captureStartTs: null,
     lastPcapUrl: null,
     lastPcapName: ''
+  },
+  network: {
+    available: true,
+    interfaces: [],
+    interfacesRequestPending: false,
+    selectedInterface: ''
   }
 };
 

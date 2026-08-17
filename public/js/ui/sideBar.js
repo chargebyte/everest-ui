@@ -8,7 +8,8 @@ const kNavEntries = [
   { page: 'ocpp', label: 'OCPP Config' },
   { page: 'pcap', label: 'PCAP Trace' },
   { page: 'firmware', label: 'Firmware Update' },
-  { page: 'system_logs', label: 'System Logs' }
+  { page: 'system_logs', label: 'System Logs' },
+  { page: 'network', label: 'Network Configuration' }
 ];
 
 export function renderSideBar() {

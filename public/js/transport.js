@@ -52,10 +52,23 @@ export function createTransport({
     const ok = send(payload);
     if (!ok) {
       clearPendingRequest(requestIdKey);
-      return { ok: false, payload };
+      return {
+        ok: false,
+        payload,
+        error: 'websocket_not_open',
+        websocketState: getWebSocketState()
+      };
     }
 
     return { ok: true, payload };
+  }
+
+  function getWebSocketState() {
+    if (!ws) {
+      return 'none';
+    }
+
+    return ['connecting', 'open', 'closing', 'closed'][ws.readyState] || 'unknown';
   }
 
   function schedulePendingTimeout(requestIdKey) {

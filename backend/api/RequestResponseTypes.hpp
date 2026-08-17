@@ -17,6 +17,7 @@ enum class ModuleGroup {
     OCPPConfig,
     FirmwareUpdate,
     SystemLogs,
+    Network,
     System,
     Unknown
 };

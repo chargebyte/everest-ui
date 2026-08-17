@@ -104,6 +104,36 @@ The following three configuration entries define the paths of the EVerest config
 - `everest_config_overlay_path`
   Points to the location of the configuration file that holds the parameters set with the UI.
 
+The optional `available_features` entry in `backend.conf` is a comma-separated list of enabled UI features.
+If it is omitted, all features are enabled. The Network Configuration page is enabled when `network` is
+listed; for example, `available_features=network`. Other feature names are reserved for future use.
+
+## Network Configuration
+
+The Network Configuration page reads the effective systemd-networkd file reported by `networkctl status`.
+It never modifies distribution files under `/lib/systemd/network/`. Saving creates or updates the corresponding
+user configuration at `/etc/systemd/network/<interface>.network`, preserving unrelated settings where possible.
+
+Save and Apply are separate actions. Apply reloads systemd-networkd, which applies changed or removed network
+files to all affected interfaces. The page exposes IPv4 DHCP and IPv6 DHCP independently; an explicit
+“Also use static IPv4 settings” option preserves the valid systemd-networkd mixed DHCP/static mode.
+Changing the interface used to access the Web UI can disconnect the browser and may require reconnecting with
+the new address.
+
+Reset to factory defaults stages removal of `/etc/systemd/network/<interface>.network`; the file is removed only
+when Apply succeeds. Apply uses a same-filesystem backup and restores all staged files if networkd reload fails.
+Cancel reset abandons the staged removal. Reset state is retained by the backend across page navigation and reloads,
+and it does not apply the change until Apply is pressed.
+
+The page edits simple `[Network]` IPv4 settings and a narrow structured `[Address]` form with exactly one IPv4
+address. Structured address metadata such as `Label=` and `DuplicateAddressDetection=` is preserved. Files with
+multiple or ambiguous address entries, structured route properties, or networkd drop-ins under `/run/systemd/network/`, `/etc/systemd/network/`,
+`/lib/systemd/network/`, `/usr/lib/systemd/network/`, or `/usr/local/lib/systemd/network/`, are rejected rather than
+partially rewritten. The Web UI currently uses the interface-specific filename under `/etc`; installations whose
+distribution file has an earlier matching filename may therefore require an administrator to adjust networkd file
+precedence manually. In the API, `ipv4_addresses[0]` is the primary address and `ipv4_addresses[1]` is the fallback;
+a fallback-only configuration is represented with an empty first element.
+
 ### UI ports
 
 Two relevant ports can be specified.

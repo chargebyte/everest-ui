@@ -13,6 +13,7 @@ add_executable(api
     modules/FirmwareUpdate.cpp
     modules/FirmwareUpdateRuntime.cpp
     modules/SystemLogs.cpp
+    modules/NetworkConfiguration.cpp
     libs/ConsoleConnector.cpp
     libs/BackendConfig.cpp
     libs/ResponseBuilder.cpp

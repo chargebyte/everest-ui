@@ -19,6 +19,9 @@ import {
 } from './pages/pcap.js';
 import { renderFirmwarePage } from './pages/firmware.js';
 import { renderSystemLogsPage } from './pages/systemLogs.js';
+import { renderNetworkPage } from './pages/network.js';
+import { MODULE_IDS } from './protocol/constants.js';
+import { buildRequest } from './protocol/requestBuilder.js';
 
 async function init() {
   const appRoot = createAppRoot();
@@ -227,10 +230,17 @@ function createAppTransport(appContext) {
     onOpen() {
       state.connection.connected = true;
       handlePcapConnectionChange(true);
+      const networkRequest = buildRequest(MODULE_IDS.NETWORK, 'read_interfaces', {});
+      state.network.interfacesRequestPending = true;
+      const networkResult = appContext.transport.sendPayload(networkRequest);
+      if (!networkResult.ok) {
+        state.network.interfacesRequestPending = false;
+      }
       appContext.state.page?.onConnectionChange?.(true);
     },
     onClose(event) {
       state.connection.connected = false;
+      state.network.interfacesRequestPending = false;
       handlePcapConnectionChange(false);
       appContext.state.page?.onConnectionChange?.(false);
       if (event?.reason === 'ui already in use') {
@@ -240,6 +250,21 @@ function createAppTransport(appContext) {
     onMessage(message) {
       if (isPcapMessage(message)) {
         handlePcapMessage(message, (logMessage) => addLog(appContext, logMessage));
+      }
+      if (message.type === 'network.read_interfaces.result') {
+        state.network.interfacesRequestPending = false;
+        const available = message.parameters?.available !== false;
+        state.network.available = available;
+        state.network.interfaces = Array.isArray(message.parameters?.interfaces)
+          ? message.parameters.interfaces
+          : [];
+        appContext.layout.setPageAvailable('network', available);
+        if (!available && appContext.state.activeRoute === MODULE_IDS.NETWORK) {
+          setActiveRoute(appContext, appContext.state.initialRoute);
+          renderRoute(appContext, appContext.state.initialRoute);
+        }
+      } else if (message.type === 'network.read_interfaces.error') {
+        state.network.interfacesRequestPending = false;
       }
       appContext.state.page?.onMessage?.(message);
     },
@@ -274,7 +299,8 @@ function createRoutes() {
     ocpp: renderOcppPage,
     pcap: renderPcapPage,
     firmware: renderFirmwarePage,
-    system_logs: renderSystemLogsPage
+    system_logs: renderSystemLogsPage,
+    network: renderNetworkPage
   };
 }
 
@@ -340,7 +366,7 @@ function renderRoute(appContext, route) {
     parameterCatalog: appContext.parameterCatalog,
     appTitle: appContext.appTitle,
     sendPayload(payload) {
-      return appContext.transport.sendPayload(payload).ok;
+      return appContext.transport.sendPayload(payload);
     },
     addLog(message) {
       addLog(appContext, message);
