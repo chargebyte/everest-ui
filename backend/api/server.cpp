@@ -97,7 +97,7 @@ bool MinimalWebSocketServer::start(quint16 port) {
         return false;
     }
 
-    qInfo() << "Server started on 0.0.0.0:" << port;
+    qInfo() << "Server listening on 0.0.0.0, port" << port;
 
     // make sure whenever a new connection to the server is registered the function to handle this
     // new connection is called
