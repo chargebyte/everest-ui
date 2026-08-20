@@ -4,6 +4,9 @@
 
 import { renderPasswordInput } from './passwordInput.js';
 
+export const kUnassignedValueHint =
+  'Leave a non-boolean field empty to keep its configured or module default value. Checkboxes always apply their selected value.';
+
 const kSettingsTableFields = {
   string: createSettingsTableTextInput,
   integer: createSettingsTableTextInput,
@@ -19,6 +22,9 @@ export function renderSettingsTableBlock(blockConfig, options) {
   element.className = 'section';
   const warningElement = createSettingsTableMissingNote();
   element.appendChild(warningElement);
+  if (options?.showUnassignedValueHint === true) {
+    element.appendChild(createSettingsTableUnassignedValueHint());
+  }
   const sectionElements = renderSettingsTableSections(blockConfig.sections, fieldMap);
 
   sectionElements.forEach((sectionElement) => {
@@ -55,6 +61,13 @@ export function renderSettingsTableBlock(blockConfig, options) {
       setSettingsTableValues(requestResponseObject, fieldMap);
     }
   };
+}
+
+function createSettingsTableUnassignedValueHint() {
+  const hintElement = document.createElement('p');
+  hintElement.className = 'settings-unassigned-note';
+  hintElement.textContent = kUnassignedValueHint;
+  return hintElement;
 }
 
 function createRequestResponseObject(sections) {

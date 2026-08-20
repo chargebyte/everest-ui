@@ -324,10 +324,25 @@ QJsonObject buildEverestConfigOverlayObject(const QJsonObject &requestParameters
             continue;
         }
 
+        QJsonObject configModule;
+        const QJsonObject requestedConfigModule =
+            requestParameters.value(requestedModuleName).toObject();
+        const auto configKeys = requestedConfigModule.keys();
+        for (const QString &configKey : configKeys) {
+            const QJsonValue value = requestedConfigModule.value(configKey);
+            if (value.isString() && value.toString().trimmed().isEmpty()) {
+                continue;
+            }
+            configModule.insert(configKey, value);
+        }
+        if (configModule.isEmpty()) {
+            continue;
+        }
+
         overlayActiveModules.insert(activeModuleKey, QJsonObject{
                                                        {QLatin1String(kEverestConfModule), requestedModuleName},
                                                        {QLatin1String(kEverestConfConfigModule),
-                                                        requestParameters.value(requestedModuleName).toObject()},
+                                                        configModule},
                                                    });
     }
 

@@ -32,7 +32,8 @@ export function renderEverestPage(container, {
   pageElement.innerHTML = `<h1>${pageTitle}</h1>`;
 
   const settingsTable = renderSettingsTableBlock(settingsTableBlock, {
-    buttonLabel: 'Save Configuration'
+    buttonLabel: 'Save Configuration',
+    showUnassignedValueHint: true
   });
   const configLoader = renderConfigLoaderBlock(configLoaderBlock, {
     downloadButtonLabel: 'Download config.yaml',

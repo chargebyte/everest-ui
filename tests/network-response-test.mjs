@@ -8,6 +8,7 @@ import {
   networkSettingsEqual,
   normalizeNetworkSettings
 } from '../public/js/pages/network.js';
+import { kUnassignedValueHint } from '../public/js/ui/settingsTable.js';
 
 test('ignores settings responses for an older request or interface', () => {
   const current = { requestId: 2, parameters: { interface: 'eth1' } };
@@ -97,4 +98,10 @@ test('accepts both successful Apply acknowledgements and results', () => {
   assert.equal(isSuccessfulApplyResponse({ type: 'network.apply.ack' }), true);
   assert.equal(isSuccessfulApplyResponse({ type: 'network.apply.result' }), true);
   assert.equal(isSuccessfulApplyResponse({ type: 'network.apply.error' }), false);
+});
+
+test('describes empty EVerest values as default-preserving', () => {
+  assert.match(kUnassignedValueHint, /non-boolean/);
+  assert.match(kUnassignedValueHint, /default/);
+  assert.match(kUnassignedValueHint, /Checkboxes always apply/);
 });
