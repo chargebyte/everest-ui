@@ -93,7 +93,7 @@ PCAP captures are bounded by these backend settings:
 When a limit is reached, the partial capture remains available for download.
 The size limit is checked periodically and can be exceeded slightly while tcpdump is being stopped.
 
-The following three configuration entries define the paths of the EVerest configuration files:
+The following two configuration entries define the paths of the EVerest configuration files:
 
 - `everest_config_path`
   Points to the configuration file that EVerest uses.
@@ -101,8 +101,10 @@ The following three configuration entries define the paths of the EVerest config
 - `everest_base_config_path`
   Points to the location where the base configuration created by the UI is saved. This base configuration is then used by EVerest when it is restarted by the UI.
 
-- `everest_config_overlay_path`
-  Points to the location of the configuration file that holds the parameters set with the UI.
+The UI overlay path is derived using the same rule as everest-core: resolve the canonical target of
+`everest_config_path`, then use `<target directory>/user-config/<target filename>`. For example,
+`/etc/everest/config.yaml` linked to `/etc/everest/everest-ui-config.yaml` uses
+`/etc/everest/user-config/everest-ui-config.yaml`.
 
 The optional `available_features` entry in `backend.conf` is a comma-separated list of enabled UI features.
 If it is omitted, all features are enabled. The Network Configuration page is enabled when `network` is
