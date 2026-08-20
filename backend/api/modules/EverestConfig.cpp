@@ -11,6 +11,7 @@
 #include "SystemdService.hpp"
 
 #include <QEventLoop>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -408,6 +409,8 @@ ModuleResponse ensureEverestConfigOverlay(const ModuleRequest &request, ModuleRe
 
     const YamlLoadResult baseYamlLoadResult = loadYamlFile(baseConfigPathResult.path);
     if (!baseYamlLoadResult.success) {
+        qWarning() << "Unable to load EVerest base configuration"
+                   << baseConfigPathResult.path << ":" << baseYamlLoadResult.error;
         response.parameters = QJsonObject{
             {QLatin1String(kError), baseYamlLoadResult.error},
         };
@@ -425,6 +428,8 @@ ModuleResponse ensureEverestConfigOverlay(const ModuleRequest &request, ModuleRe
 
     const YamlLoadResult overlayYamlLoadResult = loadYamlFile(overlayConfigPathResult.path);
     if (!overlayYamlLoadResult.success) {
+        qWarning() << "Unable to validate EVerest configuration overlay"
+                   << overlayConfigPathResult.path << ":" << overlayYamlLoadResult.error;
         response.parameters = QJsonObject{
             {QLatin1String(kError), overlayYamlLoadResult.error},
         };
@@ -496,6 +501,9 @@ ModuleResponse restartEverestStack(ModuleResponse response) {
     const EverestStateAllowedResult stateAllowedResult =
         EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
     if (!stateAllowedResult.success) {
+        qWarning() << "Unable to check whether EVerest may be restarted"
+                   << "state=" << stateAllowedResult.state
+                   << "error=" << stateAllowedResult.error;
         QString error = stateAllowedResult.error;
         if (stateAllowedResult.error == QLatin1String(kErrorEverestStateNotAllowed)) {
             error =

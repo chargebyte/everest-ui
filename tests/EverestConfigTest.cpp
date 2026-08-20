@@ -5,12 +5,23 @@
 #include "../backend/api/modules/EverestConfig.cpp"
 
 #include <QJsonObject>
+#include <QTemporaryDir>
 #include <QTest>
 
 class EverestConfigTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void missingYamlFileReportsOpenFailure() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+
+        const YamlLoadResult result = loadYamlFile(directory.filePath(QStringLiteral("missing.yaml")));
+
+        QVERIFY(!result.success);
+        QCOMPARE(result.error, QStringLiteral("everest_config_open_failed"));
+    }
+
     void omitsEmptyNonBooleanValuesAndKeepsFalse() {
         const QJsonObject baseConfig{
             {QStringLiteral("active_modules"), QJsonObject{
