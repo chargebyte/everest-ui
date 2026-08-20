@@ -587,6 +587,23 @@
   background: linear-gradient(180deg, var(--cb-accent), var(--cb-accent-dark));
 }
 
+.settings-apply-button,
+.settings-reload-button {
+  min-width: 220px;
+  white-space: nowrap;
+}
+
+.settings-apply-button-busy {
+  background: linear-gradient(180deg, #d39b2a, #a86e08);
+  opacity: 1;
+}
+
+.settings-reload-button-busy {
+  background: #b88320;
+  color: #ffffff;
+  opacity: 1;
+}
+
 .btn-stop {
   background: linear-gradient(180deg, #d76171, #be495d);
 }
@@ -606,6 +623,24 @@
 
 .settings-action-controls {
   margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-action-status {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--cb-muted);
+}
+
+.settings-action-status-success {
+  color: var(--cb-ok);
+}
+
+.settings-action-status-error {
+  color: var(--cb-danger);
 }
 
 .system-log-extract-controls {
