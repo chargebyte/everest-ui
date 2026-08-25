@@ -277,6 +277,7 @@ function createAppTransport(appContext) {
       if (handlePcapRequestTimeout(requestId, moduleAction)) {
         appContext.state.page?.onPcapStateChange?.();
       }
+      appContext.state.page?.onRequestTimeout?.({ requestId, moduleAction });
     }
   });
 }

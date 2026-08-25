@@ -32,7 +32,9 @@ export function renderEverestPage(container, {
   pageElement.innerHTML = `<h1>${pageTitle}</h1>`;
 
   const settingsTable = renderSettingsTableBlock(settingsTableBlock, {
-    buttonLabel: 'Save Configuration'
+    buttonLabel: 'Save Configuration',
+    reloadButtonLabel: 'Reload Configuration',
+    showUnassignedValueHint: true
   });
   const configLoader = renderConfigLoaderBlock(configLoaderBlock, {
     downloadButtonLabel: 'Download config.yaml',
@@ -42,6 +44,11 @@ export function renderEverestPage(container, {
     }
   });
 
+  let lastLoadedValues = null;
+  let pendingWriteRequestId = null;
+  let pendingReloadRequestId = null;
+  let latestReadRequestId = null;
+
   settingsTable.bindSubmit(() => {
     const values = settingsTable.getValues(settingsTable.requestResponseObject);
     const writeEverestConfigRequest = buildRequest(
@@ -49,13 +56,49 @@ export function renderEverestPage(container, {
       pageConfig.actions.write_config_parameters.action,
       values
     );
-    sendEverestRequest(
+    settingsTable.setStatus('Applying configuration...', 'info');
+    settingsTable.setApplyBusy(true);
+    pendingWriteRequestId = writeEverestConfigRequest.requestId;
+    if (!sendEverestRequest(
       sendPayload,
       addLog,
       writeEverestConfigRequest,
       pageConfig.actions.write_config_parameters.group,
       pageConfig.actions.write_config_parameters.action
+    )) {
+      pendingWriteRequestId = null;
+      settingsTable.setApplyBusy(false);
+      settingsTable.setStatus('Configuration could not be sent.', 'error');
+    }
+  });
+
+  settingsTable.bindReload(() => {
+    const currentValues = settingsTable.getValues(settingsTable.requestResponseObject);
+    if (hasUnsavedSettings(currentValues, lastLoadedValues) &&
+        !window.confirm('Reload configuration and discard unsaved changes?')) {
+      return;
+    }
+
+    const readEverestConfigRequest = buildReadConfigRequest(
+      pageConfig,
+      settingsTable
     );
+    settingsTable.setStatus('Reloading configuration...', 'info');
+    settingsTable.setReloadBusy(true);
+    pendingReloadRequestId = readEverestConfigRequest.requestId;
+    latestReadRequestId = readEverestConfigRequest.requestId;
+    addLog('everest configuration reload requested');
+    if (!sendEverestRequest(
+      sendPayload,
+      addLog,
+      readEverestConfigRequest,
+      pageConfig.actions.read_config_parameters.group,
+      pageConfig.actions.read_config_parameters.action
+    )) {
+      pendingReloadRequestId = null;
+      settingsTable.setReloadBusy(false);
+      settingsTable.setStatus('Configuration reload could not be sent.', 'error');
+    }
   });
 
   configLoader.bindDownload(() => {
@@ -97,17 +140,35 @@ export function renderEverestPage(container, {
   return {
     onMessage(message) {
       if (message.type === 'everest.read_config_parameters.result') {
+        if (!isMatchingRequestId(message.requestId, latestReadRequestId)) {
+          addLog('everest.read_config_parameters.result ignored as stale');
+          return;
+        }
         addLog('everest.read_config_parameters.result received');
         configLoader.clearStatus();
         settingsTable.applyAvailableModules(message.parameters?._available_modules);
-        settingsTable.setValues(
-          mapResponse('settings_table', settingsTable.requestResponseObject, message)
-        );
+        const mappedValues = mapResponse('settings_table', settingsTable.requestResponseObject, message);
+        settingsTable.setValues(mappedValues);
+        lastLoadedValues = settingsTable.getValues(settingsTable.requestResponseObject);
+        if (isMatchingRequest(message, pendingReloadRequestId)) {
+          pendingReloadRequestId = null;
+          settingsTable.setReloadBusy(false);
+          settingsTable.setStatus('Configuration reloaded.', 'success');
+          addLog('everest configuration reloaded');
+        }
         return;
       }
 
       if (message.type === 'everest.write_config_parameters.ack') {
+        if (!isMatchingRequest(message, pendingWriteRequestId)) {
+          return;
+        }
         addLog('everest.write_config_parameters.ack received');
+        pendingWriteRequestId = null;
+        lastLoadedValues = settingsTable.getValues(settingsTable.requestResponseObject);
+        settingsTable.setApplyBusy(false);
+        settingsTable.setStatus('Configuration saved.', 'success');
+        return;
       }
 
       if (message.type === 'everest.download_config.result') {
@@ -124,12 +185,26 @@ export function renderEverestPage(container, {
       }
 
       if (message.type === 'everest.read_config_parameters.error') {
-        const error = message.parameters.error
+        const error = message.parameters?.error || 'configuration reload failed';
+        if (!isMatchingRequestId(message.requestId, latestReadRequestId)) {
+          addLog(`everest.read_config_parameters.error ignored as stale: ${error}`);
+          return;
+        }
+        if (isMatchingRequest(message, pendingReloadRequestId)) {
+          pendingReloadRequestId = null;
+          settingsTable.setReloadBusy(false);
+          settingsTable.setStatus(error, 'error');
+        }
         addLog(`everest.read_config_parameters.error: ${error}`);
       }
 
       if (message.type === 'everest.write_config_parameters.error') {
-        const error = message.parameters.error
+        const error = message.parameters?.error || 'configuration save failed';
+        if (isMatchingRequest(message, pendingWriteRequestId)) {
+          pendingWriteRequestId = null;
+          settingsTable.setApplyBusy(false);
+          settingsTable.setStatus(error, 'error');
+        }
         addLog(`everest.write_config_parameters.error: ${error}`);
       }
 
@@ -145,14 +220,24 @@ export function renderEverestPage(container, {
       }
     },
     onConnectionChange(connected) {
+      if (connected === false) {
+        if (pendingWriteRequestId !== null) {
+          pendingWriteRequestId = null;
+          settingsTable.setApplyBusy(false);
+          settingsTable.setStatus('Configuration save interrupted by connection loss.', 'error');
+        }
+        if (pendingReloadRequestId !== null) {
+          pendingReloadRequestId = null;
+          settingsTable.setReloadBusy(false);
+          settingsTable.setStatus('Configuration reload interrupted by connection loss.', 'error');
+        }
+        return;
+      }
+
       // request current EVerest configuration after page is loaded and WS is connected
       if (connected === true) {
-        const values = settingsTable.getValues(settingsTable.requestResponseObject);
-        const readEverestConfigRequest = buildRequest(
-          pageConfig.actions.read_config_parameters.group,
-          pageConfig.actions.read_config_parameters.action,
-          values
-        );
+        const readEverestConfigRequest = buildReadConfigRequest(pageConfig, settingsTable);
+        latestReadRequestId = readEverestConfigRequest.requestId;
         sendEverestRequest(
           sendPayload,
           addLog,
@@ -162,8 +247,48 @@ export function renderEverestPage(container, {
         );
       }
     },
+    onRequestTimeout({ requestId, moduleAction }) {
+      if (moduleAction === 'everest:write_config_parameters' &&
+          isMatchingRequestId(requestId, pendingWriteRequestId)) {
+        pendingWriteRequestId = null;
+        settingsTable.setApplyBusy(false);
+        settingsTable.setStatus('Configuration save timed out. Reload to verify the result.', 'error');
+        addLog('everest.write_config_parameters timed out');
+      }
+      if (moduleAction === 'everest:read_config_parameters' &&
+          isMatchingRequestId(requestId, pendingReloadRequestId)) {
+        pendingReloadRequestId = null;
+        settingsTable.setReloadBusy(false);
+        settingsTable.setStatus('Configuration reload timed out.', 'error');
+        addLog('everest.read_config_parameters reload timed out');
+      }
+    },
     destroy() {}
   };
+}
+
+export function hasUnsavedSettings(currentValues, lastLoadedValues) {
+  if (!lastLoadedValues) {
+    return false;
+  }
+  return JSON.stringify(currentValues) !== JSON.stringify(lastLoadedValues);
+}
+
+function buildReadConfigRequest(pageConfig, settingsTable) {
+  const values = settingsTable.getValues(settingsTable.requestResponseObject);
+  return buildRequest(
+    pageConfig.actions.read_config_parameters.group,
+    pageConfig.actions.read_config_parameters.action,
+    values
+  );
+}
+
+function isMatchingRequest(message, requestId) {
+  return requestId !== null && isMatchingRequestId(message.requestId, requestId);
+}
+
+function isMatchingRequestId(requestId, expectedRequestId) {
+  return expectedRequestId !== null && String(requestId) === String(expectedRequestId);
 }
 
 function sendEverestRequest(sendPayload, addLog, request, group, action) {

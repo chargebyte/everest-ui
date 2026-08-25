@@ -4,6 +4,12 @@
 
 import { renderPasswordInput } from './passwordInput.js';
 
+export const kUnassignedValueHint =
+  'Leave a non-boolean field empty to keep its configured or module default value. Checkboxes always apply their selected value.';
+export const kSettingsTableReloadLabel = 'Reload Configuration';
+export const kSettingsTableReloadingLabel = 'Reloading configuration...';
+export const kSettingsTableApplyingLabel = 'Please wait while applying...';
+
 const kSettingsTableFields = {
   string: createSettingsTableTextInput,
   integer: createSettingsTableTextInput,
@@ -19,14 +25,47 @@ export function renderSettingsTableBlock(blockConfig, options) {
   element.className = 'section';
   const warningElement = createSettingsTableMissingNote();
   element.appendChild(warningElement);
+  if (options?.showUnassignedValueHint === true) {
+    element.appendChild(createSettingsTableUnassignedValueHint());
+  }
   const sectionElements = renderSettingsTableSections(blockConfig.sections, fieldMap);
 
   sectionElements.forEach((sectionElement) => {
     element.appendChild(sectionElement.element);
   });
 
+  const actionControlsElement = document.createElement('div');
+  actionControlsElement.className = 'settings-action-controls';
   const applyButtonElement = createSettingsTableApplyButton(options);
-  element.appendChild(applyButtonElement);
+  actionControlsElement.appendChild(applyButtonElement);
+  const reloadButtonElement = createSettingsTableReloadButton(options);
+  if (reloadButtonElement) {
+    actionControlsElement.appendChild(reloadButtonElement);
+  }
+  const statusElement = createSettingsTableActionStatus();
+  actionControlsElement.appendChild(statusElement);
+  element.appendChild(actionControlsElement);
+
+  let applyBusy = false;
+  let reloadBusy = false;
+
+  function updateActionState() {
+    const busy = applyBusy || reloadBusy;
+    applyButtonElement.disabled = busy;
+    if (reloadButtonElement) {
+      reloadButtonElement.disabled = busy;
+    }
+    applyButtonElement.classList.toggle('settings-apply-button-busy', applyBusy);
+    applyButtonElement.textContent = applyBusy
+      ? kSettingsTableApplyingLabel
+      : options?.buttonLabel || 'Apply';
+    if (reloadButtonElement) {
+      reloadButtonElement.classList.toggle('settings-reload-button-busy', reloadBusy);
+      reloadButtonElement.textContent = reloadBusy
+        ? kSettingsTableReloadingLabel
+        : options?.reloadButtonLabel || kSettingsTableReloadLabel;
+    }
+  }
 
   const requestResponseObject = createRequestResponseObject(blockConfig.sections);
 
@@ -42,6 +81,28 @@ export function renderSettingsTableBlock(blockConfig, options) {
         handler();
       });
     },
+    bindReload(handler) {
+      reloadButtonElement?.addEventListener('click', handler);
+    },
+    setApplyBusy(busy) {
+      applyBusy = busy === true;
+      updateActionState();
+    },
+    setReloadBusy(busy) {
+      reloadBusy = busy === true;
+      updateActionState();
+    },
+    setStatus(message, type = 'info') {
+      if (typeof message !== 'string' || message.trim() === '') {
+        statusElement.hidden = true;
+        statusElement.textContent = '';
+        statusElement.className = 'settings-action-status';
+        return;
+      }
+      statusElement.hidden = false;
+      statusElement.className = `settings-action-status settings-action-status-${type}`;
+      statusElement.textContent = message;
+    },
     applyAvailableModules(availableModules) {
       applySettingsTableAvailableModules(sectionElements, unavailableParameterIds, availableModules);
     },
@@ -55,6 +116,32 @@ export function renderSettingsTableBlock(blockConfig, options) {
       setSettingsTableValues(requestResponseObject, fieldMap);
     }
   };
+}
+
+function createSettingsTableReloadButton(options) {
+  if (options?.reloadButtonLabel === undefined) {
+    return null;
+  }
+
+  const buttonElement = document.createElement('button');
+  buttonElement.type = 'button';
+  buttonElement.className = 'btn btn-secondary settings-reload-button';
+  buttonElement.textContent = options.reloadButtonLabel || kSettingsTableReloadLabel;
+  return buttonElement;
+}
+
+function createSettingsTableActionStatus() {
+  const statusElement = document.createElement('p');
+  statusElement.className = 'settings-action-status';
+  statusElement.hidden = true;
+  return statusElement;
+}
+
+function createSettingsTableUnassignedValueHint() {
+  const hintElement = document.createElement('p');
+  hintElement.className = 'settings-unassigned-note';
+  hintElement.textContent = kUnassignedValueHint;
+  return hintElement;
 }
 
 function createRequestResponseObject(sections) {
@@ -376,7 +463,7 @@ function createSettingsTablePasswordInput(parameter, fieldMap) {
 function createSettingsTableApplyButton(options) {
   const buttonElement = document.createElement('button');
   buttonElement.type = 'button';
-  buttonElement.className = 'btn btn-start';
+  buttonElement.className = 'btn btn-start settings-apply-button';
   buttonElement.textContent = options?.buttonLabel || 'Apply';
 
   return buttonElement;

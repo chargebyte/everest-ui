@@ -6,6 +6,8 @@
 
 #include <QJsonArray>
 #include <QJsonValue>
+#include <QDebug>
+#include <QFileInfo>
 #include <iostream>
 
 #include <yaml-cpp/exceptions.h>
@@ -75,7 +77,13 @@ YamlLoadResult loadYamlFile(const QString &path) {
     try {
         std::cout << "Checking file " << path.toStdString() << std::endl;
         jsonValue = yamlNodeToJsonValue(YAML::LoadFile(path.toStdString()));
-    } catch (const YAML::BadFile &) {
+    } catch (const YAML::BadFile &error) {
+        const QFileInfo fileInfo(path);
+        qWarning() << "Unable to open YAML file" << path
+                   << "exists=" << fileInfo.exists()
+                   << "isSymlink=" << fileInfo.isSymLink()
+                   << "symlinkTarget=" << fileInfo.symLinkTarget()
+                   << "error=" << error.what();
         return YamlLoadResult{
             .success = false,
             .yamlRoot = QJsonObject{},
