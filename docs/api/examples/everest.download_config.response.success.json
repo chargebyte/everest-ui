@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "everest.download_config.result",
+  "parameters": {
+    "file": "config.yaml",
+    "config_yaml": "active_modules: {}\\n"
+  },
+  "responseId": "r-1"
+}
+

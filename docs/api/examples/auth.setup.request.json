@@ -1,0 +1,12 @@
+{
+  "method": "POST",
+  "path": "/auth/setup",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "username": "operator",
+    "password": "<password-at-least-8-characters>"
+  }
+}
+

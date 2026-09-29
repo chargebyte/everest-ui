@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "system.read_app_title.result",
+  "parameters": {
+    "appTitle": "EVerest WebUI"
+  },
+  "responseId": "r-1"
+}
+

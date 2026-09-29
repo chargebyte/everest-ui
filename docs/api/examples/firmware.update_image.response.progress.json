@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "final": false,
+  "requestId": 42,
+  "type": "firmware.update_image.progress",
+  "parameters": {
+    "progress": 50,
+    "stage": "Installing bundle"
+  },
+  "responseId": "r-2"
+}

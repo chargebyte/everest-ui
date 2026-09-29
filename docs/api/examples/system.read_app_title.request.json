@@ -1,0 +1,7 @@
+{
+  "requestId": 42,
+  "group": "system",
+  "action": "read_app_title",
+  "parameters": {}
+}
+

@@ -1,0 +1,14 @@
+{
+  "requestId": 42,
+  "group": "pcap",
+  "action": "write",
+  "parameters": {
+    "general": {
+      "interface": "eth2",
+      "filters": {
+        "v2g_hlc": false
+      }
+    }
+  }
+}
+

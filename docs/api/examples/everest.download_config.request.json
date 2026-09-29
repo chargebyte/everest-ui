@@ -1,0 +1,7 @@
+{
+  "requestId": 42,
+  "group": "everest",
+  "action": "download_config",
+  "parameters": {}
+}
+

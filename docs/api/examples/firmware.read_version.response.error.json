@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "firmware.read_version.error",
+  "parameters": {
+    "error": "<action-specific-error-code>"
+  },
+  "responseId": "r-2"
+}
+

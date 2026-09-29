@@ -1,0 +1,14 @@
+{
+  "requestId": 42,
+  "group": "firmware",
+  "action": "upload_image.start",
+  "parameters": {
+    "image": {
+      "file_name": "image.raucb",
+      "size_bytes": 3,
+      "chunk_count": 1,
+      "chunk_size_bytes": 65536
+    }
+  }
+}
+

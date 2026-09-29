@@ -1,0 +1,24 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "pcap.read_interfaces.result",
+  "parameters": {
+    "interfaces": [
+      {
+        "name": "eth0",
+        "up": true,
+        "running": true,
+        "loopback": false,
+        "bridge_member": false,
+        "driver": "e1000e",
+        "has_ipv4": true,
+        "has_ipv6_link_local": true,
+        "has_ipv6_configured": false,
+        "available": true,
+        "likely_powerline": false
+      }
+    ]
+  },
+  "responseId": "r-1"
+}

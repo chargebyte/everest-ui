@@ -1,0 +1,11 @@
+{
+  "requestId": 42,
+  "group": "everest",
+  "action": "read_config_parameters",
+  "parameters": {
+    "Profinet": {
+      "device": null
+    }
+  }
+}
+

@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "system_logs.download.result",
+  "parameters": {
+    "file": "system_logs_bundle.tar.gz",
+    "dataB64": "<base64 archive bytes>"
+  },
+  "responseId": "r-1"
+}

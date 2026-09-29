@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "firmware.update_image.result",
+  "parameters": {
+    "restart_required": true
+  },
+  "responseId": "r-1"
+}

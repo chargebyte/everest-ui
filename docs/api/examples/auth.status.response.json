@@ -1,0 +1,10 @@
+{
+  "http_status": 200,
+  "headers": {},
+  "body": {
+    "setupRequired": false,
+    "authenticated": false,
+    "uiBusy": false,
+    "appTitle": "EVerest WebUI"
+  }
+}

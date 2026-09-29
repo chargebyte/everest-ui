@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "everest.write_config_parameters.ack",
+  "parameters": {},
+  "responseId": "r-1"
+}
+

@@ -1,0 +1,10 @@
+{
+  "http_status": 200,
+  "headers": {
+    "Set-Cookie": "everest_ui_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"
+  },
+  "body": {
+    "success": true
+  }
+}
+

@@ -1,0 +1,15 @@
+{
+  "requestId": 42,
+  "group": "network",
+  "action": "write_settings",
+  "parameters": {
+    "interface": "eth0",
+    "dhcp_ipv4": true,
+    "dhcp_ipv6": true,
+    "dhcp_ipv4_static": false,
+    "ipv4_addresses": [],
+    "gateway": "",
+    "dns": []
+  }
+}
+

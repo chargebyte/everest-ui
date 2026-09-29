@@ -1,0 +1,12 @@
+{
+  "requestId": 42,
+  "group": "firmware",
+  "action": "upload_image.chunk",
+  "parameters": {
+    "image": {
+      "chunk_index": 0,
+      "dataB64": "YWJj"
+    }
+  }
+}
+

@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "network.apply.ack",
+  "parameters": {},
+  "responseId": "r-1"
+}

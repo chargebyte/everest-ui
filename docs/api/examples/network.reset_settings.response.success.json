@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "network.reset_settings.result",
+  "parameters": {
+    "interface": "eth0",
+    "user_override": true,
+    "reset_staged": true
+  },
+  "responseId": "r-1"
+}

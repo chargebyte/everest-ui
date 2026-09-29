@@ -1,0 +1,7 @@
+{
+  "requestId": 42,
+  "group": "safety",
+  "action": "read_settings",
+  "parameters": {}
+}
+

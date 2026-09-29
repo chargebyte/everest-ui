@@ -1,0 +1,7 @@
+{
+  "requestId": 42,
+  "group": "firmware",
+  "action": "update_image",
+  "parameters": {}
+}
+

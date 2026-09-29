@@ -1,0 +1,9 @@
+{
+  "requestId": 42,
+  "group": "network",
+  "action": "apply",
+  "parameters": {
+    "interface": "eth0"
+  }
+}
+

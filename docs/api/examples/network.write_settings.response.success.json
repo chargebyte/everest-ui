@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "network.write_settings.result",
+  "parameters": {
+    "network_file": "/etc/systemd/network/10-eth0.network"
+  },
+  "responseId": "r-1"
+}
+

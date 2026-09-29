@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "network.read_interfaces.result",
+  "parameters": {
+    "available": true,
+    "interfaces": [
+      {
+        "name": "eth0",
+        "index": 2,
+        "kind": "ethernet",
+        "operational_state": "routable",
+        "setup_state": "configured",
+        "driver": "e1000e",
+        "network_file": "/etc/systemd/network/10-eth0.network",
+        "bridge_member": false,
+        "loopback": false,
+        "probably_plc": false,
+        "editable": true,
+        "warning": []
+      }
+    ]
+  },
+  "responseId": "r-1"
+}

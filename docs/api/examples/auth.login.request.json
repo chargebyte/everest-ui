@@ -1,0 +1,12 @@
+{
+  "method": "POST",
+  "path": "/auth/login",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "username": "operator",
+    "password": "<password>"
+  }
+}
+

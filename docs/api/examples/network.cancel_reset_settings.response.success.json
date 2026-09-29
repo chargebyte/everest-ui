@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "network.cancel_reset_settings.result",
+  "parameters": {
+    "interface": "eth0",
+    "user_override": true,
+    "reset_staged": false
+  },
+  "responseId": "r-1"
+}
+
