@@ -62,6 +62,12 @@ Malformed JSON returns `request.parse.error` with `{"error":"invalid_json"}`. A 
 
 Names are defined in `backend/api/ProtocolSchema.hpp`; action-specific fields, results, and errors are in `backend/api/modules/*.cpp`. There is no OpenAPI or JSON Schema document.
 
+### Network interface classification
+
+The backend configuration key `network_iso_high_level_comms_drivers` is a comma-separated list of Linux kernel driver names used to identify interfaces for ISO high level communications (for example `mse102x,qcaspi`). It is shared by the `network.read_interfaces` and `pcap.read_interfaces` paths; it is not a PCAP-only setting.
+
+`network.read_interfaces` returns `probably_iso_high_level_comms`, which means the interface's sysfs driver matches a configured name (case-insensitively). `pcap.read_interfaces` returns `likely_iso_high_level_comms`, a stricter suggestion requiring a matching driver, an operational non-loopback interface that is not a bridge member, and a link-local IPv6 address. These are heuristic indicators, not definitive protocol detection. The PCAP response additionally provides a human-readable `recommendation` when the stricter heuristic matches. See the [network](examples/network.read_interfaces.response.success.json) and [PCAP](examples/pcap.read_interfaces.response.success.json) response templates.
+
 ## Important payloads
 
 ### EVerest configuration

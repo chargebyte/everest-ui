@@ -28,9 +28,9 @@ test('ignores settings responses for an older request or interface', () => {
 
 test('keeps interface warnings visible after settings data is loaded', () => {
   assert.deepEqual(
-    formatInterfaceWarnings({ warning: ['This interface probably belongs to a PLC/HomePlug adapter.'] }),
+    formatInterfaceWarnings({ warning: ['This interface is likely used for ISO high level communications (PLC/HomePlug).'] }),
     {
-      text: 'This interface probably belongs to a PLC/HomePlug adapter.',
+      text: 'This interface is likely used for ISO high level communications (PLC/HomePlug).',
       visible: true
     }
   );

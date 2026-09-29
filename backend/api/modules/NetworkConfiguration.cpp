@@ -5,6 +5,7 @@
 #include "NetworkConfiguration.hpp"
 
 #include "BackendConfig.hpp"
+#include "NetworkInterfaceUtils.hpp"
 #include "ProtocolSchema.hpp"
 
 #include <QFile>
@@ -46,7 +47,7 @@ constexpr char kParameterSetupState[] = "setup_state";
 constexpr char kParameterDriver[] = "driver";
 constexpr char kParameterBridgeMember[] = "bridge_member";
 constexpr char kParameterLoopback[] = "loopback";
-constexpr char kParameterProbablyPlc[] = "probably_plc";
+constexpr char kParameterProbablyIsoHighLevelComms[] = "probably_iso_high_level_comms";
 constexpr char kParameterDhcpIpv4[] = "dhcp_ipv4";
 constexpr char kParameterDhcpIpv6[] = "dhcp_ipv6";
 constexpr char kParameterDhcpIpv4Static[] = "dhcp_ipv4_static";
@@ -93,7 +94,7 @@ struct InterfaceInfo {
     QString networkFile;
     bool bridgeMember = false;
     bool loopback = false;
-    bool probablyPlc = false;
+    bool probablyIsoHighLevelComms = false;
 };
 
 struct NetworkDocument {
@@ -245,27 +246,6 @@ bool featureAvailable(const QString &feature) {
         }
     }
     return false;
-}
-
-QString sysfsDriver(const QString &name) {
-    const QFileInfo driverInfo(QStringLiteral("/sys/class/net/") + name + QStringLiteral("/device/driver"));
-    if (!driverInfo.isSymLink()) {
-        return {};
-    }
-    return QFileInfo(driverInfo.symLinkTarget()).fileName();
-}
-
-bool hasBridgeMaster(const QString &name) {
-    return QFileInfo(QStringLiteral("/sys/class/net/") + name + QStringLiteral("/master")).isSymLink();
-}
-
-QStringList configuredPlcDrivers() {
-    const QString configured = readBackendConfigValue(QStringLiteral("pcap_powerline_drivers"));
-    QStringList drivers;
-    for (const QString &driver : configured.split(QLatin1Char(','), kSkipEmptyParts)) {
-        drivers.append(driver.trimmed());
-    }
-    return drivers;
 }
 
 bool validInterfaceNameSyntax(const QString &name) {
@@ -888,8 +868,8 @@ QJsonObject interfaceObject(const InterfaceInfo &info) {
     if (info.loopback) {
         warnings.append(QStringLiteral("Loopback traffic is local to the target and is normally not a management interface."));
     }
-    if (info.probablyPlc) {
-        warnings.append(QStringLiteral("This interface probably belongs to a PLC/HomePlug adapter."));
+    if (info.probablyIsoHighLevelComms) {
+        warnings.append(QStringLiteral("This interface is likely used for ISO high level communications (PLC/HomePlug)."));
     }
     if (info.bridgeMember) {
         warnings.append(QStringLiteral("This interface has a network master; configure the master interface when appropriate."));
@@ -918,7 +898,7 @@ QJsonObject interfaceObject(const InterfaceInfo &info) {
         {QLatin1String(kParameterNetworkFile), info.networkFile},
         {QLatin1String(kParameterBridgeMember), info.bridgeMember},
         {QLatin1String(kParameterLoopback), info.loopback},
-        {QLatin1String(kParameterProbablyPlc), info.probablyPlc},
+        {QLatin1String(kParameterProbablyIsoHighLevelComms), info.probablyIsoHighLevelComms},
         {QLatin1String(kParameterEditable), !special},
         {QLatin1String(kParameterWarning), warningArray},
     };
@@ -933,7 +913,8 @@ QList<InterfaceInfo> readInterfaces(bool &success) {
         return {};
     }
 
-    const QStringList plcDrivers = configuredPlcDrivers();
+    const QStringList isoHighLevelCommsDrivers =
+        NetworkInterfaceUtils::configuredIsoHighLevelCommsDrivers();
     QList<InterfaceInfo> interfaces;
     for (const QString &line : QString::fromLocal8Bit(result.output).split(QLatin1Char('\n'))) {
         const QStringList fields = line.simplified().split(QLatin1Char(' '));
@@ -946,10 +927,11 @@ QList<InterfaceInfo> readInterfaces(bool &success) {
         info.kind = fields.at(2);
         info.operationalState = fields.at(fields.size() - 2);
         info.setupState = fields.constLast();
-        info.driver = sysfsDriver(info.name);
-        info.bridgeMember = hasBridgeMaster(info.name);
+        info.driver = NetworkInterfaceUtils::driverName(info.name);
+        info.bridgeMember = NetworkInterfaceUtils::hasBridgeMaster(info.name);
         info.loopback = info.name == QStringLiteral("lo");
-        info.probablyPlc = plcDrivers.contains(info.driver);
+        info.probablyIsoHighLevelComms = NetworkInterfaceUtils::isIsoHighLevelCommsDriver(
+            info.driver, isoHighLevelCommsDrivers);
         interfaces.append(info);
     }
     return interfaces;

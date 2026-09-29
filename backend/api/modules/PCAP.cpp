@@ -6,6 +6,7 @@
 
 #include "ConsoleConnector.hpp"
 #include "BackendConfig.hpp"
+#include "NetworkInterfaceUtils.hpp"
 #include "ProtocolSchema.hpp"
 #include "ResponseBuilder.hpp"
 
@@ -30,7 +31,6 @@ constexpr char kStopTemplate[] = "true";
 constexpr char kPlaceholderInterface[] = "<interface>";
 constexpr char kPlaceholderFileName[] = "<file_name>";
 constexpr char kPcapTmpFileName[] = "pcap_XXXXXX.pcap";
-constexpr char kConfPcapPowerlineDrivers[] = "pcap_powerline_drivers";
 constexpr char kConfPcapMaxSizeBytes[] = "pcap_max_size_bytes";
 constexpr char kConfPcapMaxDurationSeconds[] = "pcap_max_duration_seconds";
 constexpr int kPcapLimitCheckIntervalMs = 100;
@@ -47,32 +47,9 @@ constexpr char kKeyHasIpv4[] = "has_ipv4";
 constexpr char kKeyHasIpv6LinkLocal[] = "has_ipv6_link_local";
 constexpr char kKeyHasIpv6Configured[] = "has_ipv6_configured";
 constexpr char kKeyAvailable[] = "available";
-constexpr char kKeyLikelyPowerline[] = "likely_powerline";
+constexpr char kKeyLikelyIsoHighLevelComms[] = "likely_iso_high_level_comms";
 constexpr char kKeyRecommendation[] = "recommendation";
 constexpr char kKeyWarning[] = "warning";
-
-QStringList configuredPowerlineDrivers() {
-    const QString value = readBackendConfigValue(QLatin1String(kConfPcapPowerlineDrivers));
-    QStringList drivers;
-    for (const QString &driver : value.split(QLatin1Char(','))) {
-        const QString trimmedDriver = driver.trimmed();
-        if (!trimmedDriver.isEmpty()) {
-            drivers.append(trimmedDriver);
-        }
-    }
-    return drivers;
-}
-
-bool hasLinkLocalIpv6(const QNetworkInterface &netIf) {
-    const QHostAddress linkLocalSubnet(QStringLiteral("fe80::"));
-    for (const QNetworkAddressEntry &entry : netIf.addressEntries()) {
-        if (entry.ip().protocol() == QAbstractSocket::IPv6Protocol &&
-            entry.ip().isInSubnet(linkLocalSubnet, 10)) {
-            return true;
-        }
-    }
-    return false;
-}
 
 bool hasIpv4(const QNetworkInterface &netIf) {
     for (const QNetworkAddressEntry &entry : netIf.addressEntries()) {
@@ -93,31 +70,21 @@ bool hasConfiguredIpv6(const QNetworkInterface &netIf) {
     return false;
 }
 
-QString interfaceDriver(const QString &name) {
-    const QFileInfo driverInfo(QStringLiteral("/sys/class/net/%1/device/driver").arg(name));
-    if (!driverInfo.isSymLink()) {
-        return QString();
-    }
-    return QFileInfo(driverInfo.symLinkTarget()).fileName();
-}
-
-bool isBridgeMember(const QString &name) {
-    return QFileInfo(QStringLiteral("/sys/class/net/%1/master").arg(name)).isSymLink();
-}
-
-QJsonObject interfaceDescription(const QNetworkInterface &netIf) {
+QJsonObject interfaceDescription(const QNetworkInterface &netIf,
+                                 const QStringList &isoHighLevelCommsDrivers) {
     const auto flags = netIf.flags();
     const bool loopback = flags.testFlag(QNetworkInterface::IsLoopBack);
     const bool up = flags.testFlag(QNetworkInterface::IsUp);
     const bool running = flags.testFlag(QNetworkInterface::IsRunning);
-    const bool bridgeMember = isBridgeMember(netIf.name());
+    const bool bridgeMember = NetworkInterfaceUtils::hasBridgeMaster(netIf.name());
     const bool ipv4 = hasIpv4(netIf);
-    const bool ipv6LinkLocal = hasLinkLocalIpv6(netIf);
+    const bool ipv6LinkLocal = NetworkInterfaceUtils::hasLinkLocalIpv6(netIf);
     const bool ipv6Configured = hasConfiguredIpv6(netIf);
-    const QString driver = interfaceDriver(netIf.name());
-    const bool driverMatches = configuredPowerlineDrivers().contains(driver, Qt::CaseInsensitive);
+    const QString driver = NetworkInterfaceUtils::driverName(netIf.name());
     const bool operational = up && running;
-    const bool likelyPowerline = !loopback && !bridgeMember && operational && ipv6LinkLocal && driverMatches;
+    const bool likelyIsoHighLevelComms = NetworkInterfaceUtils::isLikelyIsoHighLevelCommsInterface(
+        loopback, bridgeMember, up, running, ipv6LinkLocal,
+        NetworkInterfaceUtils::isIsoHighLevelCommsDriver(driver, isoHighLevelCommsDrivers));
 
     QJsonObject description{
         {QLatin1String(kKeyName), netIf.name()},
@@ -130,11 +97,11 @@ QJsonObject interfaceDescription(const QNetworkInterface &netIf) {
         {QLatin1String(kKeyHasIpv6LinkLocal), ipv6LinkLocal},
         {QLatin1String(kKeyHasIpv6Configured), ipv6Configured},
         {QLatin1String(kKeyAvailable), operational},
-        {QLatin1String(kKeyLikelyPowerline), likelyPowerline},
+        {QLatin1String(kKeyLikelyIsoHighLevelComms), likelyIsoHighLevelComms},
     };
-    if (likelyPowerline) {
+    if (likelyIsoHighLevelComms) {
         description.insert(QLatin1String(kKeyRecommendation),
-                           QStringLiteral("Likely PLC/HomePlug interface"));
+                           QStringLiteral("Likely ISO high level communications interface (PLC/HomePlug)"));
     }
     if (loopback) {
         description.insert(QLatin1String(kKeyWarning),
@@ -160,7 +127,7 @@ QJsonObject anyInterfaceDescription() {
         {QLatin1String(kKeyHasIpv6LinkLocal), false},
         {QLatin1String(kKeyHasIpv6Configured), false},
         {QLatin1String(kKeyAvailable), true},
-        {QLatin1String(kKeyLikelyPowerline), false},
+        {QLatin1String(kKeyLikelyIsoHighLevelComms), false},
         {QLatin1String(kKeyWarning), QStringLiteral("May record a very large amount of unrelated traffic")},
     };
 }
@@ -391,8 +358,10 @@ ModuleResponse PCAP::handleRequest(const ModuleRequest &request) {
 ModuleResponse PCAP::handleReadInterfacesRequest(const ModuleRequest &request) {
     QJsonArray interfaces;
     interfaces.append(anyInterfaceDescription());
+    const QStringList isoHighLevelCommsDrivers =
+        NetworkInterfaceUtils::configuredIsoHighLevelCommsDrivers();
     for (const QNetworkInterface &netIf : QNetworkInterface::allInterfaces()) {
-        interfaces.append(interfaceDescription(netIf));
+        interfaces.append(interfaceDescription(netIf, isoHighLevelCommsDrivers));
     }
 
     return ModuleResponse{

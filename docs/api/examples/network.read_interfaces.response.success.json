@@ -16,7 +16,7 @@
         "network_file": "/etc/systemd/network/10-eth0.network",
         "bridge_member": false,
         "loopback": false,
-        "probably_plc": false,
+        "probably_iso_high_level_comms": false,
         "editable": true,
         "warning": []
       }

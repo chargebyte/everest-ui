@@ -16,7 +16,7 @@
         "has_ipv6_link_local": true,
         "has_ipv6_configured": false,
         "available": true,
-        "likely_powerline": false
+        "likely_iso_high_level_comms": false
       }
     ]
   },
