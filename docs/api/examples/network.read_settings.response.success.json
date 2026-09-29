@@ -5,7 +5,7 @@
   "type": "network.read_settings.result",
   "parameters": {
     "interface": "eth0",
-    "network_file": "/etc/systemd/network/10-eth0.network",
+    "network_file": "/lib/systemd/network/10-eth0.network",
     "dhcp_ipv4": true,
     "dhcp_ipv6": true,
     "dhcp_ipv4_static": false,
@@ -19,4 +19,3 @@
   },
   "responseId": "r-1"
 }
-

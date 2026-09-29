@@ -70,6 +70,12 @@ The backend configuration key `network_iso_high_level_comms_drivers` is a comma-
 
 ## Important payloads
 
+### Network settings
+
+`network.read_settings` reports the selected main file in `network_file`, as reported by `networkctl status`. It reads that file and applicable systemd `.network.d/*.conf` drop-ins to populate the editor. `network.write_settings` writes only settings that differ from the parsed underlay to `overlay_file`, using `/etc/systemd/network/<selected-network-filename>.d/50-everest-ui.conf` (for example, `10-wired.network.d/50-everest-ui.conf`); it never copies or rewrites the selected main file. `network_file` in the write result continues to identify the selected source file. `user_override` is true only when the overlay has the EVerest UI ownership marker. If status reports no selected network file, the settings are not editable.
+
+An existing unmarked `50-everest-ui.conf` in `/etc` is adopted and replaced when settings are saved. If a lower-priority directory has that filename but `/etc` does not, the write is rejected rather than shadowing the lower-priority file. Reset removes only a marked overlay; it does not remove an unmarked overlay or a main `/etc/*.network` file. Current legacy main files have no ownership marker and are therefore preserved. Reset is staged until `network.apply`; an unmarked overlay causes `network_config_unowned_dropin`. When replacing list-valued settings, systemd empty assignments clear prior values before the requested values are added. Edits that cannot preserve unsupported address or route configuration are rejected as `unsupported_network_configuration`.
+
 ### EVerest configuration
 
 Read and write use nested module/parameter objects:

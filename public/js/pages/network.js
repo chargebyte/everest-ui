@@ -399,7 +399,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
         pendingWriteRequestId = null;
         pendingWriteSettings = null;
         pendingWriteInterface = '';
-        userOverride = true;
+        userOverride = message.parameters?.user_override === true;
         resetStaged = false;
         updateDirtyState(false);
         setWarning('Network configuration saved. Apply it separately when ready.');

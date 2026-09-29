@@ -11,6 +11,21 @@
 
 #include <QVector>
 
+namespace {
+bool writeOwnedOverlay(const QString &path, const QByteArray &contents = {}) {
+    if (!QDir().mkpath(QFileInfo(path).dir().absolutePath())) {
+        return false;
+    }
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly | QIODevice::Text) &&
+           file.write(QByteArray(kOwnedOverlayMarker) + '\n' + contents) >= 0;
+}
+
+QString testOverlayPath(const QString &root, const QString &interfaceName) {
+    return root + QLatin1Char('/') + interfaceName + QStringLiteral(".network.d/50-everest-ui.conf");
+}
+} // namespace
+
 class NetworkConfigurationTest final : public QObject {
     Q_OBJECT
 
@@ -60,36 +75,16 @@ private slots:
         QCOMPARE(parsedAddresses.at(1).toString(), QStringLiteral("169.254.12.53/16"));
         QJsonArray replacementAddresses;
         replacementAddresses.append(QStringLiteral("192.168.0.38/24"));
-        replacementAddresses.append(QStringLiteral("169.254.20.1/16"));
-        restrictMatchToInterface(document, QStringLiteral("br0"));
-        QVERIFY(replaceOwnedKeys(document, QJsonObject{
-                                             {QStringLiteral("dhcp_ipv4"), true},
-                                             {QStringLiteral("dhcp_ipv6"), true},
-                                             {QStringLiteral("dhcp_ipv4_static"), true},
-                                             {QStringLiteral("ipv4_addresses"), replacementAddresses},
-                                             {QStringLiteral("gateway"), QString()},
-                                             {QStringLiteral("dns"), QJsonArray{}}}));
-        const QString output = document.lines.join(QLatin1Char('\n'));
-        QCOMPARE(output.count(QStringLiteral("[Network]")), 1);
-        QVERIFY(output.contains(QStringLiteral("[Match]\nName=br0\n\n[Network]")));
-        QVERIFY(output.contains(QStringLiteral("Label=br0:fallback")));
-        QVERIFY(output.contains(QStringLiteral("Address=192.168.0.38/24")));
-        QVERIFY(output.contains(QStringLiteral("Address=169.254.20.1/16")));
-        QVERIFY(output.contains(QStringLiteral("DuplicateAddressDetection=none")));
-
-        QJsonArray noAddresses;
-        document = NetworkDocument{{QStringLiteral("[Network]"), QStringLiteral("DHCP=yes"),
-                                    QStringLiteral("[Address]"), QStringLiteral("Label=br0:fallback"),
-                                    QStringLiteral("Address=169.254.12.53/16"),
-                                    QStringLiteral("DuplicateAddressDetection=none")}};
-        QVERIFY(replaceOwnedKeys(document, QJsonObject{
-                                             {QStringLiteral("dhcp_ipv4"), true},
-                                             {QStringLiteral("dhcp_ipv6"), true},
-                                             {QStringLiteral("dhcp_ipv4_static"), false},
-                                             {QStringLiteral("ipv4_addresses"), noAddresses},
-                                             {QStringLiteral("gateway"), QString()},
-                                             {QStringLiteral("dns"), QJsonArray{}}}));
-        QVERIFY(!document.lines.join(QLatin1Char('\n')).contains(QStringLiteral("Label=br0:fallback")));
+        NetworkDocument overlay;
+        const bool overlayBuilt = buildOverlayDocument(
+            document, QJsonObject{{QStringLiteral("dhcp_ipv4"), true},
+                                  {QStringLiteral("dhcp_ipv6"), true},
+                                  {QStringLiteral("dhcp_ipv4_static"), true},
+                                  {QStringLiteral("ipv4_addresses"), replacementAddresses},
+                                  {QStringLiteral("gateway"), QString()},
+                                  {QStringLiteral("dns"), QJsonArray{}}},
+            overlay);
+        QVERIFY(!overlayBuilt);
     }
 
     void parsesFallbackLabelAfterAddress() {
@@ -188,56 +183,234 @@ private slots:
                                    {QStringLiteral("ipv4_addresses"), addresses},
                                    {QStringLiteral("gateway"), QStringLiteral("192.168.1.1")},
                                    {QStringLiteral("dns"), QJsonArray{}}};
-        replaceOwnedKeys(document, settings);
-        const QString output = document.lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
-        QVERIFY(output.contains(QStringLiteral("DHCP=yes\n")));
+        NetworkDocument overlay;
+        QVERIFY(buildOverlayDocument(document, settings, overlay));
+        const QString output = overlay.lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
+        QVERIFY(output.startsWith(QLatin1String(kOwnedOverlayMarker)));
+        QVERIFY(output.contains(QStringLiteral("[Network]\n")));
         QVERIFY(output.contains(QStringLiteral("Address=192.168.1.20/24\n")));
         QVERIFY(output.contains(QStringLiteral("Gateway=192.168.1.1\n")));
+        QVERIFY(!output.contains(QStringLiteral("[Match]")));
     }
 
-    void removesUserOverrideAndIsIdempotent() {
-        const QTemporaryDir directory;
-        QVERIFY(directory.isValid());
-        const QString path = directory.filePath(QStringLiteral("eth0.network"));
-        QFile file(path);
-        QVERIFY(file.open(QIODevice::WriteOnly));
-        file.close();
-        QVERIFY(removeUserNetworkOverride(path));
-        QVERIFY(!QFile::exists(path));
-        QVERIFY(removeUserNetworkOverride(path));
-    }
-
-    void writingDhcpOnlyPreservesIpv6AndMatch() {
-        NetworkDocument document{
-            {QStringLiteral("[Match]"), QStringLiteral("Name=en*"),
-             QStringLiteral("Driver=example"), QStringLiteral("[Network]"),
-             QStringLiteral("DHCP=yes"), QStringLiteral("Address=192.168.1.20/24"),
-             QStringLiteral("Gateway=192.168.1.1")}};
+    void writingDhcpOnlyEmitsOnlyChangedDirective() {
+        NetworkDocument document{{QStringLiteral("[Match]"), QStringLiteral("Name=en*"),
+                                  QStringLiteral("Driver=example"), QStringLiteral("[Network]"),
+                                  QStringLiteral("DHCP=yes"), QStringLiteral("Address=192.168.1.20/24"),
+                                  QStringLiteral("Gateway=192.168.1.1")}};
         QJsonArray addresses;
         addresses.append(QStringLiteral("192.168.1.20/24"));
         const QJsonObject settings{
             {QStringLiteral("dhcp_ipv4"), true},
-            {QStringLiteral("dhcp_ipv6"), true},
+            {QStringLiteral("dhcp_ipv6"), false},
+            {QStringLiteral("dhcp_ipv4_static"), true},
             {QStringLiteral("ipv4_addresses"), addresses},
             {QStringLiteral("gateway"), QStringLiteral("192.168.1.1")},
             {QStringLiteral("dns"), QJsonArray{}}};
 
-        restrictMatchToInterface(document, QStringLiteral("eth0"));
-        replaceOwnedKeys(document, settings);
-        const QString output = document.lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
-        QVERIFY(output.contains(QStringLiteral("Name=eth0\n")));
-        QVERIFY(output.contains(QStringLiteral("DHCP=yes\n")));
+        NetworkDocument overlay;
+        QVERIFY(buildOverlayDocument(document, settings, overlay));
+        const QString overlayText = overlay.lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
+        QVERIFY(overlayText.contains(QStringLiteral("DHCP=ipv4\n")));
+        QCOMPARE(overlayText.count(QStringLiteral("DHCP=")), 1);
+        QVERIFY(!overlayText.contains(QStringLiteral("Name=")));
+        QVERIFY(!overlayText.contains(QStringLiteral("Driver=")));
+        QVERIFY(!overlayText.contains(QStringLiteral("Address=")));
+        QVERIFY(!overlayText.contains(QStringLiteral("Gateway=")));
+    }
+
+    void unchangedSettingsProduceNoOverlayDirectives() {
+        NetworkDocument underlay{{QStringLiteral("[Network]"), QStringLiteral("DHCP=yes"),
+                                  QStringLiteral("DNS=8.8.8.8")}};
+        QJsonArray dns;
+        dns.append(QStringLiteral("8.8.8.8"));
+        NetworkDocument overlay;
+        QVERIFY(buildOverlayDocument(
+            underlay, QJsonObject{{QStringLiteral("dhcp_ipv4"), true},
+                                  {QStringLiteral("dhcp_ipv6"), true},
+                                  {QStringLiteral("dhcp_ipv4_static"), false},
+                                  {QStringLiteral("ipv4_addresses"), QJsonArray{}},
+                                  {QStringLiteral("gateway"), QString()},
+                                  {QStringLiteral("dns"), dns}},
+            overlay));
+        QVERIFY(overlay.lines.isEmpty());
+    }
+
+    void dropInDirectoryUsesSelectedNetworkFilename() {
+        QCOMPARE(userNetworkOverlayPath(QStringLiteral("/lib/systemd/network/10-wired.network")),
+                 QStringLiteral("/etc/systemd/network/10-wired.network.d/50-everest-ui.conf"));
+    }
+
+    void lowerPriorityOwnedNameIsNotShadowedByNewOverlay() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString networkFile = QStringLiteral("/usr/lib/systemd/network/10-wired.network");
+        const QString target = directory.filePath(QStringLiteral("etc/50-everest-ui.conf"));
+        const QString lowerPath = directory.filePath(
+            QStringLiteral("run/10-wired.network.d/50-everest-ui.conf"));
+        QVERIFY(QDir().mkpath(QFileInfo(lowerPath).dir().absolutePath()));
+        QFile lower(lowerPath);
+        QVERIFY(lower.open(QIODevice::WriteOnly | QIODevice::Text));
+        lower.write("[Network]\nDHCP=no\n");
+        lower.close();
+        QVERIFY(lowerPriorityOverlayConflict(networkFile, target,
+                                             {directory.filePath(QStringLiteral("run"))}));
+
+        QVERIFY(QDir().mkpath(QFileInfo(target).dir().absolutePath()));
+        QFile adopted(target);
+        QVERIFY(adopted.open(QIODevice::WriteOnly | QIODevice::Text));
+        adopted.write("user-owned until adopted");
+        adopted.close();
+        QVERIFY(!lowerPriorityOverlayConflict(networkFile, target,
+                                              {directory.filePath(QStringLiteral("run"))}));
+    }
+
+    void mergesDropInsByNameAndDirectoryPrecedence() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString etcRoot = directory.filePath(QStringLiteral("etc")) + QLatin1Char('/');
+        const QString runRoot = directory.filePath(QStringLiteral("run")) + QLatin1Char('/');
+        const QString usrRoot = directory.filePath(QStringLiteral("usr")) + QLatin1Char('/');
+        const QString mainFile = usrRoot + QStringLiteral("10-wired.network");
+        const QString dropInSuffix = QStringLiteral("10-wired.network.d/");
+        const auto writeFile = [](const QString &path, const QByteArray &contents) {
+            if (!QDir().mkpath(QFileInfo(path).dir().absolutePath())) {
+                return false;
+            }
+            QFile file(path);
+            return file.open(QIODevice::WriteOnly | QIODevice::Text) && file.write(contents) >= 0;
+        };
+        QVERIFY(writeFile(mainFile, "[Network]\nDHCP=no\nDNS=8.8.8.8\n"));
+        QVERIFY(writeFile(usrRoot + dropInSuffix + QStringLiteral("20-vendor.conf"),
+                          "[Network]\nDHCP=ipv4\n"));
+        QVERIFY(writeFile(runRoot + dropInSuffix + QStringLiteral("20-vendor.conf"),
+                          "[Network]\nDHCP=ipv6\n"));
+        QVERIFY(writeFile(etcRoot + dropInSuffix + QStringLiteral("20-vendor.conf"),
+                          "[Network]\nDHCP=yes\n"));
+        QVERIFY(writeFile(runRoot + dropInSuffix + QStringLiteral("30-run.conf"),
+                          "[Network]\nDNS=\nDNS=1.1.1.1\n"));
+
+        bool ok = false;
+        const NetworkDocument effective = readEffectiveNetworkDocumentFromRoots(
+            mainFile, true, ok, {etcRoot, runRoot, usrRoot},
+            etcRoot + dropInSuffix + QLatin1String(kOwnedOverlayName));
+        QVERIFY(ok);
+        const QJsonObject settings = parseDocument(effective, QStringLiteral("eth0"), mainFile);
+        QVERIFY(settings.value(QStringLiteral("dhcp_ipv4")).toBool());
+        QVERIFY(settings.value(QStringLiteral("dhcp_ipv6")).toBool());
+        QCOMPARE(settings.value(QStringLiteral("dns")).toArray().size(), 1);
+        QCOMPARE(settings.value(QStringLiteral("dns")).toArray().at(0).toString(),
+                 QStringLiteral("1.1.1.1"));
+    }
+
+    void deltaPreservesDnsValuesOutsideTheEditor() {
+        NetworkDocument underlay{{QStringLiteral("[Network]"), QStringLiteral("DHCP=yes"),
+                                  QStringLiteral("DNS=2001:db8::53"),
+                                  QStringLiteral("DNS=8.8.8.8")}};
+        QJsonArray dns;
+        dns.append(QStringLiteral("1.1.1.1"));
+        NetworkDocument overlay;
+        QVERIFY(buildOverlayDocument(
+            underlay, QJsonObject{{QStringLiteral("dhcp_ipv4"), true},
+                                  {QStringLiteral("dhcp_ipv6"), true},
+                                  {QStringLiteral("dhcp_ipv4_static"), false},
+                                  {QStringLiteral("ipv4_addresses"), QJsonArray{}},
+                                  {QStringLiteral("gateway"), QString()},
+                                  {QStringLiteral("dns"), dns}},
+            overlay));
+        const QString output = overlay.lines.join(QLatin1Char('\n'));
+        QVERIFY(output.contains(QStringLiteral("DNS=\nDNS=2001:db8::53\nDNS=1.1.1.1")));
+        QVERIFY(!output.contains(QStringLiteral("DNS=8.8.8.8")));
+    }
+
+    void emptyAddressAndGatewayValuesClearTheUnderlay() {
+        NetworkDocument underlay{{QStringLiteral("[Network]"), QStringLiteral("DHCP=yes"),
+                                  QStringLiteral("Address=192.168.1.20/24"),
+                                  QStringLiteral("Gateway=192.168.1.1")}};
+        NetworkDocument overlay;
+        QVERIFY(buildOverlayDocument(
+            underlay, QJsonObject{{QStringLiteral("dhcp_ipv4"), true},
+                                  {QStringLiteral("dhcp_ipv6"), true},
+                                  {QStringLiteral("dhcp_ipv4_static"), false},
+                                  {QStringLiteral("ipv4_addresses"), QJsonArray{}},
+                                  {QStringLiteral("gateway"), QString()},
+                                  {QStringLiteral("dns"), QJsonArray{}}},
+            overlay));
+        const QString output = overlay.lines.join(QLatin1Char('\n'));
+        QVERIFY(output.contains(QStringLiteral("Address=")));
+        QVERIFY(output.contains(QStringLiteral("Gateway=")));
         QVERIFY(!output.contains(QStringLiteral("Address=192.168.1.20/24")));
         QVERIFY(!output.contains(QStringLiteral("Gateway=192.168.1.1")));
-        QVERIFY(output.endsWith(QLatin1Char('\n')));
+    }
+
+    void addressDeltaRejectsChangesThatWouldClearIpv6() {
+        NetworkDocument underlay{{QStringLiteral("[Network]"), QStringLiteral("DHCP=no"),
+                                  QStringLiteral("Address=192.168.1.20/24"),
+                                  QStringLiteral("Address=2001:db8::20/64")}};
+        QJsonArray addresses;
+        addresses.append(QStringLiteral("192.168.1.21/24"));
+        NetworkDocument overlay;
+        QVERIFY(!buildOverlayDocument(
+            underlay, QJsonObject{{QStringLiteral("dhcp_ipv4"), false},
+                                  {QStringLiteral("dhcp_ipv6"), false},
+                                  {QStringLiteral("dhcp_ipv4_static"), false},
+                                  {QStringLiteral("ipv4_addresses"), addresses},
+                                  {QStringLiteral("gateway"), QString()},
+                                  {QStringLiteral("dns"), QJsonArray{}}},
+            overlay));
+    }
+
+    void ownershipMarkerControlsOverlayManagement() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath(QStringLiteral("50-everest-ui.conf"));
+        QFile unmarked(path);
+        QVERIFY(unmarked.open(QIODevice::WriteOnly | QIODevice::Text));
+        unmarked.write("[Network]\nDHCP=no\n");
+        unmarked.close();
+        QVERIFY(!isUiOwnedOverlay(path));
+        QVERIFY(writeOwnedOverlay(path, "[Network]\nDHCP=no\n"));
+        QVERIFY(isUiOwnedOverlay(path));
+    }
+
+    void resetRejectsUnmarkedOverlayAndPreservesMainNetworkFile() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString interfaceName = QStringLiteral("eth0");
+        const QString mainFile = directory.filePath(QStringLiteral("eth0.network"));
+        QFile main(mainFile);
+        QVERIFY(main.open(QIODevice::WriteOnly | QIODevice::Text));
+        main.write("base config");
+        main.close();
+        const QString overlayPath = testOverlayPath(directory.path(), interfaceName);
+        QFile overlay(overlayPath);
+        QVERIFY(QDir().mkpath(QFileInfo(overlayPath).dir().absolutePath()));
+        QVERIFY(overlay.open(QIODevice::WriteOnly | QIODevice::Text));
+        overlay.write("[Network]\nDHCP=no\n");
+        overlay.close();
+
+        QSet<QString> pending{interfaceName};
+        int reloadCount = 0;
+        const ResetApplyResult result = applyPendingResets(
+            pending, [&overlayPath](const QString &) { return overlayPath; },
+            [&reloadCount](const QString &, const QStringList &) {
+                ++reloadCount;
+                return CommandResult{true, 0, {}};
+            });
+
+        QVERIFY(result.writeFailed);
+        QCOMPARE(reloadCount, 0);
+        QVERIFY(QFile::exists(mainFile));
+        QVERIFY(QFile::exists(overlayPath));
+        QVERIFY(pending.contains(interfaceName));
     }
 
     void resetResponseContractIsStaged() {
         QJsonObject parameters{
             {QStringLiteral("interface"), QStringLiteral("eth0")},
-            {QStringLiteral("user_override"), false},
+            {QStringLiteral("user_override"), true},
             {QStringLiteral("reset_staged"), true}};
-        QVERIFY(!parameters.value(QStringLiteral("user_override")).toBool());
+        QVERIFY(parameters.value(QStringLiteral("user_override")).toBool());
         QCOMPARE(parameters.value(QStringLiteral("interface")).toString(), QStringLiteral("eth0"));
         QVERIFY(parameters.value(QStringLiteral("reset_staged")).toBool());
     }
@@ -255,26 +428,29 @@ private slots:
         QVERIFY(directory.isValid());
         QSet<QString> pending{QStringLiteral("eth0"), QStringLiteral("eth1")};
         for (const QString &interfaceName : pending) {
-            QFile file(directory.filePath(interfaceName + QStringLiteral(".network")));
-            QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
-            file.write(interfaceName.toUtf8());
+            QFile base(directory.filePath(interfaceName + QStringLiteral(".network")));
+            QVERIFY(base.open(QIODevice::WriteOnly | QIODevice::Text));
+            QVERIFY(base.write("base configuration") >= 0);
+            base.close();
+            QVERIFY(writeOwnedOverlay(testOverlayPath(directory.path(), interfaceName),
+                                      interfaceName.toUtf8()));
         }
 
         const ResetApplyResult result = applyPendingResets(
             pending,
             [&directory](const QString &interfaceName) {
-                return directory.filePath(interfaceName + QStringLiteral(".network"));
+                return testOverlayPath(directory.path(), interfaceName);
             },
             [](const QString &, const QStringList &) { return CommandResult{true, 0, {}}; });
 
         QVERIFY(result.success);
         QVERIFY(pending.isEmpty());
         for (const QString &interfaceName : {QStringLiteral("eth0"), QStringLiteral("eth1")}) {
-            QVERIFY(!QFile::exists(directory.filePath(interfaceName + QStringLiteral(".network"))));
-            QVERIFY(!QFile::exists(directory.filePath(interfaceName + QStringLiteral(".network") +
-                                                      QLatin1String(kResetBackupSuffix))));
-            QVERIFY(!QFile::exists(directory.filePath(interfaceName + QStringLiteral(".network") +
-                                                      QLatin1String(kResetCommittedSuffix))));
+            const QString path = testOverlayPath(directory.path(), interfaceName);
+            QVERIFY(QFile::exists(directory.filePath(interfaceName + QStringLiteral(".network"))));
+            QVERIFY(!QFile::exists(path));
+            QVERIFY(!QFile::exists(path + QLatin1String(kResetBackupSuffix)));
+            QVERIFY(!QFile::exists(path + QLatin1String(kResetCommittedSuffix)));
         }
     }
 
@@ -285,16 +461,15 @@ private slots:
         QHash<QString, QByteArray> contents;
         for (const QString &interfaceName : pending) {
             contents.insert(interfaceName, interfaceName.toUtf8());
-            QFile file(directory.filePath(interfaceName + QStringLiteral(".network")));
-            QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
-            file.write(contents.value(interfaceName));
+            QVERIFY(writeOwnedOverlay(testOverlayPath(directory.path(), interfaceName),
+                                      contents.value(interfaceName)));
         }
 
         int reloadCount = 0;
         const ResetApplyResult result = applyPendingResets(
             pending,
             [&directory](const QString &interfaceName) {
-                return directory.filePath(interfaceName + QStringLiteral(".network"));
+                return testOverlayPath(directory.path(), interfaceName);
             },
             [&reloadCount](const QString &, const QStringList &) {
                 ++reloadCount;
@@ -307,11 +482,11 @@ private slots:
         QCOMPARE(reloadCount, 2);
         QCOMPARE(pending.size(), 2);
         for (const QString &interfaceName : pending) {
-            QFile file(directory.filePath(interfaceName + QStringLiteral(".network")));
+            const QString path = testOverlayPath(directory.path(), interfaceName);
+            QFile file(path);
             QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
-            QCOMPARE(file.readAll(), contents.value(interfaceName));
-            QVERIFY(!QFile::exists(directory.filePath(interfaceName + QStringLiteral(".network") +
-                                                       QLatin1String(kResetBackupSuffix))));
+            QCOMPARE(file.readAll(), QByteArray(kOwnedOverlayMarker) + '\n' + contents.value(interfaceName));
+            QVERIFY(!QFile::exists(path + QLatin1String(kResetBackupSuffix)));
         }
     }
 
@@ -320,12 +495,12 @@ private slots:
         QVERIFY(directory.isValid());
         QSet<QString> pending{QStringLiteral("eth0"), QStringLiteral("eth1")};
         for (const QString &interfaceName : pending) {
-            QFile file(directory.filePath(interfaceName + QStringLiteral(".network")));
-            QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
-            file.write(interfaceName.toUtf8());
+            QVERIFY(writeOwnedOverlay(testOverlayPath(directory.path(), interfaceName),
+                                      interfaceName.toUtf8()));
         }
-        QFile existingCommitted(directory.filePath(QStringLiteral("eth1.network") +
-                                                   QLatin1String(kResetCommittedSuffix)));
+        QFile existingCommitted(testOverlayPath(directory.path(), QStringLiteral("eth1")) +
+                                QLatin1String(kResetCommittedSuffix));
+        QVERIFY(QDir().mkpath(QFileInfo(existingCommitted.fileName()).dir().absolutePath()));
         QVERIFY(existingCommitted.open(QIODevice::WriteOnly | QIODevice::Text));
         existingCommitted.write("existing committed marker");
         existingCommitted.close();
@@ -334,7 +509,7 @@ private slots:
         const ResetApplyResult result = applyPendingResets(
             pending,
             [&directory](const QString &interfaceName) {
-                return directory.filePath(interfaceName + QStringLiteral(".network"));
+                return testOverlayPath(directory.path(), interfaceName);
             },
             [&reloadCount](const QString &, const QStringList &) {
                 ++reloadCount;
@@ -345,12 +520,12 @@ private slots:
         QVERIFY(result.applyFailed);
         QCOMPARE(reloadCount, 2);
         for (const QString &interfaceName : pending) {
-            QVERIFY(QFile::exists(directory.filePath(interfaceName + QStringLiteral(".network"))));
-            QVERIFY(!QFile::exists(directory.filePath(interfaceName + QStringLiteral(".network") +
-                                                       QLatin1String(kResetBackupSuffix))));
+            const QString path = testOverlayPath(directory.path(), interfaceName);
+            QVERIFY(QFile::exists(path));
+            QVERIFY(!QFile::exists(path + QLatin1String(kResetBackupSuffix)));
         }
-        QVERIFY(QFile::exists(directory.filePath(QStringLiteral("eth1.network") +
-                                                 QLatin1String(kResetCommittedSuffix))));
+        QVERIFY(QFile::exists(testOverlayPath(directory.path(), QStringLiteral("eth1")) +
+                              QLatin1String(kResetCommittedSuffix)));
     }
 
     void resetApplyRestoresEarlierOverridesWhenStagingLaterOneFails() {
@@ -358,12 +533,12 @@ private slots:
         QVERIFY(directory.isValid());
         QSet<QString> pending{QStringLiteral("eth0"), QStringLiteral("eth1")};
         for (const QString &interfaceName : pending) {
-            QFile file(directory.filePath(interfaceName + QStringLiteral(".network")));
-            QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
-            file.write(interfaceName.toUtf8());
+            QVERIFY(writeOwnedOverlay(testOverlayPath(directory.path(), interfaceName),
+                                      interfaceName.toUtf8()));
         }
-        QFile existingBackup(directory.filePath(QStringLiteral("eth1.network") +
-                                                QLatin1String(kResetBackupSuffix)));
+        QFile existingBackup(testOverlayPath(directory.path(), QStringLiteral("eth1")) +
+                             QLatin1String(kResetBackupSuffix));
+        QVERIFY(QDir().mkpath(QFileInfo(existingBackup.fileName()).dir().absolutePath()));
         QVERIFY(existingBackup.open(QIODevice::WriteOnly | QIODevice::Text));
         existingBackup.write("existing backup");
         existingBackup.close();
@@ -372,7 +547,7 @@ private slots:
         const ResetApplyResult result = applyPendingResets(
             pending,
             [&directory](const QString &interfaceName) {
-                return directory.filePath(interfaceName + QStringLiteral(".network"));
+                return testOverlayPath(directory.path(), interfaceName);
             },
             [&reloadCount](const QString &, const QStringList &) {
                 ++reloadCount;
@@ -382,10 +557,10 @@ private slots:
         QVERIFY(!result.success);
         QVERIFY(result.writeFailed);
         QCOMPARE(reloadCount, 0);
-        QVERIFY(QFile::exists(directory.filePath(QStringLiteral("eth0.network"))));
-        QVERIFY(QFile::exists(directory.filePath(QStringLiteral("eth1.network"))));
-        QVERIFY(QFile::exists(directory.filePath(QStringLiteral("eth1.network") +
-                                                 QLatin1String(kResetBackupSuffix))));
+        QVERIFY(QFile::exists(testOverlayPath(directory.path(), QStringLiteral("eth0"))));
+        QVERIFY(QFile::exists(testOverlayPath(directory.path(), QStringLiteral("eth1"))));
+        QVERIFY(QFile::exists(testOverlayPath(directory.path(), QStringLiteral("eth1")) +
+                              QLatin1String(kResetBackupSuffix)));
         QVERIFY(pending.contains(QStringLiteral("eth0")));
         QVERIFY(pending.contains(QStringLiteral("eth1")));
     }
@@ -437,6 +612,24 @@ private slots:
         QVERIFY(recoverResetBackupsInDirectory(directory.path(), [](const QString &) { return false; }));
         QVERIFY(!QFile::exists(originalPath));
         QVERIFY(!QFile::exists(committedPath));
+    }
+
+    void orphanedOverlayResetBackupIsRecovered() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString dropInDirectory = directory.filePath(QStringLiteral("10-wired.network.d"));
+        QVERIFY(QDir().mkpath(dropInDirectory));
+        const QString overlayPath = dropInDirectory + QStringLiteral("/50-everest-ui.conf");
+        const QString backupPath = overlayPath + QLatin1String(kResetBackupSuffix);
+        QFile backup(backupPath);
+        QVERIFY(backup.open(QIODevice::WriteOnly | QIODevice::Text));
+        backup.write(kOwnedOverlayMarker);
+        backup.close();
+
+        QVERIFY(recoverOverlayResetBackupsInDirectory(directory.path()));
+        QVERIFY(QFile::exists(overlayPath));
+        QVERIFY(isUiOwnedOverlay(overlayPath));
+        QVERIFY(!QFile::exists(backupPath));
     }
 
     void applyReloadsOnlyOnce() {
