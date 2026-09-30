@@ -18,7 +18,20 @@ install(TARGETS webui
     RUNTIME DESTINATION bin
 )
 
-set(EVEREST_UI_SYSTEMD_UNIT_DIR "/lib/systemd/system"
+find_package(PkgConfig QUIET)
+if(PKG_CONFIG_FOUND)
+    # pkgconf would prefix the path with the sysroot when cross compiling
+    set(SAVED_PKG_CONFIG_SYSROOT_DIR "$ENV{PKG_CONFIG_SYSROOT_DIR}")
+    set(ENV{PKG_CONFIG_SYSROOT_DIR} "")
+    pkg_get_variable(SYSTEMD_SYSTEM_UNIT_DIR systemd systemdsystemunitdir)
+    set(ENV{PKG_CONFIG_SYSROOT_DIR} "${SAVED_PKG_CONFIG_SYSROOT_DIR}")
+endif()
+
+if(NOT SYSTEMD_SYSTEM_UNIT_DIR)
+    set(SYSTEMD_SYSTEM_UNIT_DIR "/lib/systemd/system")
+endif()
+
+set(EVEREST_UI_SYSTEMD_UNIT_DIR "${SYSTEMD_SYSTEM_UNIT_DIR}"
     CACHE PATH "systemd system unit install directory"
 )
 
