@@ -16,6 +16,7 @@
 #include <QHash>
 #include <QHostAddress>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QList>
 #include <QMap>
 #include <QNetworkInterface>
@@ -60,6 +61,9 @@ constexpr char kParameterIpv4PrefixLength[] = "ipv4_prefix_length";
 constexpr char kInternalFallbackIpv4Address[] = "_fallback_ipv4_address";
 constexpr char kParameterGateway[] = "gateway";
 constexpr char kParameterDns[] = "dns";
+constexpr char kParameterCanBitRate[] = "can_bitrate";
+constexpr char kParameterCanBitRateSource[] = "can_bitrate_source";
+constexpr char kParameterCanBitRateOverride[] = "can_bitrate_override";
 constexpr char kOwnedOverlayMarker[] = "# Managed by EVerest Web UI";
 constexpr char kOwnedOverlayName[] = "50-everest-ui.conf";
 constexpr char kErrorUnavailable[] = "network_configuration_unavailable";
@@ -123,6 +127,8 @@ struct ResetApplyResult {
 
 QSet<QString> g_pendingResetInterfaces;
 QHash<QString, QString> g_pendingResetOverlayPaths;
+QSet<QString> g_pendingCanBitRateResets;
+QHash<QString, QString> g_pendingCanBitRateResetPaths;
 bool g_resetRecoveryDone = false;
 
 QString keyName(const QString &line, QString &value);
@@ -130,6 +136,153 @@ NetworkDocument readDocument(const QString &path);
 bool isIpv4Cidr(const QString &value);
 bool isIpv4Address(const QString &value);
 bool isConfigurableNetworkInterfaceKind(const QString &kind);
+bool isCanInterfaceKind(const QString &kind) {
+    return kind.compare(QStringLiteral("can"), Qt::CaseInsensitive) == 0;
+}
+
+bool parseCanBitRate(const QString &text, quint64 &bitRate) {
+    static const QRegularExpression pattern(QStringLiteral("^([0-9]+)([kKmM]?)$"));
+    const auto match = pattern.match(text.trimmed());
+    if (!match.hasMatch()) {
+        return false;
+    }
+    bool ok = false;
+    quint64 value = match.captured(1).toULongLong(&ok);
+    if (!ok) {
+        return false;
+    }
+    const QString suffix = match.captured(2).toLower();
+    const quint64 multiplier = suffix == QStringLiteral("k") ? 1000ULL
+                               : suffix == QStringLiteral("m") ? 1000000ULL : 1ULL;
+    if (value > 4294967295ULL / multiplier) {
+        return false;
+    }
+    value *= multiplier;
+    if (value == 0 || value > 4294967295ULL) {
+        return false;
+    }
+    bitRate = value;
+    return true;
+}
+
+bool canBitRateInDocument(const NetworkDocument &document, quint64 &bitRate) {
+    QString section;
+    bool found = false;
+    for (const QString &line : document.lines) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.startsWith(QLatin1Char('[')) && trimmed.endsWith(QLatin1Char(']'))) {
+            section = trimmed.mid(1, trimmed.size() - 2).trimmed();
+            continue;
+        }
+        QString value;
+        if (section.compare(QStringLiteral("CAN"), Qt::CaseInsensitive) == 0 &&
+            keyName(line, value).compare(QStringLiteral("BitRate"), Qt::CaseInsensitive) == 0) {
+            if (value.isEmpty()) {
+                found = false;
+            } else {
+                found = parseCanBitRate(value, bitRate);
+            }
+        }
+    }
+    return found;
+}
+
+bool hasCanBitRateDirective(const NetworkDocument &document) {
+    QString section;
+    for (const QString &line : document.lines) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.startsWith(QLatin1Char('[')) && trimmed.endsWith(QLatin1Char(']'))) {
+            section = trimmed.mid(1, trimmed.size() - 2).trimmed();
+        } else if (section.compare(QStringLiteral("CAN"), Qt::CaseInsensitive) == 0) {
+            QString value;
+            if (keyName(line, value).compare(QStringLiteral("BitRate"), Qt::CaseInsensitive) == 0) return true;
+        }
+    }
+    return false;
+}
+
+bool buildCanOverlayDocument(const NetworkDocument &existingOverlay, quint64 targetBitRate,
+                             bool setBitRate, NetworkDocument &result) {
+    result.lines.clear();
+    bool inCanSection = false;
+    bool canSectionFound = false;
+    bool bitRateWritten = false;
+    QStringList canSectionBody;
+    auto flushCanSection = [&]() {
+        if (!canSectionFound) {
+            return;
+        }
+        QStringList retained;
+        bool hasDirective = false;
+        for (const QString &line : canSectionBody) {
+            QString value;
+            if (keyName(line, value).compare(QStringLiteral("BitRate"), Qt::CaseInsensitive) == 0) {
+                if (setBitRate && !bitRateWritten) {
+                    retained.append(QStringLiteral("BitRate=") + QString::number(targetBitRate));
+                    bitRateWritten = true;
+                }
+            } else {
+                retained.append(line);
+                const QString trimmed = line.trimmed();
+                hasDirective = hasDirective || (!trimmed.isEmpty() && !trimmed.startsWith(QLatin1Char('#')) &&
+                                                  !trimmed.startsWith(QLatin1Char(';')));
+            }
+        }
+        if (setBitRate && !bitRateWritten) {
+            retained.append(QStringLiteral("BitRate=") + QString::number(targetBitRate));
+            bitRateWritten = true;
+        }
+        if (hasDirective || !retained.isEmpty()) {
+            result.lines.append(QStringLiteral("[CAN]"));
+            result.lines.append(retained);
+        }
+        canSectionBody.clear();
+    };
+
+    for (const QString &line : existingOverlay.lines) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.startsWith(QLatin1Char('[')) && trimmed.endsWith(QLatin1Char(']'))) {
+            if (inCanSection) {
+                flushCanSection();
+            }
+            const QString section = trimmed.mid(1, trimmed.size() - 2).trimmed();
+            inCanSection = section.compare(QStringLiteral("CAN"), Qt::CaseInsensitive) == 0;
+            canSectionFound = inCanSection;
+            if (!inCanSection) {
+                result.lines.append(line);
+            }
+            continue;
+        }
+        if (inCanSection) {
+            canSectionBody.append(line);
+        } else {
+            result.lines.append(line);
+        }
+    }
+    if (inCanSection) {
+        flushCanSection();
+    }
+    if (setBitRate && !bitRateWritten) {
+        result.lines.append(QStringLiteral("[CAN]"));
+        result.lines.append(QStringLiteral("BitRate=") + QString::number(targetBitRate));
+    }
+
+    while (!result.lines.isEmpty() && result.lines.constLast().trimmed().isEmpty()) {
+        result.lines.removeLast();
+    }
+    bool hasContent = false;
+    for (const QString &line : result.lines) {
+        const QString trimmed = line.trimmed();
+        hasContent = hasContent || (!trimmed.isEmpty() && trimmed != QLatin1String(kOwnedOverlayMarker) &&
+                                    !(trimmed.startsWith(QLatin1Char('[')) && trimmed.endsWith(QLatin1Char(']'))));
+    }
+    if (!hasContent) {
+        result.lines.clear();
+    } else if (result.lines.isEmpty() || result.lines.first().trimmed() != QLatin1String(kOwnedOverlayMarker)) {
+        result.lines.prepend(QLatin1String(kOwnedOverlayMarker));
+    }
+    return true;
+}
 
 struct StructuredAddressInfo {
     int sectionCount = 0;
@@ -232,6 +385,36 @@ using CommandRunner = std::function<CommandResult(const QString &, const QString
 bool applyNetworkConfiguration(const CommandRunner &run) {
     const CommandResult reload = run(QStringLiteral("networkctl"), {QStringLiteral("reload")});
     return reload.started && reload.exitCode == 0;
+}
+
+bool kernelCanBitRate(const QString &interfaceName, quint64 &bitRate) {
+    const CommandResult result = runCommand(QStringLiteral("ip"),
+                                             {QStringLiteral("-details"), QStringLiteral("-json"),
+                                              QStringLiteral("link"), QStringLiteral("show"),
+                                              QStringLiteral("dev"), interfaceName});
+    if (!result.started || result.exitCode != 0) {
+        return false;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument json = QJsonDocument::fromJson(result.output, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !json.isArray() || json.array().isEmpty()) {
+        return false;
+    }
+    const QJsonObject linkInfo = json.array().first().toObject().value(QStringLiteral("linkinfo")).toObject();
+    const QJsonObject infoData = linkInfo.value(QStringLiteral("info_data")).toObject();
+    const QJsonObject timing = infoData.value(QStringLiteral("bittiming")).toObject();
+    const QJsonValue value = timing.contains(QStringLiteral("bitrate"))
+                                 ? timing.value(QStringLiteral("bitrate"))
+                                 : infoData.value(QStringLiteral("bittiming_bitrate"));
+    if (!value.isDouble()) {
+        return false;
+    }
+    const double numeric = value.toDouble();
+    if (numeric < 1 || numeric > 4294967295.0 || std::floor(numeric) != numeric) {
+        return false;
+    }
+    bitRate = static_cast<quint64>(numeric);
+    return true;
 }
 
 bool featureAvailable(const QString &feature) {
@@ -623,6 +806,70 @@ ResetApplyResult applyPendingResets(QSet<QString> &pendingInterfaces,
     }
     pendingInterfaces.clear();
     return {true, false, false};
+}
+
+ResetApplyResult applyPendingCanBitRateResets(const CommandRunner &run) {
+    QList<QPair<QString, QString>> backups;
+    QList<QPair<QString, QString>> committedBackups;
+    const auto rollback = [&backups]() {
+        for (const auto &backup : backups) {
+            if (QFile::exists(backup.first) && !QFile::remove(backup.first)) {
+                qCritical() << "Unable to remove staged CAN bitrate reset" << backup.first;
+                return false;
+            }
+        }
+        return restoreResetBackups(backups);
+    };
+    QStringList interfaces = g_pendingCanBitRateResets.values();
+    std::sort(interfaces.begin(), interfaces.end());
+    for (const QString &interfaceName : interfaces) {
+        const QString path = g_pendingCanBitRateResetPaths.value(interfaceName);
+        if (!QFile::exists(path)) continue;
+        if (!isUiOwnedOverlay(path)) {
+            rollback();
+            return {false, true, false};
+        }
+        const QString backup = resetBackupPath(path);
+        if (QFile::exists(backup) || !QFile::rename(path, backup)) {
+            rollback();
+            return {false, true, false};
+        }
+        backups.append(qMakePair(path, backup));
+        NetworkDocument updated;
+        const NetworkDocument original = readDocument(backup);
+        if (!buildCanOverlayDocument(original, 0, false, updated) ||
+            (!updated.lines.isEmpty() && !writeOverlay(path, updated))) {
+            rollback();
+            return {false, true, false};
+        }
+    }
+    const ResetApplyResult result = applyPendingResets(
+        g_pendingResetInterfaces,
+        [](const QString &interfaceName) { return g_pendingResetOverlayPaths.value(interfaceName); }, run);
+    if (!result.success) {
+        const bool restored = rollback();
+        if (restored) applyNetworkConfiguration(run);
+        return result;
+    }
+    for (const auto &backup : backups) {
+        const QString committedPath = resetCommittedPath(backup.first);
+        if (QFile::exists(committedPath) || !QFile::rename(backup.second, committedPath)) {
+            const bool reverted = revertCommittedBackups(committedBackups);
+            const bool restored = reverted && rollback();
+            if (restored) applyNetworkConfiguration(run);
+            return {false, false, true};
+        }
+        committedBackups.append(backup);
+    }
+    for (const auto &backup : committedBackups) {
+        const QString committedPath = resetCommittedPath(backup.first);
+        if (QFile::exists(committedPath) && !QFile::remove(committedPath)) {
+            qWarning() << "Unable to remove committed CAN bitrate reset backup" << committedPath;
+        }
+    }
+    g_pendingCanBitRateResets.clear();
+    g_pendingCanBitRateResetPaths.clear();
+    return result;
 }
 
 NetworkFileAnalysis analyzeNetworkDocument(const NetworkDocument &document) {
@@ -1098,7 +1345,7 @@ QJsonObject interfaceObject(const InterfaceInfo &info) {
         warnings.append(QStringLiteral("This interface has a network master; configure the master interface when appropriate."));
     }
     if (info.kind.compare(QStringLiteral("can"), Qt::CaseInsensitive) == 0) {
-        warnings.append(QStringLiteral("CAN interfaces do not use IPv4 network configuration."));
+        warnings.append(QStringLiteral("Only CAN bitrate is configurable for this interface."));
     }
     if (!info.networkFile.isEmpty() && !isAllowedReadPath(info.networkFile)) {
         warnings.append(QStringLiteral("The effective network file is outside the locations supported by the Web UI."));
@@ -1109,7 +1356,7 @@ QJsonObject interfaceObject(const InterfaceInfo &info) {
         warningArray.append(warning);
     }
 
-    const bool special = info.loopback || info.kind.compare(QStringLiteral("can"), Qt::CaseInsensitive) == 0 ||
+    const bool special = info.loopback ||
                          (!info.networkFile.isEmpty() && !isAllowedReadPath(info.networkFile));
     return {
         {QLatin1String(kParameterName), info.name},
@@ -1160,9 +1407,20 @@ QList<InterfaceInfo> readInterfaces(bool &success) {
     return interfaces;
 }
 
+QString networkInterfaceKind(const QString &interfaceName) {
+    bool success = false;
+    const QList<InterfaceInfo> interfaces = readInterfaces(success);
+    if (success) {
+        for (const InterfaceInfo &info : interfaces) {
+            if (info.name == interfaceName) return info.kind;
+        }
+    }
+    return {};
+}
+
 bool isConfigurableNetworkInterfaceKind(const QString &kind) {
     return kind.compare(QStringLiteral("ether"), Qt::CaseInsensitive) == 0 ||
-           kind.compare(QStringLiteral("bridge"), Qt::CaseInsensitive) == 0;
+           kind.compare(QStringLiteral("bridge"), Qt::CaseInsensitive) == 0 || isCanInterfaceKind(kind);
 }
 
 bool isConfigurableNetworkInterface(const QString &interfaceName) {
@@ -1257,13 +1515,14 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
             qWarning() << "Unable to read effective network configuration for" << interfaceName;
             return errorResponse(request, QLatin1String(kErrorNetworkFileNotFound));
         }
+        const bool canInterface = isCanInterfaceKind(networkInterfaceKind(interfaceName));
         const NetworkFileAnalysis analysis = analyzeNetworkDocument(underlay);
-        if (!analysis.supported) {
+        if (!canInterface && !analysis.supported) {
             qWarning() << analysis.warning << "for" << interfaceName;
             return errorResponse(request, QLatin1String(kErrorUnsupportedConfiguration));
         }
         const QString overlayPath = userNetworkOverlayPath(networkFile);
-        if (!overlayPath.isEmpty() && QFile::exists(overlayPath) && !isUiOwnedOverlay(overlayPath) &&
+        if (!canInterface && !overlayPath.isEmpty() && QFile::exists(overlayPath) && !isUiOwnedOverlay(overlayPath) &&
             !analyzeNetworkDocument(readDocument(overlayPath)).supported) {
             return errorResponse(request, QLatin1String(kErrorUnsupportedConfiguration));
         }
@@ -1284,7 +1543,31 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
         parameters.insert(QLatin1String(kParameterWarning), QJsonArray{});
         parameters.insert(QLatin1String(kParameterUserOverride),
                            !overlayPath.isEmpty() && isUiOwnedOverlay(overlayPath));
-        parameters.insert(QLatin1String(kParameterResetStaged), g_pendingResetInterfaces.contains(interfaceName));
+        const bool canResetStaged = g_pendingCanBitRateResets.contains(interfaceName);
+        parameters.insert(QLatin1String(kParameterResetStaged),
+                           g_pendingResetInterfaces.contains(interfaceName) || canResetStaged);
+        if (canInterface) {
+            quint64 configuredBitRate = 0;
+            const bool hasConfiguredBitRate = canBitRateInDocument(document, configuredBitRate);
+            quint64 liveBitRate = 0;
+            const bool hasLiveBitRate = !hasConfiguredBitRate && kernelCanBitRate(interfaceName, liveBitRate);
+            const quint64 effectiveBitRate = hasConfiguredBitRate ? configuredBitRate : liveBitRate;
+            parameters.insert(QLatin1String(kParameterCanBitRate),
+                              hasConfiguredBitRate || hasLiveBitRate
+                                  ? QJsonValue(static_cast<double>(effectiveBitRate)) : QJsonValue(QJsonValue::Null));
+            parameters.insert(QLatin1String(kParameterCanBitRateSource),
+                              hasConfiguredBitRate ? QStringLiteral("networkd")
+                              : hasLiveBitRate ? QStringLiteral("kernel") : QStringLiteral("unknown"));
+            const bool hasOverlayRate = !overlayPath.isEmpty() && QFile::exists(overlayPath) &&
+                                        hasCanBitRateDirective(readDocument(overlayPath));
+            parameters.insert(QLatin1String(kParameterCanBitRateOverride), hasOverlayRate && isUiOwnedOverlay(overlayPath));
+            parameters.remove(QLatin1String(kParameterDhcpIpv4));
+            parameters.remove(QLatin1String(kParameterDhcpIpv6));
+            parameters.remove(QLatin1String(kParameterIpv4Address));
+            parameters.remove(QLatin1String(kParameterIpv4PrefixLength));
+            parameters.remove(QLatin1String(kParameterGateway));
+            parameters.remove(QLatin1String(kParameterDns));
+        }
         parameters = publicNetworkSettings(parameters);
         return {request.requestId, QLatin1String(kGroupNetwork), request.action,
                 parameters, true, true};
@@ -1294,9 +1577,20 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
         if (!isConfigurableNetworkInterface(interfaceName)) {
             return errorResponse(request, QLatin1String(kErrorUnsupportedConfiguration));
         }
-        QString validationError;
-        if (!validateSettings(request.parameters, validationError)) {
-            return errorResponse(request, QLatin1String(kErrorInvalidSettings) + QStringLiteral(": ") + validationError);
+        const QString interfaceKind = networkInterfaceKind(interfaceName);
+        const bool canInterface = isCanInterfaceKind(interfaceKind);
+        quint64 requestedCanBitRate = 0;
+        if (canInterface) {
+            const QJsonValue value = request.parameters.value(QLatin1String(kParameterCanBitRate));
+            if (!value.isDouble() || std::floor(value.toDouble()) != value.toDouble() ||
+                !parseCanBitRate(QString::number(value.toDouble(), 'f', 0), requestedCanBitRate)) {
+                return errorResponse(request, QLatin1String(kErrorInvalidSettings) + QStringLiteral(": invalid CAN bitrate"));
+            }
+        } else {
+            QString validationError;
+            if (!validateSettings(request.parameters, validationError)) {
+                return errorResponse(request, QLatin1String(kErrorInvalidSettings) + QStringLiteral(": ") + validationError);
+            }
         }
 
         bool statusOk = false;
@@ -1335,7 +1629,7 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
             return errorResponse(request, QLatin1String(kErrorNetworkFileNotFound));
         }
         const NetworkFileAnalysis analysis = analyzeNetworkDocument(underlay);
-        if (!analysis.supported) {
+        if (!canInterface && !analysis.supported) {
             qWarning() << analysis.warning << "for" << interfaceName;
             return errorResponse(request, QLatin1String(kErrorUnsupportedConfiguration));
         }
@@ -1344,7 +1638,16 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                           << "target=" << targetPath;
 
         NetworkDocument overlay;
-        if (!buildOverlayDocument(underlay, request.parameters, overlay, &effective)) {
+        if (canInterface) {
+            quint64 baselineRate = 0;
+            bool hasBaseline = canBitRateInDocument(underlay, baselineRate);
+            if (!hasBaseline) hasBaseline = kernelCanBitRate(interfaceName, baselineRate);
+            const bool needsOverride = !hasBaseline || requestedCanBitRate != baselineRate;
+            const NetworkDocument currentOverlay = QFile::exists(targetPath) ? readDocument(targetPath) : NetworkDocument{};
+            if (!buildCanOverlayDocument(currentOverlay, requestedCanBitRate, needsOverride, overlay)) {
+                return errorResponse(request, QLatin1String(kErrorUnsupportedConfiguration));
+            }
+        } else if (!buildOverlayDocument(underlay, request.parameters, overlay, &effective)) {
             return errorResponse(request, QLatin1String(kErrorUnsupportedConfiguration));
         }
         if (overlay.lines.isEmpty()) {
@@ -1354,10 +1657,12 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
         } else if (!writeOverlay(targetPath, overlay)) {
             return errorResponse(request, QLatin1String(kErrorWriteFailed));
         }
+        const bool canBitRateOverride = canInterface && hasCanBitRateDirective(overlay);
         return {request.requestId, QLatin1String(kGroupNetwork), request.action,
                 {{QLatin1String(kParameterNetworkFile), sourcePath},
                  {QStringLiteral("overlay_file"), targetPath},
-                 {QLatin1String(kParameterUserOverride), isUiOwnedOverlay(targetPath)}},
+                 {QLatin1String(kParameterUserOverride), isUiOwnedOverlay(targetPath)},
+                 {QLatin1String(kParameterCanBitRateOverride), canBitRateOverride}},
                 true, true};
     }
 
@@ -1377,11 +1682,22 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
         if (QFile::exists(overlayPath) && !isUiOwnedOverlay(overlayPath)) {
             return errorResponse(request, QLatin1String(kErrorUnownedDropIn));
         }
-        g_pendingResetInterfaces.insert(interfaceName);
-        g_pendingResetOverlayPaths.insert(interfaceName, overlayPath);
+        const QString interfaceKind = networkInterfaceKind(interfaceName);
+        if (isCanInterfaceKind(interfaceKind)) {
+            g_pendingCanBitRateResets.insert(interfaceName);
+            g_pendingCanBitRateResetPaths.insert(interfaceName, overlayPath);
+        } else {
+            g_pendingResetInterfaces.insert(interfaceName);
+            g_pendingResetOverlayPaths.insert(interfaceName, overlayPath);
+        }
         return {request.requestId, QLatin1String(kGroupNetwork), request.action,
                 {{QLatin1String(kParameterInterface), interfaceName},
                  {QLatin1String(kParameterUserOverride), isUiOwnedOverlay(overlayPath)},
+                 {QLatin1String(kParameterCanBitRateOverride),
+                  [&overlayPath]() {
+                      return !overlayPath.isEmpty() && QFile::exists(overlayPath) &&
+                             hasCanBitRateDirective(readDocument(overlayPath));
+                  }()},
                  {QLatin1String(kParameterResetStaged), true}},
                 true, true};
     }
@@ -1389,31 +1705,33 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
     if (request.action == QLatin1String(kActionCancelResetSettings)) {
         g_pendingResetInterfaces.remove(interfaceName);
         g_pendingResetOverlayPaths.remove(interfaceName);
+        g_pendingCanBitRateResets.remove(interfaceName);
+        g_pendingCanBitRateResetPaths.remove(interfaceName);
         bool statusOk = false;
         const QString networkFile = networkFileFromStatus(interfaceName, statusOk);
         const QString overlayPath = statusOk ? userNetworkOverlayPath(networkFile) : QString();
+        const bool currentCanOverride = !overlayPath.isEmpty() && QFile::exists(overlayPath) &&
+                                        hasCanBitRateDirective(readDocument(overlayPath));
         return {request.requestId, QLatin1String(kGroupNetwork), request.action,
                 {{QLatin1String(kParameterInterface), interfaceName},
                  {QLatin1String(kParameterUserOverride),
                   !overlayPath.isEmpty() && isUiOwnedOverlay(overlayPath)},
+                 {QLatin1String(kParameterCanBitRateOverride), currentCanOverride},
                  {QLatin1String(kParameterResetStaged), false}},
                 true, true};
     }
 
     if (request.action == QLatin1String(kActionApply)) {
         if (!expertMode) {
-            for (const QString &pendingInterface : g_pendingResetInterfaces) {
+            QSet<QString> pendingInterfaces = g_pendingResetInterfaces;
+            pendingInterfaces.unite(g_pendingCanBitRateResets);
+            for (const QString &pendingInterface : pendingInterfaces) {
                 if (!networkDeviceAllowed(pendingInterface, false)) {
                     return errorResponse(request, QLatin1String(kErrorInvalidInterface));
                 }
             }
         }
-        const ResetApplyResult resetResult = applyPendingResets(
-            g_pendingResetInterfaces,
-            [](const QString &pendingInterface) {
-                return g_pendingResetOverlayPaths.value(pendingInterface);
-            },
-            runCommand);
+        const ResetApplyResult resetResult = applyPendingCanBitRateResets(runCommand);
         if (resetResult.writeFailed) {
             return {request.requestId, QLatin1String(kGroupNetwork), request.action,
                     {{QLatin1String(kError), QLatin1String(kErrorWriteFailed)},
@@ -1425,6 +1743,7 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                      {QLatin1String(kParameterResetStaged), true}}, false, true};
         }
         g_pendingResetOverlayPaths.clear();
+        g_pendingCanBitRateResetPaths.clear();
         return {request.requestId, QLatin1String(kGroupNetwork), request.action, {}, true, true};
     }
 

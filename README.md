@@ -114,7 +114,8 @@ listed; for example, `available_features=network`. Other feature names are reser
 
 The Network Configuration page reads the selected systemd-networkd file reported by `networkctl status` and
 applicable drop-ins. Saving writes changes to `/etc/systemd/network/<selected-network-file-basename>.d/50-everest-ui.conf`;
-it does not copy or modify the selected main file. The editable form is limited to `networkctl` kind `ether`.
+it does not copy or modify the selected main file. IPv4 settings are editable for `networkctl` kinds `ether`
+and `bridge`; `can` interfaces expose CAN bitrate configuration only.
 
 Save and Apply are separate actions. Apply reloads systemd-networkd, which applies changed or removed network
 files to all affected interfaces. The IPv4 form offers DHCP or static mode. Static mode edits one primary IPv4

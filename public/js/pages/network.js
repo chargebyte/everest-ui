@@ -7,6 +7,22 @@ import { MODULE_IDS } from '../protocol/constants.js';
 import { buildRequest } from '../protocol/requestBuilder.js';
 
 const kGroup = MODULE_IDS.NETWORK;
+export const CAN_BITRATE_PRESETS = [10000, 20000, 50000, 125000, 250000, 500000, 800000, 1000000];
+
+export function parseCanBitRate(value) {
+  const match = String(value).trim().match(/^(\d+)([kKmM]?)$/);
+  if (!match) return null;
+  const suffix = match[2].toLowerCase();
+  const rate = Number(match[1]) * (suffix === 'k' ? 1000 : suffix === 'm' ? 1000000 : 1);
+  return Number.isSafeInteger(rate) && rate >= 1 && rate <= 4294967295 ? rate : null;
+}
+
+export function canBitRateSelection(rate) {
+  if (!Number.isSafeInteger(rate) || rate < 1 || rate > 4294967295) return { selected: '', customValue: '' };
+  return CAN_BITRATE_PRESETS.includes(rate)
+    ? { selected: String(rate), customValue: '' }
+    : { selected: 'custom', customValue: String(rate) };
+}
 
 export function isCurrentSettingsResponse(message, requestId, interfaceName) {
   return message?.requestId === requestId && message.parameters?.interface === interfaceName;
@@ -100,8 +116,8 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
       </div>
     </section>
     <section class="section" id="network-settings-section" hidden>
-      <h2>IPv4 Configuration</h2>
-      <div class="form-grid network-settings-grid">
+      <h2 id="network-ipv4-heading">IPv4 Configuration</h2>
+      <div id="network-ipv4-settings" class="form-grid network-settings-grid">
         <span class="label">IPv4 method</span>
         <div class="network-ipv4-mode">
           <label><input id="network-dhcp" name="network-ipv4-mode" type="radio" value="dhcp" /> Use DHCP for IPv4</label>
@@ -117,6 +133,19 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
         <input class="input" id="network-gateway" type="text" placeholder="Optional" />
         <label class="label" id="network-dns-label" for="network-dns">DNS servers</label>
         <input class="input" id="network-dns" type="text" placeholder="Optional, comma separated" />
+      </div>
+      <div id="network-can-settings" class="network-can-settings" hidden>
+        <h2>CAN Configuration</h2>
+        <fieldset class="network-can-rates">
+          <legend>CAN bitrate</legend>
+          ${CAN_BITRATE_PRESETS.map((rate) => `<label><input name="network-can-bitrate" type="radio" value="${rate}" /> ${rate / 1000} kbit/s</label>`).join('')}
+          <label><input name="network-can-bitrate" type="radio" value="custom" /> Custom</label>
+        </fieldset>
+        <div id="network-can-custom-row" class="network-can-custom" hidden>
+          <label class="label" for="network-can-custom">Custom bitrate</label>
+          <input class="input" id="network-can-custom" type="text" inputmode="numeric" autocomplete="off" placeholder="e.g. 333k or 1000000" />
+        </div>
+        <span id="network-can-current" class="network-status"></span>
       </div>
       <p id="network-settings-warning" class="network-settings-warning" hidden></p>
       <div class="network-actions">
@@ -141,6 +170,13 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   const prefixElement = page.querySelector('#network-prefix');
   const gatewayElement = page.querySelector('#network-gateway');
   const dnsElement = page.querySelector('#network-dns');
+  const ipv4Settings = page.querySelector('#network-ipv4-settings');
+  const ipv4Heading = page.querySelector('#network-ipv4-heading');
+  const canSettings = page.querySelector('#network-can-settings');
+  const canCustomRow = page.querySelector('#network-can-custom-row');
+  const canCustomInput = page.querySelector('#network-can-custom');
+  const canCurrentElement = page.querySelector('#network-can-current');
+  const canRateRadios = [...page.querySelectorAll('input[name="network-can-bitrate"]')];
   const staticLabels = [
     page.querySelector('#network-address-label'),
     page.querySelector('#network-gateway-label'),
@@ -162,6 +198,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   let userOverride = false;
   let dirty = false;
   let dhcpIpv6 = false;
+  let canBitRateSource = 'unknown';
   let resetStaged = false;
   expertModeToggle.checked = state.network.expertMode;
 
@@ -207,7 +244,8 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   }
 
   function updateDirtyState(showHint = true) {
-    dirty = baselineSettings !== null && !networkSettingsEqual(collectSettings(), baselineSettings);
+    dirty = baselineSettings !== null &&
+      JSON.stringify(normalizeEditableSettings(collectSettings())) !== JSON.stringify(baselineSettings);
     updateActionButtons();
     if (dirty && showHint) {
       setWarning('Unsaved changes. Save the changes first, or Reset to factory defaults.');
@@ -215,6 +253,10 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   }
 
   function updateFieldStates() {
+    const canMode = selectedInfo?.kind?.toLowerCase() === 'can';
+    ipv4Settings.hidden = canMode;
+    ipv4Heading.hidden = canMode;
+    canSettings.hidden = !canMode;
     const disabled = networkFieldDisabledState({
       loaded: settingsLoaded,
       editable,
@@ -227,6 +269,10 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     prefixElement.disabled = disabled.ipv4PrefixLength;
     gatewayElement.disabled = disabled.gateway;
     dnsElement.disabled = disabled.dns;
+    const canControlsDisabled = !settingsLoaded || !editable || resetStaged;
+    canRateRadios.forEach((radio) => { radio.disabled = canControlsDisabled; });
+    canCustomInput.disabled = canControlsDisabled || !canRateRadios.some((radio) => radio.checked && radio.value === 'custom');
+    canCustomRow.hidden = !canRateRadios.some((radio) => radio.checked && radio.value === 'custom');
     staticLabels.forEach((label) => { label.hidden = dhcpElement.checked; });
     page.querySelector('.network-cidr-inputs').hidden = dhcpElement.checked;
     gatewayElement.hidden = dhcpElement.checked;
@@ -320,14 +366,30 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     dnsElement.value = Array.isArray(parameters.dns) ? parameters.dns.join(', ') : '';
     settingsLoaded = true;
     settingsSection.hidden = false;
-    baselineSettings = normalizeNetworkSettings(collectSettings());
-    userOverride = parameters.user_override === true;
+    canBitRateSource = parameters.can_bitrate_source || 'unknown';
+    const selection = canBitRateSelection(parameters.can_bitrate);
+    canRateRadios.forEach((radio) => { radio.checked = radio.value === selection.selected; });
+    canCustomInput.value = selection.customValue;
+    canCurrentElement.textContent = parameters.can_bitrate == null
+      ? 'Current bitrate: unknown'
+      : `Current bitrate: ${parameters.can_bitrate} bit/s (${canBitRateSource})`;
+    baselineSettings = normalizeEditableSettings(collectSettings());
+    userOverride = selectedInfo?.kind?.toLowerCase() === 'can'
+      ? parameters.can_bitrate_override === true
+      : parameters.user_override === true;
     resetStaged = parameters.reset_staged === true;
     dirty = false;
     updateFieldStates();
   }
 
   function collectSettings() {
+    if (selectedInfo?.kind?.toLowerCase() === 'can') {
+      const selected = canRateRadios.find((radio) => radio.checked);
+      const bitrate = selected?.value === 'custom'
+        ? parseCanBitRate(canCustomInput.value)
+        : selected ? Number(selected.value) : null;
+      return { interface: interfaceSelect.value, can_bitrate: bitrate };
+    }
     const dns = dnsElement.value.split(',').map((value) => value.trim()).filter(Boolean);
     return {
       interface: interfaceSelect.value,
@@ -340,6 +402,13 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     };
   }
 
+  function normalizeEditableSettings(settings) {
+    if (selectedInfo?.kind?.toLowerCase() === 'can') {
+      return { can_bitrate: Number.isSafeInteger(settings?.can_bitrate) ? settings.can_bitrate : null };
+    }
+    return normalizeNetworkSettings(settings);
+  }
+
   function handleFormChange() {
     updateFieldStates();
     updateDirtyState();
@@ -350,7 +419,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     Object.entries(parameters).forEach(([key, value]) => {
       requestResponseObject[key] = {
         backend_path: key,
-        value_type: typeof value === 'boolean' ? 'boolean' : 'string',
+        value_type: typeof value === 'boolean' ? 'boolean' : typeof value === 'number' ? 'integer' : 'string',
         value
       };
     });
@@ -380,6 +449,21 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   });
   saveButton.addEventListener('click', () => {
     if (!settingsLoaded || !editable) return;
+    if (selectedInfo?.kind?.toLowerCase() === 'can') {
+      const settings = collectSettings();
+      if (!Number.isSafeInteger(settings.can_bitrate) || settings.can_bitrate < 1 || settings.can_bitrate > 4294967295) {
+        setWarning('Select a standard CAN bitrate or enter an integer with an optional k or M suffix.');
+        return;
+      }
+      setWarning('Saving CAN bitrate to the persistent network configuration. Apply it separately when ready.');
+      const result = sendAction('write_settings', settings);
+      if (result.ok) {
+        pendingWriteRequestId = result.payload.requestId;
+        pendingWriteSettings = normalizeEditableSettings(settings);
+        pendingWriteInterface = interfaceSelect.value;
+      }
+      return;
+    }
     if (!dhcpElement.checked) {
       const dns = dnsElement.value.split(',').map((value) => value.trim()).filter(Boolean);
       const gateway = gatewayElement.value.trim();
@@ -397,7 +481,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     const result = sendAction('write_settings', settings);
     if (result.ok) {
       pendingWriteRequestId = result.payload.requestId;
-      pendingWriteSettings = normalizeNetworkSettings(settings);
+      pendingWriteSettings = normalizeEditableSettings(settings);
       pendingWriteInterface = interfaceSelect.value;
     }
   });
@@ -427,6 +511,11 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   [dhcpElement, staticIpv4Element, addressElement, prefixElement, gatewayElement, dnsElement]
     .forEach((element) => element.addEventListener('input', handleFormChange));
   [dhcpElement, staticIpv4Element].forEach((element) => element.addEventListener('change', handleFormChange));
+  canRateRadios.forEach((radio) => radio.addEventListener('change', handleFormChange));
+  canCustomInput.addEventListener('input', () => {
+    canRateRadios.forEach((radio) => { radio.checked = radio.value === 'custom'; });
+    handleFormChange();
+  });
 
   return {
     onMessage(message) {
@@ -461,7 +550,9 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
         pendingWriteRequestId = null;
         pendingWriteSettings = null;
         pendingWriteInterface = '';
-        userOverride = message.parameters?.user_override === true;
+        userOverride = selectedInfo?.kind?.toLowerCase() === 'can'
+          ? message.parameters?.can_bitrate_override === true
+          : message.parameters?.user_override === true;
         resetStaged = false;
         updateFieldStates();
         updateDirtyState(false);
@@ -491,7 +582,9 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
         }
         pendingResetRequestId = null;
         resetStaged = message.parameters?.reset_staged === true;
-        userOverride = message.parameters?.user_override === true;
+        userOverride = selectedInfo?.kind?.toLowerCase() === 'can'
+          ? message.parameters?.can_bitrate_override === true
+          : message.parameters?.user_override === true;
         updateFieldStates();
         requestSettings(interfaceSelect.value);
         setWarning(resetStaged
