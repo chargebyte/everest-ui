@@ -324,7 +324,10 @@
 }
 
 .network-cidr-inputs #network-prefix {
-  width: 6ch;
+  box-sizing: border-box;
+  width: 5.5rem;
+  min-width: 5.5rem;
+  padding-right: 24px;
 }
 
 .network-settings-grid [hidden] {
