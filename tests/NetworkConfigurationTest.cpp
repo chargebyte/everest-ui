@@ -61,7 +61,7 @@ private slots:
         QVERIFY(unmatchedDevices.isEmpty());
     }
 
-    void ethernetAndBridgeInterfacesAreEditableButCanIsNot() {
+    void ethernetBridgeAndCanInterfacesAreEditable() {
         InterfaceInfo info;
         info.name = QStringLiteral("br0");
         info.kind = QStringLiteral("bridge");
@@ -71,14 +71,50 @@ private slots:
         QVERIFY(interfaceObject(info).value(QStringLiteral("editable")).toBool());
         QVERIFY(isConfigurableNetworkInterfaceKind(info.kind));
         info.kind = QStringLiteral("can");
-        QVERIFY(!interfaceObject(info).value(QStringLiteral("editable")).toBool());
-        QVERIFY(!isConfigurableNetworkInterfaceKind(info.kind));
+        QVERIFY(interfaceObject(info).value(QStringLiteral("editable")).toBool());
+        QVERIFY(isConfigurableNetworkInterfaceKind(info.kind));
         info.kind = QStringLiteral("vlan");
         QVERIFY(!interfaceObject(info).value(QStringLiteral("editable")).toBool());
         QVERIFY(!isConfigurableNetworkInterfaceKind(info.kind));
         info.kind = QStringLiteral("loopback");
         info.loopback = true;
         QVERIFY(!interfaceObject(info).value(QStringLiteral("editable")).toBool());
+    }
+
+    void parsesAndFormatsCanBitrates() {
+        quint64 rate = 0;
+        QVERIFY(parseCanBitRate(QStringLiteral("500k"), rate));
+        QCOMPARE(rate, quint64(500000));
+        QVERIFY(parseCanBitRate(QStringLiteral("1M"), rate));
+        QCOMPARE(rate, quint64(1000000));
+        QVERIFY(parseCanBitRate(QStringLiteral("4294967295"), rate));
+        QVERIFY(!parseCanBitRate(QStringLiteral("0"), rate));
+        QVERIFY(!parseCanBitRate(QStringLiteral("4295M"), rate));
+        QVERIFY(!parseCanBitRate(QStringLiteral("500kbps"), rate));
+        NetworkDocument configured{{QStringLiteral("[CAN]"), QStringLiteral("BitRate=500k")}};
+        QVERIFY(canBitRateInDocument(configured, rate));
+        QCOMPARE(rate, quint64(500000));
+    }
+
+    void canOverlayChangesOnlyBitrate() {
+        NetworkDocument existing{{QStringLiteral("# Managed by EVerest Web UI"),
+                                  QStringLiteral("[Network]"), QStringLiteral("DHCP=no"),
+                                  QStringLiteral("[CAN]"), QStringLiteral("ListenOnly=yes"),
+                                  QStringLiteral("BitRate=250000")}};
+        NetworkDocument changed;
+        QVERIFY(buildCanOverlayDocument(existing, 500000, true, changed));
+        const QString rendered = changed.lines.join(QLatin1Char('\n'));
+        QVERIFY(rendered.contains(QStringLiteral("DHCP=no")));
+        QVERIFY(rendered.contains(QStringLiteral("ListenOnly=yes")));
+        QVERIFY(rendered.contains(QStringLiteral("BitRate=500000")));
+        QVERIFY(!rendered.contains(QStringLiteral("BitRate=250000")));
+
+        NetworkDocument reset;
+        QVERIFY(buildCanOverlayDocument(changed, 0, false, reset));
+        const QString resetText = reset.lines.join(QLatin1Char('\n'));
+        QVERIFY(resetText.contains(QStringLiteral("DHCP=no")));
+        QVERIFY(resetText.contains(QStringLiteral("ListenOnly=yes")));
+        QVERIFY(!resetText.contains(QStringLiteral("BitRate=")));
     }
 
     void parsesDhcpFamiliesAndEquivalentSections() {

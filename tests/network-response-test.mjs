@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  CAN_BITRATE_PRESETS,
+  canBitRateSelection,
   formatInterfaceWarnings,
   isValidIpv4Address,
   isValidIpv4PrefixLength,
@@ -9,7 +11,8 @@ import {
   networkActionState,
   networkFieldDisabledState,
   networkSettingsEqual,
-  normalizeNetworkSettings
+  normalizeNetworkSettings,
+  parseCanBitRate
 } from '../public/js/pages/network.js';
 import { hasUnsavedSettings } from '../public/js/pages/everest.js';
 import {
@@ -27,6 +30,17 @@ test('ignores settings responses for an older request or interface', () => {
   assert.equal(isCurrentSettingsResponse(current, 2, 'eth1'), true);
   assert.equal(isCurrentSettingsResponse(oldRequest, 2, 'eth1'), false);
   assert.equal(isCurrentSettingsResponse(wrongInterface, 2, 'eth1'), false);
+});
+
+test('parses custom CAN rates and selects presets or custom values', () => {
+  assert.equal(CAN_BITRATE_PRESETS.length, 8);
+  assert.equal(parseCanBitRate('500k'), 500000);
+  assert.equal(parseCanBitRate('1M'), 1000000);
+  assert.equal(parseCanBitRate('500kbps'), null);
+  assert.equal(parseCanBitRate('4296M'), null);
+  assert.deepEqual(canBitRateSelection(500000), { selected: '500000', customValue: '' });
+  assert.deepEqual(canBitRateSelection(333333), { selected: 'custom', customValue: '333333' });
+  assert.deepEqual(canBitRateSelection(null), { selected: '', customValue: '' });
 });
 
 test('keeps interface warnings visible after settings data is loaded', () => {
