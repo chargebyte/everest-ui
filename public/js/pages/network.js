@@ -26,25 +26,28 @@ export function formatInterfaceWarnings(info) {
 
 export function normalizeNetworkSettings(settings) {
   const dhcpIpv4 = settings?.dhcp_ipv4 === true;
-  const dhcpIpv4Static = settings?.dhcp_ipv4_static === true;
-  const addresses = Array.isArray(settings?.ipv4_addresses)
-    ? settings.ipv4_addresses.map((value) => String(value).trim())
-    : [];
-  while (addresses.length > 0 && !addresses[addresses.length - 1]) {
-    addresses.pop();
-  }
   return {
     dhcp_ipv4: dhcpIpv4,
     dhcp_ipv6: settings?.dhcp_ipv6 === true,
-    dhcp_ipv4_static: dhcpIpv4Static,
-    ipv4_addresses: dhcpIpv4 && !dhcpIpv4Static
-      ? []
-      : addresses,
-    gateway: dhcpIpv4 && !dhcpIpv4Static ? '' : String(settings?.gateway || '').trim(),
-    dns: Array.isArray(settings?.dns)
+    ipv4_address: dhcpIpv4 ? '' : String(settings?.ipv4_address || '').trim(),
+    ipv4_prefix_length: Number.isInteger(settings?.ipv4_prefix_length)
+      ? settings.ipv4_prefix_length
+      : 24,
+    gateway: dhcpIpv4 ? '' : String(settings?.gateway || '').trim(),
+    dns: dhcpIpv4 ? [] : Array.isArray(settings?.dns)
       ? settings.dns.map((value) => String(value).trim()).filter(Boolean)
       : []
   };
+}
+
+export function isValidIpv4Address(value) {
+  const octets = String(value).trim().split('.');
+  return octets.length === 4 && octets.every((octet) =>
+    /^\d{1,3}$/.test(octet) && Number(octet) >= 0 && Number(octet) <= 255);
+}
+
+export function isValidIpv4PrefixLength(value) {
+  return /^\d{1,2}$/.test(String(value)) && Number(value) >= 0 && Number(value) <= 32;
 }
 
 export function networkSettingsEqual(left, right) {
@@ -59,16 +62,15 @@ export function networkActionState({ loaded, editable, dirty, userOverride, rese
   };
 }
 
-export function networkFieldDisabledState({ loaded, editable, resetStaged, dhcpIpv4, dhcpIpv4Static }) {
+export function networkFieldDisabledState({ loaded, editable, resetStaged, dhcpIpv4 }) {
   const globallyDisabled = !loaded || !editable || resetStaged;
-  const ipv4SettingsDisabled = globallyDisabled || (dhcpIpv4 && !dhcpIpv4Static);
+  const staticFieldsDisabled = globallyDisabled || dhcpIpv4;
   return {
-    dhcpIpv4: globallyDisabled,
-    dhcpIpv4Static: globallyDisabled,
-    ipv4Addresses: ipv4SettingsDisabled,
-    fallbackAddress: ipv4SettingsDisabled,
-    gateway: ipv4SettingsDisabled,
-    dns: ipv4SettingsDisabled
+    mode: globallyDisabled,
+    ipv4Address: staticFieldsDisabled,
+    ipv4PrefixLength: staticFieldsDisabled,
+    gateway: staticFieldsDisabled,
+    dns: staticFieldsDisabled
   };
 }
 
@@ -99,17 +101,20 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     <section class="section" id="network-settings-section" hidden>
       <h2>IPv4 Configuration</h2>
       <div class="form-grid network-settings-grid">
-        <label class="label" for="network-dhcp">Use DHCP for IPv4</label>
-        <input id="network-dhcp" type="checkbox" />
-        <label class="label" for="network-static-ip">Also use static IPv4 settings</label>
-        <input id="network-static-ip" type="checkbox" />
-        <label class="label" for="network-address">IPv4 address</label>
-        <input class="input" id="network-address" type="text" placeholder="Enter address/prefix, e.g. 192.168.0.10/24" />
-        <label class="label" for="network-fallback-address">Fallback IPv4 address</label>
-        <input class="input" id="network-fallback-address" type="text" placeholder="Optional" />
-        <label class="label" for="network-gateway">IPv4 gateway</label>
+        <span class="label">IPv4 method</span>
+        <div class="network-ipv4-mode">
+          <label><input id="network-dhcp" name="network-ipv4-mode" type="radio" value="dhcp" /> Use DHCP for IPv4</label>
+          <label><input id="network-static-ip" name="network-ipv4-mode" type="radio" value="static" /> Use static IPv4 configuration</label>
+        </div>
+        <label class="label" id="network-address-label" for="network-address">IPv4 address / prefix</label>
+        <div class="network-cidr-inputs">
+          <input class="input" id="network-address" type="text" inputmode="decimal" autocomplete="off" placeholder="192.168.0.10" />
+          <span aria-hidden="true">/</span>
+          <input class="input" id="network-prefix" type="number" min="0" max="32" step="1" value="24" aria-label="IPv4 network prefix length" />
+        </div>
+        <label class="label" id="network-gateway-label" for="network-gateway">IPv4 gateway</label>
         <input class="input" id="network-gateway" type="text" placeholder="Optional" />
-        <label class="label" for="network-dns">DNS servers</label>
+        <label class="label" id="network-dns-label" for="network-dns">DNS servers</label>
         <input class="input" id="network-dns" type="text" placeholder="Optional, comma separated" />
       </div>
       <p id="network-settings-warning" class="network-settings-warning" hidden></p>
@@ -131,9 +136,14 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   const dhcpElement = page.querySelector('#network-dhcp');
   const staticIpv4Element = page.querySelector('#network-static-ip');
   const addressElement = page.querySelector('#network-address');
-  const fallbackElement = page.querySelector('#network-fallback-address');
+  const prefixElement = page.querySelector('#network-prefix');
   const gatewayElement = page.querySelector('#network-gateway');
   const dnsElement = page.querySelector('#network-dns');
+  const staticLabels = [
+    page.querySelector('#network-address-label'),
+    page.querySelector('#network-gateway-label'),
+    page.querySelector('#network-dns-label')
+  ];
   const saveButton = page.querySelector('#network-save');
   const resetButton = page.querySelector('#network-reset');
   const applyButton = page.querySelector('#network-apply');
@@ -193,20 +203,18 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
       loaded: settingsLoaded,
       editable,
       resetStaged,
-      dhcpIpv4: dhcpElement.checked,
-      dhcpIpv4Static: staticIpv4Element.checked
+      dhcpIpv4: dhcpElement.checked
     });
-    if (dhcpElement.checked && !staticIpv4Element.checked) {
-      addressElement.value = '';
-      fallbackElement.value = '';
-      gatewayElement.value = '';
-    }
-    dhcpElement.disabled = disabled.dhcpIpv4;
-    staticIpv4Element.disabled = disabled.dhcpIpv4Static;
-    addressElement.disabled = disabled.ipv4Addresses;
-    fallbackElement.disabled = disabled.fallbackAddress;
+    dhcpElement.disabled = disabled.mode;
+    staticIpv4Element.disabled = disabled.mode;
+    addressElement.disabled = disabled.ipv4Address;
+    prefixElement.disabled = disabled.ipv4PrefixLength;
     gatewayElement.disabled = disabled.gateway;
     dnsElement.disabled = disabled.dns;
+    staticLabels.forEach((label) => { label.hidden = dhcpElement.checked; });
+    page.querySelector('.network-cidr-inputs').hidden = dhcpElement.checked;
+    gatewayElement.hidden = dhcpElement.checked;
+    dnsElement.hidden = dhcpElement.checked;
     updateActionButtons();
   }
 
@@ -285,11 +293,12 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     }
     fileElement.textContent = parameters.network_file || 'No effective Network File reported';
     dhcpElement.checked = parameters.dhcp_ipv4 === true;
-    staticIpv4Element.checked = parameters.dhcp_ipv4_static === true;
+    staticIpv4Element.checked = !dhcpElement.checked;
     dhcpIpv6 = parameters.dhcp_ipv6 === true;
-    const addresses = Array.isArray(parameters.ipv4_addresses) ? parameters.ipv4_addresses : [];
-    addressElement.value = addresses[0] || '';
-    fallbackElement.value = addresses[1] || '';
+    addressElement.value = parameters.ipv4_address || '';
+    prefixElement.value = Number.isInteger(parameters.ipv4_prefix_length)
+      ? String(parameters.ipv4_prefix_length)
+      : '24';
     gatewayElement.value = parameters.gateway || '';
     dnsElement.value = Array.isArray(parameters.dns) ? parameters.dns.join(', ') : '';
     settingsLoaded = true;
@@ -302,20 +311,15 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   }
 
   function collectSettings() {
-    const primaryAddress = addressElement.value.trim();
-    const fallbackAddress = fallbackElement.value.trim();
-    const addresses = primaryAddress || fallbackAddress
-      ? [primaryAddress, fallbackAddress]
-      : [];
     const dns = dnsElement.value.split(',').map((value) => value.trim()).filter(Boolean);
     return {
       interface: interfaceSelect.value,
       dhcp_ipv4: dhcpElement.checked,
       dhcp_ipv6: dhcpIpv6,
-      dhcp_ipv4_static: staticIpv4Element.checked,
-      ipv4_addresses: dhcpElement.checked && !staticIpv4Element.checked ? [] : addresses,
-      gateway: dhcpElement.checked && !staticIpv4Element.checked ? '' : gatewayElement.value.trim(),
-      dns
+      ipv4_address: dhcpElement.checked ? '' : addressElement.value.trim(),
+      ipv4_prefix_length: Number(prefixElement.value),
+      gateway: dhcpElement.checked ? '' : gatewayElement.value.trim(),
+      dns: dhcpElement.checked ? [] : dns
     };
   }
 
@@ -350,6 +354,18 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   });
   saveButton.addEventListener('click', () => {
     if (!settingsLoaded || !editable) return;
+    if (!dhcpElement.checked) {
+      const dns = dnsElement.value.split(',').map((value) => value.trim()).filter(Boolean);
+      const gateway = gatewayElement.value.trim();
+      if (!isValidIpv4Address(addressElement.value) || !isValidIpv4PrefixLength(prefixElement.value)) {
+        setWarning('Enter a valid IPv4 address and prefix length (0-32).');
+        return;
+      }
+      if ((gateway && !isValidIpv4Address(gateway)) || dns.some((server) => !isValidIpv4Address(server))) {
+        setWarning('Enter valid IPv4 gateway and DNS server addresses.');
+        return;
+      }
+    }
     setWarning('Saving changes to the persistent network configuration. Apply them separately when ready.');
     const settings = collectSettings();
     const result = sendAction('write_settings', settings);
@@ -382,7 +398,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     }
   });
 
-  [dhcpElement, staticIpv4Element, addressElement, fallbackElement, gatewayElement, dnsElement]
+  [dhcpElement, staticIpv4Element, addressElement, prefixElement, gatewayElement, dnsElement]
     .forEach((element) => element.addEventListener('input', handleFormChange));
   [dhcpElement, staticIpv4Element].forEach((element) => element.addEventListener('change', handleFormChange));
 
@@ -411,11 +427,17 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
           return;
         }
         baselineSettings = pendingWriteSettings;
+        if (pendingWriteSettings?.dhcp_ipv4) {
+          addressElement.value = '';
+          gatewayElement.value = '';
+          dnsElement.value = '';
+        }
         pendingWriteRequestId = null;
         pendingWriteSettings = null;
         pendingWriteInterface = '';
         userOverride = message.parameters?.user_override === true;
         resetStaged = false;
+        updateFieldStates();
         updateDirtyState(false);
         setWarning('Network configuration saved. Apply it separately when ready.');
         fileElement.textContent = message.parameters?.network_file || fileElement.textContent;
@@ -427,7 +449,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
         if (resetWasStaged) {
           userOverride = false;
         }
-        setSettingsDisabled(!editable);
+        updateFieldStates();
         requestSettings(interfaceSelect.value);
       } else if (message.type === 'network.reset_settings.result' ||
                  message.type === 'network.cancel_reset_settings.result') {
@@ -444,7 +466,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
         pendingResetRequestId = null;
         resetStaged = message.parameters?.reset_staged === true;
         userOverride = message.parameters?.user_override === true;
-        setSettingsDisabled(!editable || resetStaged);
+        updateFieldStates();
         requestSettings(interfaceSelect.value);
         setWarning(resetStaged
           ? 'Factory reset staged. Press Apply to activate the factory configuration.'
@@ -465,7 +487,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
           settingsLoaded = false;
           editable = false;
           settingsSection.hidden = true;
-          setSettingsDisabled(true);
+          updateFieldStates();
         }
         if (message.type === 'network.reset_settings.error' ||
             message.type === 'network.cancel_reset_settings.error') {
@@ -490,7 +512,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
           if (resetWasStaged && !resetStaged) {
             userOverride = false;
           }
-          setSettingsDisabled(!editable || resetStaged);
+          updateFieldStates();
           requestSettings(interfaceSelect.value);
         }
         addLog(`${message.type}: ${error}`);

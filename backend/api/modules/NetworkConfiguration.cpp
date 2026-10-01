@@ -27,6 +27,7 @@
 #include <QTextStream>
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <stdexcept>
 #include <utility>
@@ -52,8 +53,9 @@ constexpr char kParameterLoopback[] = "loopback";
 constexpr char kParameterProbablyIsoHighLevelComms[] = "probably_iso_high_level_comms";
 constexpr char kParameterDhcpIpv4[] = "dhcp_ipv4";
 constexpr char kParameterDhcpIpv6[] = "dhcp_ipv6";
-constexpr char kParameterDhcpIpv4Static[] = "dhcp_ipv4_static";
-constexpr char kParameterIpv4Addresses[] = "ipv4_addresses";
+constexpr char kParameterIpv4Address[] = "ipv4_address";
+constexpr char kParameterIpv4PrefixLength[] = "ipv4_prefix_length";
+constexpr char kInternalFallbackIpv4Address[] = "_fallback_ipv4_address";
 constexpr char kParameterGateway[] = "gateway";
 constexpr char kParameterDns[] = "dns";
 constexpr char kOwnedOverlayMarker[] = "# Managed by EVerest Web UI";
@@ -746,10 +748,11 @@ QJsonObject parseDocument(const NetworkDocument &document, const QString &name, 
         if (section.compare(QStringLiteral("Network"), Qt::CaseInsensitive) == 0 &&
             key.compare(QStringLiteral("DHCP"), Qt::CaseInsensitive) == 0) {
             dhcp = value;
-        } else if ((section.compare(QStringLiteral("Network"), Qt::CaseInsensitive) == 0 ||
-                    section.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0) &&
+        } else if (section.compare(QStringLiteral("Network"), Qt::CaseInsensitive) == 0 &&
                    key.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0 && value.isEmpty()) {
             networkAddresses.clear();
+        } else if (section.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0 &&
+                   key.compare(QStringLiteral("Address"), Qt::CaseInsensitive) == 0 && value.isEmpty()) {
             primaryAddress.clear();
             fallbackAddress.clear();
             structuredFallback = false;
@@ -788,15 +791,14 @@ QJsonObject parseDocument(const NetworkDocument &document, const QString &name, 
         }
     }
 
-    QJsonArray addressArray;
-    for (const QString &address : networkAddresses) {
-        addressArray.append(address);
-    }
-    if (networkAddresses.isEmpty() && (!primaryAddress.isEmpty() || structuredFallback)) {
-        addressArray.append(primaryAddress);
-    }
-    if (!fallbackAddress.isEmpty()) {
-        addressArray.append(fallbackAddress);
+    QString effectivePrimary;
+    if (!networkAddresses.isEmpty()) {
+        effectivePrimary = networkAddresses.first();
+        if (networkAddresses.size() > 1 && fallbackAddress.isEmpty()) {
+            fallbackAddress = networkAddresses.at(1);
+        }
+    } else if (!primaryAddress.isEmpty() && !structuredFallback) {
+        effectivePrimary = primaryAddress;
     }
     QJsonArray dnsArray;
     for (const QString &server : dns) {
@@ -810,20 +812,26 @@ QJsonObject parseDocument(const NetworkDocument &document, const QString &name, 
     const bool dhcpIpv6 = normalizedDhcp == QStringLiteral("yes") ||
                           normalizedDhcp == QStringLiteral("true") ||
                           normalizedDhcp == QStringLiteral("ipv6");
-    const bool dhcpIpv4Static = dhcpIpv4 &&
-                                (!networkAddresses.isEmpty() || !primaryAddress.isEmpty() ||
-                                 !fallbackAddress.isEmpty() || !gateway.isEmpty());
+    const int slash = effectivePrimary.indexOf(QLatin1Char('/'));
+    bool prefixOk = false;
+    const int prefixLength = slash < 0 ? 24 : effectivePrimary.mid(slash + 1).toInt(&prefixOk);
 
     return {
         {QLatin1String(kParameterInterface), name},
         {QLatin1String(kParameterNetworkFile), path},
         {QLatin1String(kParameterDhcpIpv4), dhcpIpv4},
         {QLatin1String(kParameterDhcpIpv6), dhcpIpv6},
-        {QLatin1String(kParameterDhcpIpv4Static), dhcpIpv4Static},
-        {QLatin1String(kParameterIpv4Addresses), addressArray},
+        {QLatin1String(kParameterIpv4Address), slash < 0 ? effectivePrimary : effectivePrimary.left(slash)},
+        {QLatin1String(kParameterIpv4PrefixLength), prefixOk ? prefixLength : 24},
+        {QLatin1String(kInternalFallbackIpv4Address), fallbackAddress},
         {QLatin1String(kParameterGateway), gateway},
         {QLatin1String(kParameterDns), dnsArray},
     };
+}
+
+QJsonObject publicNetworkSettings(QJsonObject settings) {
+    settings.remove(QLatin1String(kInternalFallbackIpv4Address));
+    return settings;
 }
 
 QStringList valuesForKey(const NetworkDocument &document, const QStringList &sections,
@@ -853,11 +861,18 @@ QStringList valuesForKey(const NetworkDocument &document, const QStringList &sec
 }
 
 bool buildOverlayDocument(const NetworkDocument &underlay, const QJsonObject &settings,
-                          NetworkDocument &overlay) {
+                          NetworkDocument &overlay, const NetworkDocument *effectiveDocument = nullptr) {
     const QJsonObject current = parseDocument(underlay, QString(), QString());
+    const QJsonObject effective = parseDocument(effectiveDocument ? *effectiveDocument : underlay,
+                                                QString(), QString());
     const bool dhcpIpv4 = settings.value(QLatin1String(kParameterDhcpIpv4)).toBool();
     const bool dhcpIpv6 = settings.value(QLatin1String(kParameterDhcpIpv6)).toBool();
-    const bool keepStaticIpv4 = !dhcpIpv4 || settings.value(QLatin1String(kParameterDhcpIpv4Static)).toBool();
+    QString targetAddress;
+    if (!dhcpIpv4) {
+        targetAddress = settings.value(QLatin1String(kParameterIpv4Address)).toString() +
+                        QLatin1Char('/') +
+                        QString::number(settings.value(QLatin1String(kParameterIpv4PrefixLength)).toInt());
+    }
 
     QStringList directives;
     const bool currentDhcpIpv4 = current.value(QLatin1String(kParameterDhcpIpv4)).toBool();
@@ -874,39 +889,44 @@ bool buildOverlayDocument(const NetworkDocument &underlay, const QJsonObject &se
         directives.append(QStringLiteral("DHCP=") + value);
     }
 
-    QJsonArray targetAddresses = settings.value(QLatin1String(kParameterIpv4Addresses)).toArray();
-    if (!keepStaticIpv4) {
-        targetAddresses = {};
-    }
-    if (targetAddresses.size() == 2 && targetAddresses.at(0).toString().isEmpty()) {
+    const QString currentBareAddress = current.value(QLatin1String(kParameterIpv4Address)).toString();
+    const QString currentAddress = currentBareAddress.isEmpty()
+                                       ? QString()
+                                       : currentBareAddress + QLatin1Char('/') +
+                                             QString::number(current.value(QLatin1String(kParameterIpv4PrefixLength)).toInt());
+    const QString fallbackAddress = effective.value(QLatin1String(kInternalFallbackIpv4Address)).toString();
+    const QString underlayFallbackAddress = current.value(QLatin1String(kInternalFallbackIpv4Address)).toString();
+    if (!underlayFallbackAddress.isEmpty() && !fallbackAddress.isEmpty() &&
+        fallbackAddress != underlayFallbackAddress) {
         return false;
     }
-    if (targetAddresses != current.value(QLatin1String(kParameterIpv4Addresses)).toArray()) {
+    if (targetAddress != currentAddress) {
         const StructuredAddressInfo addressInfo = inspectStructuredAddresses(underlay);
-        if (addressInfo.sectionCount > 0) {
+        if (addressInfo.sectionCount > 0 && addressInfo.fallbackSectionCount != addressInfo.sectionCount) {
             return false;
         }
         const QStringList priorAddresses = valuesForKey(
-            underlay, {QStringLiteral("Network"), QStringLiteral("Address")},
+            underlay, {QStringLiteral("Network")},
             QStringLiteral("Address"), true);
         for (const QString &address : priorAddresses) {
             if (!isIpv4Cidr(address)) {
                 return false;
             }
         }
+        if (priorAddresses.size() > 1) {
+            return false;
+        }
         if (!priorAddresses.isEmpty()) {
             directives.append(QStringLiteral("Address="));
         }
-        for (const QJsonValue &address : targetAddresses) {
-            if (!address.toString().isEmpty()) {
-                directives.append(QStringLiteral("Address=") + address.toString());
-            }
+        if (!targetAddress.isEmpty()) {
+            directives.append(QStringLiteral("Address=") + targetAddress);
         }
     }
+    const bool emitFallback = !fallbackAddress.isEmpty() && fallbackAddress != underlayFallbackAddress;
 
-    const QString targetGateway = keepStaticIpv4
-                                     ? settings.value(QLatin1String(kParameterGateway)).toString()
-                                     : QString();
+    const QString targetGateway = dhcpIpv4 ? QString()
+                                           : settings.value(QLatin1String(kParameterGateway)).toString();
     if (targetGateway != current.value(QLatin1String(kParameterGateway)).toString()) {
         QString section;
         for (const QString &line : underlay.lines) {
@@ -934,7 +954,8 @@ bool buildOverlayDocument(const NetworkDocument &underlay, const QJsonObject &se
         }
     }
 
-    const QJsonArray targetDns = settings.value(QLatin1String(kParameterDns)).toArray();
+    const QJsonArray targetDns = dhcpIpv4 ? QJsonArray{}
+                                          : settings.value(QLatin1String(kParameterDns)).toArray();
     if (targetDns != current.value(QLatin1String(kParameterDns)).toArray()) {
         const QStringList priorDns = valuesForKey(
             underlay, {QStringLiteral("Network")}, QStringLiteral("DNS"), true);
@@ -952,43 +973,54 @@ bool buildOverlayDocument(const NetworkDocument &underlay, const QJsonObject &se
     }
 
     overlay.lines.clear();
-    if (directives.isEmpty()) {
+    if (directives.isEmpty() && !emitFallback) {
         return true;
     }
     overlay.lines.append(QLatin1String(kOwnedOverlayMarker));
-    overlay.lines.append(QStringLiteral("[Network]"));
-    overlay.lines.append(directives);
+    if (!directives.isEmpty()) {
+        overlay.lines.append(QStringLiteral("[Network]"));
+        overlay.lines.append(directives);
+    }
+    if (emitFallback) {
+        const QString interfaceName = settings.value(QLatin1String(kParameterInterface)).toString();
+        if (!validInterfaceNameSyntax(interfaceName)) {
+            return false;
+        }
+        overlay.lines.append(QStringLiteral("[Address]"));
+        overlay.lines.append(QStringLiteral("Address=") + fallbackAddress);
+        overlay.lines.append(QStringLiteral("Label=") + interfaceName + QStringLiteral(":fallback"));
+    }
     return true;
 }
 
 bool validateSettings(const QJsonObject &settings, QString &error) {
+    if (settings.contains(QStringLiteral("dhcp_ipv4_static")) ||
+        settings.contains(QStringLiteral("ipv4_addresses")) ||
+        settings.contains(QStringLiteral("fallback_ipv4_address"))) {
+        error = QStringLiteral("legacy mixed-mode or fallback address fields are no longer supported");
+        return false;
+    }
     if (!settings.value(QLatin1String(kParameterDhcpIpv4)).isBool()) {
         error = QStringLiteral("dhcp_ipv4 must be boolean");
         return false;
     }
-    if (!settings.value(QLatin1String(kParameterDhcpIpv6)).isBool() ||
-        !settings.value(QLatin1String(kParameterDhcpIpv4Static)).isBool()) {
-        error = QStringLiteral("dhcp_ipv6 and dhcp_ipv4_static must be boolean");
+    if (!settings.value(QLatin1String(kParameterDhcpIpv6)).isBool()) {
+        error = QStringLiteral("dhcp_ipv6 must be boolean");
         return false;
     }
-
-    const QJsonArray addresses = settings.value(QLatin1String(kParameterIpv4Addresses)).toArray();
-    if (addresses.size() > 2) {
-        error = QStringLiteral("at most two IPv4 addresses are supported");
+    const QJsonValue addressValue = settings.value(QLatin1String(kParameterIpv4Address));
+    const QJsonValue prefixValue = settings.value(QLatin1String(kParameterIpv4PrefixLength));
+    if (!addressValue.isString() || !prefixValue.isDouble() ||
+        std::floor(prefixValue.toDouble()) != prefixValue.toDouble()) {
+        error = QStringLiteral("ipv4_address must be a string and ipv4_prefix_length an integer");
         return false;
     }
-    for (int index = 0; index < addresses.size(); ++index) {
-        const QJsonValue address = addresses.at(index);
-        const bool emptyAddress = address.isString() && address.toString().isEmpty();
-        const bool emptyPrimary = index == 0 && addresses.size() == 2 && emptyAddress &&
-                                  addresses.at(1).isString() && !addresses.at(1).toString().isEmpty();
-        const bool emptyFallback = index == 1 && addresses.size() == 2 && emptyAddress &&
-                                   addresses.at(0).isString() && !addresses.at(0).toString().isEmpty();
-        if ((!emptyPrimary && !emptyFallback) &&
-            (!address.isString() || !isIpv4Cidr(address.toString()))) {
-            error = QStringLiteral("invalid IPv4 address");
-            return false;
-        }
+    const QString address = addressValue.toString();
+    const int prefix = prefixValue.toInt();
+    if (prefix < 0 || prefix > 32 ||
+        (!settings.value(QLatin1String(kParameterDhcpIpv4)).toBool() && !isIpv4Address(address))) {
+        error = QStringLiteral("invalid IPv4 address or prefix length");
+        return false;
     }
     if (!settings.value(QLatin1String(kParameterGateway)).isString() ||
         (!settings.value(QLatin1String(kParameterGateway)).toString().isEmpty() &&
@@ -1001,14 +1033,6 @@ bool validateSettings(const QJsonObject &settings, QString &error) {
             error = QStringLiteral("invalid DNS server");
             return false;
         }
-    }
-    if (!settings.value(QLatin1String(kParameterDhcpIpv4)).toBool() && addresses.isEmpty()) {
-        error = QStringLiteral("a static IPv4 address is required when DHCP is disabled");
-        return false;
-    }
-    if (settings.value(QLatin1String(kParameterDhcpIpv4Static)).toBool() && addresses.isEmpty()) {
-        error = QStringLiteral("a static IPv4 address is required when mixed DHCP mode is enabled");
-        return false;
     }
     return true;
 }
@@ -1049,7 +1073,7 @@ QJsonObject interfaceObject(const InterfaceInfo &info) {
         {QLatin1String(kParameterBridgeMember), info.bridgeMember},
         {QLatin1String(kParameterLoopback), info.loopback},
         {QLatin1String(kParameterProbablyIsoHighLevelComms), info.probablyIsoHighLevelComms},
-        {QLatin1String(kParameterEditable), !special},
+        {QLatin1String(kParameterEditable), !special && info.kind.compare(QStringLiteral("ether"), Qt::CaseInsensitive) == 0},
         {QLatin1String(kParameterWarning), warningArray},
     };
 }
@@ -1085,6 +1109,20 @@ QList<InterfaceInfo> readInterfaces(bool &success) {
         interfaces.append(info);
     }
     return interfaces;
+}
+
+bool isStandardEtherInterface(const QString &interfaceName) {
+    bool success = false;
+    const QList<InterfaceInfo> interfaces = readInterfaces(success);
+    if (!success) {
+        return false;
+    }
+    for (const InterfaceInfo &info : interfaces) {
+        if (info.name == interfaceName) {
+            return info.kind.compare(QStringLiteral("ether"), Qt::CaseInsensitive) == 0 && !info.loopback;
+        }
+    }
+    return false;
 }
 
 ModuleResponse errorResponse(const ModuleRequest &request, const QString &error) {
@@ -1166,21 +1204,27 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                                                  {QLatin1String(kParameterNetworkFile), QString()},
                                                  {QLatin1String(kParameterDhcpIpv4), false},
                                                  {QLatin1String(kParameterDhcpIpv6), false},
-                                                 {QLatin1String(kParameterDhcpIpv4Static), false},
-                                                 {QLatin1String(kParameterIpv4Addresses), QJsonArray{}},
+                                                 {QLatin1String(kParameterIpv4Address), QString()},
+                                                 {QLatin1String(kParameterIpv4PrefixLength), 24},
+                                                 {QLatin1String(kInternalFallbackIpv4Address), QString()},
                                                  {QLatin1String(kParameterGateway), QString()},
                                                  {QLatin1String(kParameterDns), QJsonArray{}}}
                                            : parseDocument(document, interfaceName, networkFile);
-        parameters.insert(QLatin1String(kParameterEditable), !networkFile.isEmpty());
+        const bool standardEther = isStandardEtherInterface(interfaceName);
+        parameters.insert(QLatin1String(kParameterEditable), !networkFile.isEmpty() && standardEther);
         parameters.insert(QLatin1String(kParameterWarning), QJsonArray{});
         parameters.insert(QLatin1String(kParameterUserOverride),
                            !overlayPath.isEmpty() && isUiOwnedOverlay(overlayPath));
         parameters.insert(QLatin1String(kParameterResetStaged), g_pendingResetInterfaces.contains(interfaceName));
+        parameters = publicNetworkSettings(parameters);
         return {request.requestId, QLatin1String(kGroupNetwork), request.action,
                 parameters, true, true};
     }
 
     if (request.action == QLatin1String(kActionWriteSettings)) {
+        if (!isStandardEtherInterface(interfaceName)) {
+            return errorResponse(request, QLatin1String(kErrorUnsupportedConfiguration));
+        }
         QString validationError;
         if (!validateSettings(request.parameters, validationError)) {
             return errorResponse(request, QLatin1String(kErrorInvalidSettings) + QStringLiteral(": ") + validationError);
@@ -1216,6 +1260,11 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
         if (!underlayOk) {
             return errorResponse(request, QLatin1String(kErrorNetworkFileNotFound));
         }
+        bool effectiveOk = false;
+        const NetworkDocument effective = readEffectiveNetworkDocument(sourcePath, true, effectiveOk);
+        if (!effectiveOk) {
+            return errorResponse(request, QLatin1String(kErrorNetworkFileNotFound));
+        }
         const NetworkFileAnalysis analysis = analyzeNetworkDocument(underlay);
         if (!analysis.supported) {
             qWarning() << analysis.warning << "for" << interfaceName;
@@ -1226,7 +1275,7 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                           << "target=" << targetPath;
 
         NetworkDocument overlay;
-        if (!buildOverlayDocument(underlay, request.parameters, overlay)) {
+        if (!buildOverlayDocument(underlay, request.parameters, overlay, &effective)) {
             return errorResponse(request, QLatin1String(kErrorUnsupportedConfiguration));
         }
         if (overlay.lines.isEmpty()) {
@@ -1244,6 +1293,9 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
     }
 
     if (request.action == QLatin1String(kActionResetSettings)) {
+        if (!isStandardEtherInterface(interfaceName)) {
+            return errorResponse(request, QLatin1String(kErrorUnsupportedConfiguration));
+        }
         bool statusOk = false;
         const QString networkFile = networkFileFromStatus(interfaceName, statusOk);
         if (!statusOk) {
