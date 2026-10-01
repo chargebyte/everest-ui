@@ -5,6 +5,7 @@ import {
   isCurrentSettingsResponse,
   isSuccessfulApplyResponse,
   networkActionState,
+  networkFieldDisabledState,
   networkSettingsEqual,
   normalizeNetworkSettings
 } from '../public/js/pages/network.js';
@@ -98,6 +99,55 @@ test('disables Apply for unsaved edits but keeps Save and Reset available', () =
   assert.equal(networkActionState({ loaded: true, editable: true, dirty: true, userOverride: false, resetStaged: true }).applyDisabled, false);
   assert.equal(networkActionState({ loaded: true, editable: true, dirty: false, userOverride: true, resetStaged: true }).saveDisabled, true);
   assert.equal(networkActionState({ loaded: true, editable: true, dirty: false, userOverride: true }).applyDisabled, false);
+});
+
+test('disables manual IPv4 and DNS fields immediately for DHCP settings', () => {
+  assert.deepEqual(networkFieldDisabledState({
+    loaded: true,
+    editable: true,
+    resetStaged: false,
+    dhcpIpv4: true,
+    dhcpIpv4Static: false
+  }), {
+    dhcpIpv4: false,
+    dhcpIpv4Static: false,
+    ipv4Addresses: true,
+    fallbackAddress: true,
+    gateway: true,
+    dns: true
+  });
+});
+
+test('enables manual fields when DHCP is off or static IPv4 is also enabled', () => {
+  for (const mode of [
+    { dhcpIpv4: false, dhcpIpv4Static: false },
+    { dhcpIpv4: true, dhcpIpv4Static: true }
+  ]) {
+    const state = networkFieldDisabledState({
+      loaded: true,
+      editable: true,
+      resetStaged: false,
+      ...mode
+    });
+    assert.equal(state.dhcpIpv4, false);
+    assert.equal(state.dns, false);
+    assert.equal(state.ipv4Addresses, false);
+  }
+});
+
+test('keeps all network fields disabled until editable settings are loaded or while reset is staged', () => {
+  for (const gating of [
+    { loaded: false, editable: true, resetStaged: false },
+    { loaded: true, editable: false, resetStaged: false },
+    { loaded: true, editable: true, resetStaged: true }
+  ]) {
+    const state = networkFieldDisabledState({
+      ...gating,
+      dhcpIpv4: false,
+      dhcpIpv4Static: false
+    });
+    assert.ok(Object.values(state).every(Boolean));
+  }
 });
 
 test('accepts both successful Apply acknowledgements and results', () => {

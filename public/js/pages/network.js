@@ -59,6 +59,19 @@ export function networkActionState({ loaded, editable, dirty, userOverride, rese
   };
 }
 
+export function networkFieldDisabledState({ loaded, editable, resetStaged, dhcpIpv4, dhcpIpv4Static }) {
+  const globallyDisabled = !loaded || !editable || resetStaged;
+  const ipv4SettingsDisabled = globallyDisabled || (dhcpIpv4 && !dhcpIpv4Static);
+  return {
+    dhcpIpv4: globallyDisabled,
+    dhcpIpv4Static: globallyDisabled,
+    ipv4Addresses: ipv4SettingsDisabled,
+    fallbackAddress: ipv4SettingsDisabled,
+    gateway: ipv4SettingsDisabled,
+    dns: ipv4SettingsDisabled
+  };
+}
+
 export function renderNetworkPage(container, { sendPayload, addLog }) {
   container.innerHTML = '';
 
@@ -153,12 +166,6 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     warningElement.hidden = !message;
   }
 
-  function setSettingsDisabled(disabled) {
-    [dhcpElement, staticIpv4Element, addressElement, fallbackElement, gatewayElement, dnsElement]
-      .forEach((element) => { element.disabled = disabled; });
-    updateActionButtons();
-  }
-
   function updateActionButtons() {
     const buttons = networkActionState({
       loaded: settingsLoaded,
@@ -181,16 +188,26 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     }
   }
 
-  function updateStaticFields() {
-    const disabled = (dhcpElement.checked && !staticIpv4Element.checked) || !editable;
-    if (disabled) {
+  function updateFieldStates() {
+    const disabled = networkFieldDisabledState({
+      loaded: settingsLoaded,
+      editable,
+      resetStaged,
+      dhcpIpv4: dhcpElement.checked,
+      dhcpIpv4Static: staticIpv4Element.checked
+    });
+    if (dhcpElement.checked && !staticIpv4Element.checked) {
       addressElement.value = '';
       fallbackElement.value = '';
       gatewayElement.value = '';
     }
-    addressElement.disabled = disabled;
-    fallbackElement.disabled = disabled;
-    gatewayElement.disabled = disabled;
+    dhcpElement.disabled = disabled.dhcpIpv4;
+    staticIpv4Element.disabled = disabled.dhcpIpv4Static;
+    addressElement.disabled = disabled.ipv4Addresses;
+    fallbackElement.disabled = disabled.fallbackAddress;
+    gatewayElement.disabled = disabled.gateway;
+    dnsElement.disabled = disabled.dns;
+    updateActionButtons();
   }
 
   function renderInterfaceInfo(info) {
@@ -215,7 +232,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     pendingWriteInterface = '';
     resetStaged = false;
     settingsSection.hidden = true;
-    setSettingsDisabled(true);
+    updateFieldStates();
     setWarning(info && !editable ? 'This interface cannot be edited safely by the Web UI.' : '');
   }
 
@@ -277,13 +294,11 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     dnsElement.value = Array.isArray(parameters.dns) ? parameters.dns.join(', ') : '';
     settingsLoaded = true;
     settingsSection.hidden = false;
-    updateStaticFields();
     baselineSettings = normalizeNetworkSettings(collectSettings());
     userOverride = parameters.user_override === true;
     resetStaged = parameters.reset_staged === true;
     dirty = false;
-    setSettingsDisabled(!editable || resetStaged);
-    updateActionButtons();
+    updateFieldStates();
   }
 
   function collectSettings() {
@@ -305,7 +320,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   }
 
   function handleFormChange() {
-    updateStaticFields();
+    updateFieldStates();
     updateDirtyState();
   }
 
