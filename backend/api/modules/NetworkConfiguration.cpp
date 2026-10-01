@@ -34,9 +34,11 @@
 
 namespace {
 constexpr char kConfigAvailableFeatures[] = "available_features";
+constexpr char kConfigNetworkDeviceWhitelistPrefix[] = "network_device_whitelist.";
 constexpr char kParameterAvailable[] = "available";
 constexpr char kParameterInterfaces[] = "interfaces";
 constexpr char kParameterInterface[] = "interface";
+constexpr char kParameterExpertMode[] = "expert_mode";
 constexpr char kParameterNetworkFile[] = "network_file";
 constexpr char kParameterEditable[] = "editable";
 constexpr char kParameterUserOverride[] = "user_override";
@@ -263,6 +265,52 @@ bool featureAvailable(const QString &feature) {
         }
     }
     return false;
+}
+
+QSet<QString> networkDeviceWhitelistForCompatibleData(const QByteArray &compatibleData,
+                                                       const QMap<QString, QString> &configured,
+                                                       bool &applies) {
+    applies = false;
+    QSet<QString> devices;
+    const QList<QByteArray> compatibleEntries = compatibleData.split('\0');
+    for (const QByteArray &entry : compatibleEntries) {
+        if (entry.isEmpty()) {
+            continue;
+        }
+        const QString compatible = QString::fromUtf8(entry);
+        const auto match = configured.constFind(compatible);
+        if (match == configured.constEnd()) {
+            continue;
+        }
+        applies = true;
+        for (const QString &device : match.value().split(QLatin1Char(','), kSkipEmptyParts)) {
+            const QString trimmedDevice = device.trimmed();
+            if (!trimmedDevice.isEmpty()) {
+                devices.insert(trimmedDevice);
+            }
+        }
+    }
+    return devices;
+}
+
+QSet<QString> configuredNetworkDeviceWhitelist(bool &applies) {
+    QFile compatibleFile(QStringLiteral("/proc/device-tree/compatible"));
+    if (!compatibleFile.open(QIODevice::ReadOnly)) {
+        applies = false;
+        return {};
+    }
+    return networkDeviceWhitelistForCompatibleData(
+        compatibleFile.readAll(),
+        readBackendConfigValues(QLatin1String(kConfigNetworkDeviceWhitelistPrefix)), applies);
+}
+
+bool networkDeviceAllowed(const QString &interfaceName, bool expertMode) {
+    if (expertMode) {
+        return true;
+    }
+    bool whitelistApplies = false;
+    const QSet<QString> devices = configuredNetworkDeviceWhitelist(whitelistApplies);
+    return !whitelistApplies || devices.contains(interfaceName);
 }
 
 bool validInterfaceNameSyntax(const QString &name) {
@@ -1136,6 +1184,7 @@ ModuleResponse errorResponse(const ModuleRequest &request, const QString &error)
 namespace NetworkConfiguration {
 ModuleResponse handleRequest(const ModuleRequest &request) {
     recoverResetBackups();
+    const bool expertMode = request.parameters.value(QLatin1String(kParameterExpertMode)).toBool();
     if (request.action == QLatin1String(kActionReadInterfaces)) {
         if (!featureAvailable(QStringLiteral("network"))) {
             return {request.requestId, QLatin1String(kGroupNetwork), request.action,
@@ -1144,9 +1193,20 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                     true, true};
         }
         bool listSucceeded = false;
-        const QList<InterfaceInfo> interfaces = readInterfaces(listSucceeded);
+        QList<InterfaceInfo> interfaces = readInterfaces(listSucceeded);
         if (!listSucceeded) {
             return errorResponse(request, QLatin1String(kErrorListFailed));
+        }
+        if (!expertMode) {
+            bool whitelistApplies = false;
+            const QSet<QString> allowedDevices = configuredNetworkDeviceWhitelist(whitelistApplies);
+            if (whitelistApplies) {
+                interfaces.erase(std::remove_if(interfaces.begin(), interfaces.end(),
+                                                [&allowedDevices](const InterfaceInfo &info) {
+                                                    return !allowedDevices.contains(info.name);
+                                                }),
+                                 interfaces.end());
+            }
         }
         QJsonArray interfaceArray;
         for (const InterfaceInfo &info : interfaces) {
@@ -1164,6 +1224,9 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
 
     const QString interfaceName = request.parameters.value(QLatin1String(kParameterInterface)).toString();
     if (!validInterfaceName(interfaceName)) {
+        return errorResponse(request, QLatin1String(kErrorInvalidInterface));
+    }
+    if (!networkDeviceAllowed(interfaceName, expertMode)) {
         return errorResponse(request, QLatin1String(kErrorInvalidInterface));
     }
 
@@ -1332,6 +1395,13 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
     }
 
     if (request.action == QLatin1String(kActionApply)) {
+        if (!expertMode) {
+            for (const QString &pendingInterface : g_pendingResetInterfaces) {
+                if (!networkDeviceAllowed(pendingInterface, false)) {
+                    return errorResponse(request, QLatin1String(kErrorInvalidInterface));
+                }
+            }
+        }
         const ResetApplyResult resetResult = applyPendingResets(
             g_pendingResetInterfaces,
             [](const QString &pendingInterface) {

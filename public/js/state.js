@@ -27,7 +27,8 @@ export const state = {
     available: true,
     interfaces: [],
     interfacesRequestPending: false,
-    selectedInterface: ''
+    selectedInterface: '',
+    expertMode: false
   }
 };
 

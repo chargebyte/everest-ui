@@ -81,6 +81,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   page.className = 'page';
   page.innerHTML = `
     <h1>Network Configuration</h1>
+    <input id="network-expert-mode" type="checkbox" hidden />
     <section class="section network-warning-section">
       <p class="network-warning"><span class="network-warning-icon" aria-hidden="true">⚠</span>
         Changing network configuration can disconnect this Web UI and lock you out of the target.</p>
@@ -128,6 +129,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   container.appendChild(page);
 
   const interfaceSelect = page.querySelector('#network-interface');
+  const expertModeToggle = page.querySelector('#network-expert-mode');
   const statusElement = page.querySelector('#network-interface-status');
   const fileElement = page.querySelector('#network-file');
   const warningsElement = page.querySelector('#network-interface-warnings');
@@ -161,6 +163,20 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   let dirty = false;
   let dhcpIpv6 = false;
   let resetStaged = false;
+  expertModeToggle.checked = state.network.expertMode;
+
+  function requestInterfaces() {
+    state.network.interfaces = [];
+    state.network.interfacesRequestPending = true;
+    const request = buildRequest(kGroup, 'read_interfaces', {
+      expert_mode: { backend_path: 'expert_mode', value_type: 'boolean', value: state.network.expertMode }
+    });
+    const result = sendPayload(request);
+    if (!result.ok) {
+      state.network.interfacesRequestPending = false;
+    }
+    addLog(`${kGroup}.read_interfaces ${formatSendStatus(result)}`);
+  }
 
   function formatSendStatus(result) {
     if (result.ok) {
@@ -269,7 +285,8 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   function requestSettings(name) {
     pendingSettingsInterface = name;
     const request = buildRequest(kGroup, 'read_settings', {
-      interface: { backend_path: 'interface', value_type: 'string', value: name }
+      interface: { backend_path: 'interface', value_type: 'string', value: name },
+      expert_mode: { backend_path: 'expert_mode', value_type: 'boolean', value: state.network.expertMode }
     });
     pendingSettingsRequestId = request.requestId;
     const result = sendPayload(request);
@@ -337,6 +354,9 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
         value
       };
     });
+    requestResponseObject.expert_mode = {
+      backend_path: 'expert_mode', value_type: 'boolean', value: state.network.expertMode
+    };
 
     const request = buildRequest(kGroup, action, requestResponseObject);
     const result = sendPayload(request);
@@ -351,6 +371,12 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     state.network.selectedInterface = interfaceSelect.value;
     renderInterfaceInfo(state.network.interfaces.find((info) => info.name === interfaceSelect.value));
     requestSettings(interfaceSelect.value);
+  });
+  expertModeToggle.addEventListener('change', () => {
+    state.network.expertMode = expertModeToggle.checked;
+    state.network.selectedInterface = '';
+    renderInterfaceInfo(null);
+    requestInterfaces();
   });
   saveButton.addEventListener('click', () => {
     if (!settingsLoaded || !editable) return;
@@ -524,13 +550,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
         if (state.network.interfaces.length > 0) {
           populateInterfaces(state.network.interfaces);
         } else if (!state.network.interfacesRequestPending) {
-          const request = buildRequest(kGroup, 'read_interfaces', {});
-          state.network.interfacesRequestPending = true;
-          const result = sendPayload(request);
-          if (!result.ok) {
-            state.network.interfacesRequestPending = false;
-          }
-          addLog(`${kGroup}.read_interfaces ${formatSendStatus(result)}`);
+          requestInterfaces();
         }
       }
     },

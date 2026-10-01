@@ -4,6 +4,7 @@
   "action": "write_settings",
   "parameters": {
     "interface": "eth0",
+    "expert_mode": false,
     "dhcp_ipv4": false,
     "dhcp_ipv6": true,
     "ipv4_address": "10.0.0.22",

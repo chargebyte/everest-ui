@@ -3,7 +3,7 @@
   "group": "network",
   "action": "apply",
   "parameters": {
-    "interface": "eth0"
+    "interface": "eth0",
+    "expert_mode": false
   }
 }
-
