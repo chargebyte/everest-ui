@@ -300,6 +300,37 @@
   border-color: #c7cfdf;
 }
 
+.network-ipv4-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.network-ipv4-mode label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.network-cidr-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.network-cidr-inputs #network-address {
+  flex: 1;
+  min-width: 0;
+}
+
+.network-cidr-inputs #network-prefix {
+  width: 6ch;
+}
+
+.network-settings-grid [hidden] {
+  display: none;
+}
+
 .input-short {
   width: 12ch;
 }

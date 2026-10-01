@@ -30,11 +30,18 @@ class NetworkConfigurationTest final : public QObject {
     Q_OBJECT
 
 private slots:
-    void bridgeInterfaceRemainsEditable() {
+    void onlyEtherInterfaceIsEditable() {
         InterfaceInfo info;
         info.name = QStringLiteral("br0");
         info.kind = QStringLiteral("bridge");
+        QVERIFY(!interfaceObject(info).value(QStringLiteral("editable")).toBool());
+        info.kind = QStringLiteral("ether");
         QVERIFY(interfaceObject(info).value(QStringLiteral("editable")).toBool());
+        info.kind = QStringLiteral("can");
+        QVERIFY(!interfaceObject(info).value(QStringLiteral("editable")).toBool());
+        info.kind = QStringLiteral("loopback");
+        info.loopback = true;
+        QVERIFY(!interfaceObject(info).value(QStringLiteral("editable")).toBool());
     }
 
     void parsesDhcpFamiliesAndEquivalentSections() {
@@ -47,10 +54,12 @@ private slots:
         const QJsonObject settings = parseDocument(document, QStringLiteral("eth0"), QStringLiteral("file"));
         QVERIFY(settings.value(QStringLiteral("dhcp_ipv4")).toBool());
         QVERIFY(settings.value(QStringLiteral("dhcp_ipv6")).toBool());
-        QCOMPARE(settings.value(QStringLiteral("ipv4_addresses")).toArray().at(0).toString(),
-                 QStringLiteral("192.168.1.20/24"));
+        QCOMPARE(settings.value(QStringLiteral("ipv4_address")).toString(), QStringLiteral("192.168.1.20"));
+        QCOMPARE(settings.value(QStringLiteral("ipv4_prefix_length")).toInt(), 24);
         QCOMPARE(settings.value(QStringLiteral("gateway")).toString(), QStringLiteral("192.168.1.1"));
-        QVERIFY(settings.value(QStringLiteral("dhcp_ipv4_static")).toBool());
+        QVERIFY(!settings.contains(QStringLiteral("dhcp_ipv4_static")));
+        QVERIFY(!settings.contains(QStringLiteral("ipv4_addresses")));
+        QVERIFY(!publicNetworkSettings(settings).contains(QStringLiteral("_fallback_ipv4_address")));
     }
 
     void supportsBridgeStyleStructuredAddress() {
@@ -69,34 +78,27 @@ private slots:
         QVERIFY(analyzeNetworkFile(path).supported);
 
         const QJsonObject settings = parseDocument(document, QStringLiteral("br0"), path);
-        const QJsonArray parsedAddresses = settings.value(QStringLiteral("ipv4_addresses")).toArray();
-        QCOMPARE(parsedAddresses.size(), 2);
-        QCOMPARE(parsedAddresses.at(0).toString(), QString());
-        QCOMPARE(parsedAddresses.at(1).toString(), QStringLiteral("169.254.12.53/16"));
-        QJsonArray replacementAddresses;
-        replacementAddresses.append(QStringLiteral("192.168.0.38/24"));
+        QCOMPARE(settings.value(QStringLiteral("ipv4_address")).toString(), QString());
+        QCOMPARE(settings.value(QStringLiteral("_fallback_ipv4_address")).toString(), QStringLiteral("169.254.12.53/16"));
         NetworkDocument overlay;
-        const bool overlayBuilt = buildOverlayDocument(
-            document, QJsonObject{{QStringLiteral("dhcp_ipv4"), true},
+        QVERIFY(buildOverlayDocument(
+            document, QJsonObject{{QStringLiteral("dhcp_ipv4"), false},
                                   {QStringLiteral("dhcp_ipv6"), true},
-                                  {QStringLiteral("dhcp_ipv4_static"), true},
-                                  {QStringLiteral("ipv4_addresses"), replacementAddresses},
+                                  {QStringLiteral("ipv4_address"), QStringLiteral("192.168.0.38")},
+                                  {QStringLiteral("ipv4_prefix_length"), 24},
                                   {QStringLiteral("gateway"), QString()},
-                                  {QStringLiteral("dns"), QJsonArray{}}},
-            overlay);
-        QVERIFY(!overlayBuilt);
+                                  {QStringLiteral("dns"), QJsonArray{}}}, overlay));
+        QVERIFY(overlay.lines.join(QLatin1Char('\n')).contains(QStringLiteral("Address=192.168.0.38/24")));
     }
 
     void parsesFallbackLabelAfterAddress() {
         NetworkDocument document{{QStringLiteral("[Network]"), QStringLiteral("Address=192.168.0.38/24"),
                                   QStringLiteral("[Address]"), QStringLiteral("Address=169.254.12.53/16"),
                                   QStringLiteral("Label=br0:fallback")}};
-        const QJsonArray addresses = parseDocument(document, QStringLiteral("br0"), QStringLiteral("file"))
-                                         .value(QStringLiteral("ipv4_addresses"))
-                                         .toArray();
-        QCOMPARE(addresses.size(), 2);
-        QCOMPARE(addresses.at(0).toString(), QStringLiteral("192.168.0.38/24"));
-        QCOMPARE(addresses.at(1).toString(), QStringLiteral("169.254.12.53/16"));
+        const QJsonObject settings = parseDocument(document, QStringLiteral("br0"), QStringLiteral("file"));
+        QCOMPARE(settings.value(QStringLiteral("ipv4_address")).toString(), QStringLiteral("192.168.0.38"));
+        QCOMPARE(settings.value(QStringLiteral("ipv4_prefix_length")).toInt(), 24);
+        QCOMPARE(settings.value(QStringLiteral("_fallback_ipv4_address")).toString(), QStringLiteral("169.254.12.53/16"));
     }
 
     void rejectsAmbiguousStructuredAddresses() {
@@ -125,31 +127,28 @@ private slots:
         QVERIFY(!analyzeNetworkFile(path).supported);
     }
 
-    void validatesOptionalAddressSlots() {
-        const auto addressArray = [](const QString &primary, const QString &fallback) {
-            QJsonArray addresses;
-            addresses.append(primary);
-            addresses.append(fallback);
-            return addresses;
-        };
-        const auto validateAddresses = [](const QJsonArray &addresses) {
+    void validatesAddressAndPrefixIndependently() {
+        const auto validate = [](const QString &address, int prefix, bool dhcp) {
             QString error;
             return validateSettings(QJsonObject{
-                                         {QStringLiteral("dhcp_ipv4"), true},
+                                         {QStringLiteral("dhcp_ipv4"), dhcp},
                                          {QStringLiteral("dhcp_ipv6"), true},
-                                         {QStringLiteral("dhcp_ipv4_static"), true},
-                                         {QStringLiteral("ipv4_addresses"), addresses},
+                                         {QStringLiteral("ipv4_address"), address},
+                                         {QStringLiteral("ipv4_prefix_length"), prefix},
                                          {QStringLiteral("gateway"), QString()},
                                          {QStringLiteral("dns"), QJsonArray{}}},
                                      error);
         };
 
-        QVERIFY(validateAddresses(addressArray(QStringLiteral("192.168.99.99/24"), QString())));
-        QVERIFY(validateAddresses(addressArray(QString(), QStringLiteral("169.254.12.53/16"))));
-        QVERIFY(validateAddresses(addressArray(QStringLiteral("192.168.99.99/24"),
-                                               QStringLiteral("169.254.12.53/16"))));
-        QVERIFY(!validateAddresses(addressArray(QString(), QString())));
-        QVERIFY(!validateAddresses(addressArray(QStringLiteral("192.168.99.99/24"), QStringLiteral("bad"))));
+        QVERIFY(validate(QStringLiteral("192.168.99.99"), 24, false));
+        QVERIFY(validate(QString(), 24, true));
+        QVERIFY(validate(QStringLiteral("192.168.99.99"), 0, false));
+        QVERIFY(validate(QStringLiteral("192.168.99.99"), 32, false));
+        QVERIFY(!validate(QStringLiteral("192.168.99.999"), 24, false));
+        QVERIFY(!validate(QStringLiteral("192.168.99.99"), 33, false));
+        QVERIFY(!validate(QStringLiteral("192.168.99.99"), -1, false));
+        QString error;
+        QVERIFY(!validateSettings(QJsonObject{{QStringLiteral("dhcp_ipv4_static"), true}}, error));
     }
 
     void rejectsRepeatedNetworkAddressesAndGateways() {
@@ -173,65 +172,103 @@ private slots:
                                   QStringLiteral("Gateway=192.168.1.1"), QStringLiteral("Gateway=192.168.1.2")}));
     }
 
-    void mixedDhcpPreservesStaticIpv4Settings() {
-        NetworkDocument document{{QStringLiteral("[Network]"), QStringLiteral("DHCP=yes")}};
-        QJsonArray addresses;
-        addresses.append(QStringLiteral("192.168.1.20/24"));
-        const QJsonObject settings{{QStringLiteral("dhcp_ipv4"), true},
-                                   {QStringLiteral("dhcp_ipv6"), true},
-                                   {QStringLiteral("dhcp_ipv4_static"), true},
-                                   {QStringLiteral("ipv4_addresses"), addresses},
-                                   {QStringLiteral("gateway"), QStringLiteral("192.168.1.1")},
-                                   {QStringLiteral("dns"), QJsonArray{}}};
-        NetworkDocument overlay;
-        QVERIFY(buildOverlayDocument(document, settings, overlay));
-        const QString output = overlay.lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
-        QVERIFY(output.startsWith(QLatin1String(kOwnedOverlayMarker)));
-        QVERIFY(output.contains(QStringLiteral("[Network]\n")));
-        QVERIFY(output.contains(QStringLiteral("Address=192.168.1.20/24\n")));
-        QVERIFY(output.contains(QStringLiteral("Gateway=192.168.1.1\n")));
-        QVERIFY(!output.contains(QStringLiteral("[Match]")));
-    }
-
-    void writingDhcpOnlyEmitsOnlyChangedDirective() {
+    void switchingToDhcpClearsStaticDnsAndPreservesFallback() {
         NetworkDocument document{{QStringLiteral("[Match]"), QStringLiteral("Name=en*"),
                                   QStringLiteral("Driver=example"), QStringLiteral("[Network]"),
-                                  QStringLiteral("DHCP=yes"), QStringLiteral("Address=192.168.1.20/24"),
-                                  QStringLiteral("Gateway=192.168.1.1")}};
-        QJsonArray addresses;
-        addresses.append(QStringLiteral("192.168.1.20/24"));
+                                  QStringLiteral("DHCP=no"), QStringLiteral("Address=192.168.1.20/24"),
+                                  QStringLiteral("Gateway=192.168.1.1"), QStringLiteral("DNS=10.0.0.1"),
+                                  QStringLiteral("DNS=8.8.8.8"), QStringLiteral("[Address]"),
+                                  QStringLiteral("Address=169.254.12.53/16"),
+                                  QStringLiteral("Label=eth0:fallback")}};
         const QJsonObject settings{
             {QStringLiteral("dhcp_ipv4"), true},
-            {QStringLiteral("dhcp_ipv6"), false},
-            {QStringLiteral("dhcp_ipv4_static"), true},
-            {QStringLiteral("ipv4_addresses"), addresses},
-            {QStringLiteral("gateway"), QStringLiteral("192.168.1.1")},
+            {QStringLiteral("dhcp_ipv6"), true},
+            {QStringLiteral("ipv4_address"), QString()},
+            {QStringLiteral("ipv4_prefix_length"), 24},
+            {QStringLiteral("gateway"), QString()},
             {QStringLiteral("dns"), QJsonArray{}}};
 
         NetworkDocument overlay;
         QVERIFY(buildOverlayDocument(document, settings, overlay));
         const QString overlayText = overlay.lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
-        QVERIFY(overlayText.contains(QStringLiteral("DHCP=ipv4\n")));
-        QCOMPARE(overlayText.count(QStringLiteral("DHCP=")), 1);
+        QVERIFY(overlayText.contains(QStringLiteral("DHCP=yes\n")));
+        QVERIFY(overlayText.contains(QStringLiteral("Address=\n")));
+        QVERIFY(overlayText.contains(QStringLiteral("Gateway=\n")));
+        QVERIFY(overlayText.contains(QStringLiteral("DNS=\n")));
+        QVERIFY(!overlayText.contains(QStringLiteral("DNS=10.0.0.1")));
+        QVERIFY(!overlayText.contains(QStringLiteral("DNS=8.8.8.8")));
+        QVERIFY(!overlayText.contains(QStringLiteral("Address=169.254.12.53/16")));
+        QVERIFY(document.lines.contains(QStringLiteral("Address=169.254.12.53/16")));
+        NetworkDocument merged = document;
+        merged.lines.append(overlay.lines);
+        const QJsonObject effective = parseDocument(merged, QStringLiteral("eth0"), QStringLiteral("file"));
+        QVERIFY(effective.value(QStringLiteral("dhcp_ipv4")).toBool());
+        QCOMPARE(effective.value(QStringLiteral("ipv4_address")).toString(), QString());
+        QCOMPARE(effective.value(QStringLiteral("_fallback_ipv4_address")).toString(), QStringLiteral("169.254.12.53/16"));
+        QVERIFY(effective.value(QStringLiteral("dns")).toArray().isEmpty());
         QVERIFY(!overlayText.contains(QStringLiteral("Name=")));
         QVERIFY(!overlayText.contains(QStringLiteral("Driver=")));
-        QVERIFY(!overlayText.contains(QStringLiteral("Address=")));
-        QVERIFY(!overlayText.contains(QStringLiteral("Gateway=")));
+        QVERIFY(!overlayText.contains(QStringLiteral("DNS=2001:")));
+    }
+
+    void staticAddressDeltaRetainsStructuredFallback() {
+        NetworkDocument document{{QStringLiteral("[Network]"), QStringLiteral("DHCP=no"),
+                                  QStringLiteral("Address=192.168.1.20/24"),
+                                  QStringLiteral("[Address]"), QStringLiteral("Address=169.254.12.53/16"),
+                                  QStringLiteral("Label=eth0:fallback")}};
+        const QJsonObject settings{{QStringLiteral("dhcp_ipv4"), false},
+                                   {QStringLiteral("dhcp_ipv6"), false},
+                                   {QStringLiteral("ipv4_address"), QStringLiteral("192.168.1.21")},
+                                   {QStringLiteral("ipv4_prefix_length"), 25},
+                                   {QStringLiteral("gateway"), QString()},
+                                   {QStringLiteral("dns"), QJsonArray{}}};
+        NetworkDocument overlay;
+        QVERIFY(buildOverlayDocument(document, settings, overlay));
+        const QString output = overlay.lines.join(QLatin1Char('\n'));
+        QVERIFY(output.contains(QStringLiteral("Address=\nAddress=192.168.1.21/25")));
+        QVERIFY(!output.contains(QStringLiteral("169.254.12.53")));
+        QVERIFY(document.lines.contains(QStringLiteral("Address=169.254.12.53/16")));
+        NetworkDocument merged = document;
+        merged.lines.append(overlay.lines);
+        const QJsonObject effective = parseDocument(merged, QStringLiteral("eth0"), QStringLiteral("file"));
+        QCOMPARE(effective.value(QStringLiteral("ipv4_address")).toString(), QStringLiteral("192.168.1.21"));
+        QCOMPARE(effective.value(QStringLiteral("_fallback_ipv4_address")).toString(), QStringLiteral("169.254.12.53/16"));
+    }
+
+    void retainsFallbackThatWasPreviouslyStoredInTheUiOverlay() {
+        NetworkDocument underlay{{QStringLiteral("[Network]"), QStringLiteral("DHCP=yes")}};
+        NetworkDocument effective = underlay;
+        effective.lines.append(QStringLiteral("Address=192.168.1.20/24"));
+        effective.lines.append(QStringLiteral("Address=169.254.12.53/16"));
+        const QJsonObject settings{{QStringLiteral("interface"), QStringLiteral("eth0")},
+                                   {QStringLiteral("dhcp_ipv4"), true},
+                                   {QStringLiteral("dhcp_ipv6"), true},
+                                   {QStringLiteral("ipv4_address"), QString()},
+                                   {QStringLiteral("ipv4_prefix_length"), 24},
+                                   {QStringLiteral("gateway"), QString()},
+                                   {QStringLiteral("dns"), QJsonArray{}}};
+        NetworkDocument overlay;
+        QVERIFY(buildOverlayDocument(underlay, settings, overlay, &effective));
+        const QString output = overlay.lines.join(QLatin1Char('\n'));
+        QVERIFY(output.contains(QStringLiteral("[Address]\nAddress=169.254.12.53/16\nLabel=eth0:fallback")));
+        NetworkDocument merged = underlay;
+        merged.lines.append(overlay.lines);
+        const QJsonObject parsed = parseDocument(merged, QStringLiteral("eth0"), QStringLiteral("file"));
+        QCOMPARE(parsed.value(QStringLiteral("ipv4_address")).toString(), QString());
+        QCOMPARE(parsed.value(QStringLiteral("_fallback_ipv4_address")).toString(), QStringLiteral("169.254.12.53/16"));
     }
 
     void unchangedSettingsProduceNoOverlayDirectives() {
         NetworkDocument underlay{{QStringLiteral("[Network]"), QStringLiteral("DHCP=yes"),
-                                  QStringLiteral("DNS=8.8.8.8")}};
-        QJsonArray dns;
-        dns.append(QStringLiteral("8.8.8.8"));
+                                  QStringLiteral("DNS=2001:db8::53")}};
         NetworkDocument overlay;
         QVERIFY(buildOverlayDocument(
             underlay, QJsonObject{{QStringLiteral("dhcp_ipv4"), true},
                                   {QStringLiteral("dhcp_ipv6"), true},
-                                  {QStringLiteral("dhcp_ipv4_static"), false},
-                                  {QStringLiteral("ipv4_addresses"), QJsonArray{}},
+                                  {QStringLiteral("ipv4_address"), QString()},
+                                  {QStringLiteral("ipv4_prefix_length"), 24},
                                   {QStringLiteral("gateway"), QString()},
-                                  {QStringLiteral("dns"), dns}},
+                                  {QStringLiteral("dns"), QJsonArray{}}},
             overlay));
         QVERIFY(overlay.lines.isEmpty());
     }
@@ -307,19 +344,18 @@ private slots:
         NetworkDocument underlay{{QStringLiteral("[Network]"), QStringLiteral("DHCP=yes"),
                                   QStringLiteral("DNS=2001:db8::53"),
                                   QStringLiteral("DNS=8.8.8.8")}};
-        QJsonArray dns;
-        dns.append(QStringLiteral("1.1.1.1"));
         NetworkDocument overlay;
         QVERIFY(buildOverlayDocument(
             underlay, QJsonObject{{QStringLiteral("dhcp_ipv4"), true},
                                   {QStringLiteral("dhcp_ipv6"), true},
-                                  {QStringLiteral("dhcp_ipv4_static"), false},
-                                  {QStringLiteral("ipv4_addresses"), QJsonArray{}},
+                                  {QStringLiteral("ipv4_address"), QString()},
+                                  {QStringLiteral("ipv4_prefix_length"), 24},
                                   {QStringLiteral("gateway"), QString()},
-                                  {QStringLiteral("dns"), dns}},
+                                  {QStringLiteral("dns"), QJsonArray{}}},
             overlay));
         const QString output = overlay.lines.join(QLatin1Char('\n'));
-        QVERIFY(output.contains(QStringLiteral("DNS=\nDNS=2001:db8::53\nDNS=1.1.1.1")));
+        QVERIFY(output.contains(QStringLiteral("DNS=\nDNS=2001:db8::53")));
+        QVERIFY(!output.contains(QStringLiteral("DNS=1.1.1.1")));
         QVERIFY(!output.contains(QStringLiteral("DNS=8.8.8.8")));
     }
 
@@ -331,8 +367,8 @@ private slots:
         QVERIFY(buildOverlayDocument(
             underlay, QJsonObject{{QStringLiteral("dhcp_ipv4"), true},
                                   {QStringLiteral("dhcp_ipv6"), true},
-                                  {QStringLiteral("dhcp_ipv4_static"), false},
-                                  {QStringLiteral("ipv4_addresses"), QJsonArray{}},
+                                  {QStringLiteral("ipv4_address"), QString()},
+                                  {QStringLiteral("ipv4_prefix_length"), 24},
                                   {QStringLiteral("gateway"), QString()},
                                   {QStringLiteral("dns"), QJsonArray{}}},
             overlay));
@@ -347,14 +383,12 @@ private slots:
         NetworkDocument underlay{{QStringLiteral("[Network]"), QStringLiteral("DHCP=no"),
                                   QStringLiteral("Address=192.168.1.20/24"),
                                   QStringLiteral("Address=2001:db8::20/64")}};
-        QJsonArray addresses;
-        addresses.append(QStringLiteral("192.168.1.21/24"));
         NetworkDocument overlay;
         QVERIFY(!buildOverlayDocument(
             underlay, QJsonObject{{QStringLiteral("dhcp_ipv4"), false},
                                   {QStringLiteral("dhcp_ipv6"), false},
-                                  {QStringLiteral("dhcp_ipv4_static"), false},
-                                  {QStringLiteral("ipv4_addresses"), addresses},
+                                  {QStringLiteral("ipv4_address"), QStringLiteral("192.168.1.21")},
+                                  {QStringLiteral("ipv4_prefix_length"), 24},
                                   {QStringLiteral("gateway"), QString()},
                                   {QStringLiteral("dns"), QJsonArray{}}},
             overlay));
