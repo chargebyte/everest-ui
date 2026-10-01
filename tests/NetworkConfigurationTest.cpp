@@ -30,6 +30,37 @@ class NetworkConfigurationTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void combinesWhitelistEntriesForAllMatchingCompatibleStrings() {
+        bool applies = false;
+        const QMap<QString, QString> configured{
+            {QStringLiteral("chargebyte,imx93-charge-control-y"), QStringLiteral("eth0,qca")},
+            {QStringLiteral("fsl,imx93"), QStringLiteral("can0")},
+            {QStringLiteral("phytec,imx93-phycore-som"), QStringLiteral("eth1")}};
+        const QSet<QString> devices = networkDeviceWhitelistForCompatibleData(
+            QByteArrayLiteral("chargebyte,imx93-charge-control-y\0phytec,imx93-phycore-som\0fsl,imx93\0"),
+            configured, applies);
+
+        QVERIFY(applies);
+        QCOMPARE(devices, QSet<QString>({QStringLiteral("eth0"), QStringLiteral("qca"),
+                                         QStringLiteral("eth1"), QStringLiteral("can0")}));
+        QVERIFY(!devices.contains(QStringLiteral("eth")));
+    }
+
+    void emptyMatchingWhitelistAllowsNoDevicesAndUnmatchedAllowsAll() {
+        bool applies = false;
+        const QMap<QString, QString> configured{
+            {QStringLiteral("fsl,imx93"), QString()}};
+        const QSet<QString> emptyDevices = networkDeviceWhitelistForCompatibleData(
+            QByteArrayLiteral("fsl,imx93\0"), configured, applies);
+        QVERIFY(applies);
+        QVERIFY(emptyDevices.isEmpty());
+
+        const QSet<QString> unmatchedDevices = networkDeviceWhitelistForCompatibleData(
+            QByteArrayLiteral("vendor,unknown\0"), configured, applies);
+        QVERIFY(!applies);
+        QVERIFY(unmatchedDevices.isEmpty());
+    }
+
     void onlyEtherInterfaceIsEditable() {
         InterfaceInfo info;
         info.name = QStringLiteral("br0");

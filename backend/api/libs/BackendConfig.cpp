@@ -46,18 +46,43 @@ QString readBackendConfigValue(const QString &configKey) {
             continue;
         }
 
-        const QStringList parts = line.split(QLatin1Char('='));
-        if (parts.size() != 2) {
+        const int separator = line.indexOf(QLatin1Char('='));
+        if (separator <= 0) {
             continue;
         }
 
-        const QString key = parts.at(0).trimmed();
+        const QString key = line.left(separator).trimmed();
         if (key != configKey) {
             continue;
         }
 
-        return parts.at(1).trimmed();
+        return line.mid(separator + 1).trimmed();
     }
 
     return QString();
+}
+
+QMap<QString, QString> readBackendConfigValues(const QString &keyPrefix) {
+    QMap<QString, QString> values;
+    QFile configFile(resolveBackendConfigPath());
+    if (!configFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return values;
+    }
+
+    QTextStream stream(&configFile);
+    while (!stream.atEnd()) {
+        const QString line = stream.readLine().trimmed();
+        if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) {
+            continue;
+        }
+        const int separator = line.indexOf(QLatin1Char('='));
+        if (separator <= 0) {
+            continue;
+        }
+        const QString key = line.left(separator).trimmed();
+        if (key.startsWith(keyPrefix) && key.size() > keyPrefix.size()) {
+            values.insert(key.mid(keyPrefix.size()), line.mid(separator + 1).trimmed());
+        }
+    }
+    return values;
 }

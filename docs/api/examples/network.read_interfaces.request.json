@@ -2,6 +2,7 @@
   "requestId": 42,
   "group": "network",
   "action": "read_interfaces",
-  "parameters": {}
+  "parameters": {
+    "expert_mode": false
+  }
 }
-

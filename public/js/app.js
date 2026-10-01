@@ -230,7 +230,9 @@ function createAppTransport(appContext) {
     onOpen() {
       state.connection.connected = true;
       handlePcapConnectionChange(true);
-      const networkRequest = buildRequest(MODULE_IDS.NETWORK, 'read_interfaces', {});
+      const networkRequest = buildRequest(MODULE_IDS.NETWORK, 'read_interfaces', {
+        expert_mode: { backend_path: 'expert_mode', value_type: 'boolean', value: state.network.expertMode }
+      });
       state.network.interfacesRequestPending = true;
       const networkResult = appContext.transport.sendPayload(networkRequest);
       if (!networkResult.ok) {
