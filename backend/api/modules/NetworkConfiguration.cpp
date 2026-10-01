@@ -129,6 +129,7 @@ QString keyName(const QString &line, QString &value);
 NetworkDocument readDocument(const QString &path);
 bool isIpv4Cidr(const QString &value);
 bool isIpv4Address(const QString &value);
+bool isConfigurableNetworkInterfaceKind(const QString &kind);
 
 struct StructuredAddressInfo {
     int sectionCount = 0;
@@ -1121,7 +1122,7 @@ QJsonObject interfaceObject(const InterfaceInfo &info) {
         {QLatin1String(kParameterBridgeMember), info.bridgeMember},
         {QLatin1String(kParameterLoopback), info.loopback},
         {QLatin1String(kParameterProbablyIsoHighLevelComms), info.probablyIsoHighLevelComms},
-        {QLatin1String(kParameterEditable), !special && info.kind.compare(QStringLiteral("ether"), Qt::CaseInsensitive) == 0},
+        {QLatin1String(kParameterEditable), !special && isConfigurableNetworkInterfaceKind(info.kind)},
         {QLatin1String(kParameterWarning), warningArray},
     };
 }
@@ -1159,7 +1160,12 @@ QList<InterfaceInfo> readInterfaces(bool &success) {
     return interfaces;
 }
 
-bool isStandardEtherInterface(const QString &interfaceName) {
+bool isConfigurableNetworkInterfaceKind(const QString &kind) {
+    return kind.compare(QStringLiteral("ether"), Qt::CaseInsensitive) == 0 ||
+           kind.compare(QStringLiteral("bridge"), Qt::CaseInsensitive) == 0;
+}
+
+bool isConfigurableNetworkInterface(const QString &interfaceName) {
     bool success = false;
     const QList<InterfaceInfo> interfaces = readInterfaces(success);
     if (!success) {
@@ -1167,7 +1173,7 @@ bool isStandardEtherInterface(const QString &interfaceName) {
     }
     for (const InterfaceInfo &info : interfaces) {
         if (info.name == interfaceName) {
-            return info.kind.compare(QStringLiteral("ether"), Qt::CaseInsensitive) == 0 && !info.loopback;
+            return isConfigurableNetworkInterfaceKind(info.kind) && !info.loopback;
         }
     }
     return false;
@@ -1273,8 +1279,8 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                                                  {QLatin1String(kParameterGateway), QString()},
                                                  {QLatin1String(kParameterDns), QJsonArray{}}}
                                            : parseDocument(document, interfaceName, networkFile);
-        const bool standardEther = isStandardEtherInterface(interfaceName);
-        parameters.insert(QLatin1String(kParameterEditable), !networkFile.isEmpty() && standardEther);
+        const bool configurableInterface = isConfigurableNetworkInterface(interfaceName);
+        parameters.insert(QLatin1String(kParameterEditable), !networkFile.isEmpty() && configurableInterface);
         parameters.insert(QLatin1String(kParameterWarning), QJsonArray{});
         parameters.insert(QLatin1String(kParameterUserOverride),
                            !overlayPath.isEmpty() && isUiOwnedOverlay(overlayPath));
@@ -1285,7 +1291,7 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
     }
 
     if (request.action == QLatin1String(kActionWriteSettings)) {
-        if (!isStandardEtherInterface(interfaceName)) {
+        if (!isConfigurableNetworkInterface(interfaceName)) {
             return errorResponse(request, QLatin1String(kErrorUnsupportedConfiguration));
         }
         QString validationError;
@@ -1356,7 +1362,7 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
     }
 
     if (request.action == QLatin1String(kActionResetSettings)) {
-        if (!isStandardEtherInterface(interfaceName)) {
+        if (!isConfigurableNetworkInterface(interfaceName)) {
             return errorResponse(request, QLatin1String(kErrorUnsupportedConfiguration));
         }
         bool statusOk = false;

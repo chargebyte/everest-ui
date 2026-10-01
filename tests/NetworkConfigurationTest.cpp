@@ -61,15 +61,21 @@ private slots:
         QVERIFY(unmatchedDevices.isEmpty());
     }
 
-    void onlyEtherInterfaceIsEditable() {
+    void ethernetAndBridgeInterfacesAreEditableButCanIsNot() {
         InterfaceInfo info;
         info.name = QStringLiteral("br0");
         info.kind = QStringLiteral("bridge");
-        QVERIFY(!interfaceObject(info).value(QStringLiteral("editable")).toBool());
+        QVERIFY(interfaceObject(info).value(QStringLiteral("editable")).toBool());
+        QVERIFY(isConfigurableNetworkInterfaceKind(info.kind));
         info.kind = QStringLiteral("ether");
         QVERIFY(interfaceObject(info).value(QStringLiteral("editable")).toBool());
+        QVERIFY(isConfigurableNetworkInterfaceKind(info.kind));
         info.kind = QStringLiteral("can");
         QVERIFY(!interfaceObject(info).value(QStringLiteral("editable")).toBool());
+        QVERIFY(!isConfigurableNetworkInterfaceKind(info.kind));
+        info.kind = QStringLiteral("vlan");
+        QVERIFY(!interfaceObject(info).value(QStringLiteral("editable")).toBool());
+        QVERIFY(!isConfigurableNetworkInterfaceKind(info.kind));
         info.kind = QStringLiteral("loopback");
         info.loopback = true;
         QVERIFY(!interfaceObject(info).value(QStringLiteral("editable")).toBool());
