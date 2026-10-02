@@ -916,10 +916,17 @@ private slots:
         backup.write("original");
         backup.close();
 
-        QVERIFY(recoverResetBackupsInDirectory(
-            directory.path(), [](const QString &interfaceName) { return interfaceName == QStringLiteral("eth0"); }));
+        int reloads = 0;
+        QVERIFY(recoverResetBackupsInDirectories(
+            directory.path(), directory.path(),
+            [](const QString &interfaceName) { return interfaceName == QStringLiteral("eth0"); },
+            [&reloads](const QString &, const QStringList &) {
+                ++reloads;
+                return CommandResult{true, 0, {}};
+            }));
         QVERIFY(QFile::exists(originalPath));
         QVERIFY(!QFile::exists(backupPath));
+        QCOMPARE(reloads, 1);
     }
 
     void unavailableResetBackupIsRetried() {
@@ -932,10 +939,15 @@ private slots:
         backup.write("original");
         backup.close();
 
-        QVERIFY(!recoverResetBackupsInDirectory(directory.path(), [](const QString &) { return false; }));
+        const CommandRunner successfulReload = [](const QString &, const QStringList &) {
+            return CommandResult{true, 0, {}};
+        };
+        QVERIFY(!recoverResetBackupsInDirectories(directory.path(), directory.path(),
+                                                  [](const QString &) { return false; }, successfulReload));
         QVERIFY(QFile::exists(backupPath));
-        QVERIFY(recoverResetBackupsInDirectory(
-            directory.path(), [](const QString &interfaceName) { return interfaceName == QStringLiteral("eth1"); }));
+        QVERIFY(recoverResetBackupsInDirectories(
+            directory.path(), directory.path(),
+            [](const QString &interfaceName) { return interfaceName == QStringLiteral("eth1"); }, successfulReload));
         QVERIFY(QFile::exists(originalPath));
         QVERIFY(!QFile::exists(backupPath));
     }
@@ -950,7 +962,11 @@ private slots:
         committed.write("old configuration");
         committed.close();
 
-        QVERIFY(recoverResetBackupsInDirectory(directory.path(), [](const QString &) { return false; }));
+        QVERIFY(recoverResetBackupsInDirectories(directory.path(), directory.path(),
+                                                 [](const QString &) { return false; },
+                                                 [](const QString &, const QStringList &) {
+                                                     return CommandResult{true, 0, {}};
+                                                 }));
         QVERIFY(!QFile::exists(originalPath));
         QVERIFY(!QFile::exists(committedPath));
     }
@@ -967,10 +983,121 @@ private slots:
         backup.write(kOwnedOverlayMarker);
         backup.close();
 
-        QVERIFY(recoverOverlayResetBackupsInDirectory(directory.path()));
+        int reloads = 0;
+        QVERIFY(recoverResetBackupsInDirectories(
+            directory.path(), directory.path(), [](const QString &) { return true; },
+            [&reloads](const QString &, const QStringList &) {
+                ++reloads;
+                return CommandResult{true, 0, {}};
+            }));
         QVERIFY(QFile::exists(overlayPath));
         QVERIFY(isUiOwnedOverlay(overlayPath));
         QVERIFY(!QFile::exists(backupPath));
+        QCOMPARE(reloads, 1);
+    }
+
+    void interruptedCanResetRestoresBackupOverStagedOverlay() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString overlayPath = testOverlayPath(directory.path(), QStringLiteral("can0"));
+        const QString backupPath = overlayPath + QLatin1String(kResetBackupSuffix);
+        const QByteArray original = QByteArray(kOwnedOverlayMarker) +
+                                    "\n[CAN]\nBitRate=500000\nListenOnly=yes\n";
+        const QByteArray staged = QByteArray(kOwnedOverlayMarker) + "\n[CAN]\nListenOnly=yes\n";
+        QVERIFY(writeOwnedOverlay(backupPath, "[CAN]\nBitRate=500000\nListenOnly=yes\n"));
+        QVERIFY(writeOwnedOverlay(overlayPath, "[CAN]\nListenOnly=yes\n"));
+
+        int reloads = 0;
+        QVERIFY(recoverResetBackupsInDirectories(
+            directory.path(), directory.path(), [](const QString &) { return true; },
+            [&reloads](const QString &, const QStringList &) {
+                ++reloads;
+                return CommandResult{true, 0, {}};
+            }));
+        QFile restored(overlayPath);
+        QVERIFY(restored.open(QIODevice::ReadOnly));
+        QCOMPARE(restored.readAll(), original);
+        QVERIFY(!QFile::exists(backupPath));
+        QVERIFY(staged != original);
+        QCOMPARE(reloads, 1);
+    }
+
+    void interruptedCanResetRetainsBackupUntilReloadSucceeds() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString overlayPath = testOverlayPath(directory.path(), QStringLiteral("can0"));
+        const QString backupPath = overlayPath + QLatin1String(kResetBackupSuffix);
+        QVERIFY(writeOwnedOverlay(backupPath, "[CAN]\nBitRate=500000\n"));
+        QVERIFY(writeOwnedOverlay(overlayPath, "[CAN]\n"));
+
+        int reloads = 0;
+        QVERIFY(!recoverResetBackupsInDirectories(
+            directory.path(), directory.path(), [](const QString &) { return true; },
+            [&reloads](const QString &, const QStringList &) {
+                ++reloads;
+                return CommandResult{true, 1, {}};
+            }));
+        QVERIFY(QFile::exists(backupPath));
+        QVERIFY(isUiOwnedOverlay(overlayPath));
+        QVERIFY(recoverResetBackupsInDirectories(
+            directory.path(), directory.path(), [](const QString &) { return true; },
+            [&reloads](const QString &, const QStringList &) {
+                ++reloads;
+                return CommandResult{true, 0, {}};
+            }));
+        QVERIFY(!QFile::exists(backupPath));
+        QCOMPARE(reloads, 2);
+    }
+
+    void recoveryDoesNotOverwriteUnownedOverlay() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString overlayPath = testOverlayPath(directory.path(), QStringLiteral("can0"));
+        const QString backupPath = overlayPath + QLatin1String(kResetBackupSuffix);
+        QVERIFY(QDir().mkpath(QFileInfo(overlayPath).dir().absolutePath()));
+        QFile backup(backupPath);
+        QVERIFY(backup.open(QIODevice::WriteOnly));
+        backup.write(QByteArray(kOwnedOverlayMarker) + "\n[CAN]\nBitRate=500000\n");
+        backup.close();
+        QFile target(overlayPath);
+        QVERIFY(target.open(QIODevice::WriteOnly));
+        target.write("[CAN]\nBitRate=250000\n");
+        target.close();
+
+        int reloads = 0;
+        QVERIFY(!recoverResetBackupsInDirectories(
+            directory.path(), directory.path(), [](const QString &) { return true; },
+            [&reloads](const QString &, const QStringList &) {
+                ++reloads;
+                return CommandResult{true, 0, {}};
+            }));
+        QVERIFY(QFile::exists(backupPath));
+        QFile unchanged(overlayPath);
+        QVERIFY(unchanged.open(QIODevice::ReadOnly));
+        QCOMPARE(unchanged.readAll(), QByteArray("[CAN]\nBitRate=250000\n"));
+        QCOMPARE(reloads, 0);
+    }
+
+    void committedOverlayResetIsNotRolledBack() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString overlayPath = testOverlayPath(directory.path(), QStringLiteral("can0"));
+        const QString backupPath = overlayPath + QLatin1String(kResetBackupSuffix);
+        const QString committedPath = resetCommittedPath(overlayPath);
+        QVERIFY(writeOwnedOverlay(backupPath, "[CAN]\nBitRate=500000\n"));
+        QVERIFY(writeOwnedOverlay(committedPath, "[CAN]\nBitRate=500000\n"));
+
+        int reloads = 0;
+        QVERIFY(recoverResetBackupsInDirectories(
+            directory.path(), directory.path(), [](const QString &) { return true; },
+            [&reloads](const QString &, const QStringList &) {
+                ++reloads;
+                return CommandResult{true, 0, {}};
+            }));
+        QVERIFY(!QFile::exists(overlayPath));
+        QVERIFY(!QFile::exists(backupPath));
+        QVERIFY(!QFile::exists(committedPath));
+        QCOMPARE(reloads, 0);
     }
 
     void applyReloadsOnlyOnce() {
