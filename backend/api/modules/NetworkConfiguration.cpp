@@ -125,6 +125,18 @@ struct ResetApplyResult {
     bool applyFailed = false;
 };
 
+struct ResetMutation {
+    QString interfaceName;
+    QString path;
+    bool removeEntireOverlay = false;
+};
+
+struct ResetTransactionEntry {
+    QString path;
+    QString backupPath;
+    QString committedPath;
+};
+
 QSet<QString> g_pendingResetInterfaces;
 QHash<QString, QString> g_pendingResetOverlayPaths;
 QSet<QString> g_pendingCanBitRateResets;
@@ -758,123 +770,130 @@ bool revertCommittedBackups(const QList<QPair<QString, QString>> &backups) {
     return reverted;
 }
 
-ResetApplyResult applyPendingResets(QSet<QString> &pendingInterfaces,
-                                    const std::function<QString(const QString &)> &pathForInterface,
-                                    const CommandRunner &run) {
-    QList<QPair<QString, QString>> backups;
-    QList<QPair<QString, QString>> committedBackups;
-    QStringList interfaces = pendingInterfaces.values();
-    std::sort(interfaces.begin(), interfaces.end());
+using OverlayWriter = std::function<bool(const QString &, const NetworkDocument &)>;
 
-    for (const QString &interfaceName : interfaces) {
-        const QString originalPath = pathForInterface(interfaceName);
-        if (!QFile::exists(originalPath)) {
+ResetApplyResult applyResetTransaction(const QList<ResetMutation> &mutations, const CommandRunner &run,
+                                       const OverlayWriter &write = writeOverlay) {
+    QMap<QString, ResetMutation> mutationsByPath;
+    for (const ResetMutation &mutation : mutations) {
+        if (mutation.path.isEmpty()) {
             continue;
         }
-        if (!isUiOwnedOverlay(originalPath)) {
-            restoreResetBackups(backups);
+        ResetMutation &existing = mutationsByPath[mutation.path];
+        existing.path = mutation.path;
+        existing.removeEntireOverlay = existing.removeEntireOverlay || mutation.removeEntireOverlay;
+    }
+
+    QList<ResetTransactionEntry> staged;
+    const auto rollbackStaged = [&staged]() {
+        bool restored = true;
+        for (auto it = staged.crbegin(); it != staged.crend(); ++it) {
+            if (QFile::exists(it->path) && !QFile::remove(it->path)) {
+                qCritical() << "Unable to remove staged network reset" << it->path;
+                restored = false;
+            }
+        }
+        QList<QPair<QString, QString>> backups;
+        for (const ResetTransactionEntry &entry : staged) {
+            backups.append(qMakePair(entry.path, entry.backupPath));
+        }
+        return restoreResetBackups(backups) && restored;
+    };
+
+    for (const ResetMutation &mutation : mutationsByPath) {
+        if (QFile::exists(mutation.path) && !isUiOwnedOverlay(mutation.path)) {
+            rollbackStaged();
             return {false, true, false};
         }
-        const QString backupPath = resetBackupPath(originalPath);
-        if (QFile::exists(backupPath) || !QFile::rename(originalPath, backupPath)) {
-            restoreResetBackups(backups);
+    }
+
+    for (const ResetMutation &mutation : mutationsByPath) {
+        if (!QFile::exists(mutation.path)) {
+            continue;
+        }
+        ResetTransactionEntry entry{mutation.path, resetBackupPath(mutation.path),
+                                    resetCommittedPath(mutation.path)};
+        if (QFile::exists(entry.backupPath) || !QFile::rename(entry.path, entry.backupPath)) {
+            rollbackStaged();
             return {false, true, false};
         }
-        backups.append(qMakePair(originalPath, backupPath));
+        staged.append(entry);
+        if (!mutation.removeEntireOverlay) {
+            NetworkDocument updated;
+            if (!buildCanOverlayDocument(readDocument(entry.backupPath), 0, false, updated) ||
+                (!updated.lines.isEmpty() && !write(entry.path, updated))) {
+                rollbackStaged();
+                return {false, true, false};
+            }
+        }
     }
 
     if (!applyNetworkConfiguration(run)) {
-        const bool restored = restoreResetBackups(backups);
+        const bool restored = rollbackStaged();
         if (restored) {
             applyNetworkConfiguration(run);
         }
         return {false, false, true};
     }
 
-    for (auto it = backups.begin(); it != backups.end(); ++it) {
-        const QString committedPath = resetCommittedPath(it->first);
-        if (QFile::exists(committedPath) || !QFile::rename(it->second, committedPath)) {
-            const bool reverted = revertCommittedBackups(committedBackups);
-            const bool restored = reverted && restoreResetBackups(backups);
+    QList<QPair<QString, QString>> committedBackups;
+    for (const ResetTransactionEntry &entry : staged) {
+        if (QFile::exists(entry.committedPath) || !QFile::rename(entry.backupPath, entry.committedPath)) {
+            bool reverted = true;
+            for (auto it = committedBackups.crbegin(); it != committedBackups.crend(); ++it) {
+                if (QFile::exists(it->second) || !QFile::rename(it->first, it->second)) {
+                    qCritical() << "Unable to revert committed network reset backup" << it->first;
+                    reverted = false;
+                }
+            }
+            const bool filesRestored = rollbackStaged();
+            const bool restored = reverted && filesRestored;
             if (restored) {
                 applyNetworkConfiguration(run);
             }
             return {false, false, true};
         }
-        committedBackups.append(*it);
+        committedBackups.append(qMakePair(entry.committedPath, entry.backupPath));
     }
 
-    for (const auto &backup : backups) {
-        const QString committedPath = resetCommittedPath(backup.first);
-        if (QFile::exists(committedPath) && !QFile::remove(committedPath)) {
-            qWarning() << "Unable to remove committed network reset backup" << committedPath;
+    for (const ResetTransactionEntry &entry : staged) {
+        if (QFile::exists(entry.committedPath) && !QFile::remove(entry.committedPath)) {
+            qWarning() << "Unable to remove committed network reset backup" << entry.committedPath;
         }
     }
-    pendingInterfaces.clear();
     return {true, false, false};
 }
 
-ResetApplyResult applyPendingCanBitRateResets(const CommandRunner &run) {
-    QList<QPair<QString, QString>> backups;
-    QList<QPair<QString, QString>> committedBackups;
-    const auto rollback = [&backups]() {
-        for (const auto &backup : backups) {
-            if (QFile::exists(backup.first) && !QFile::remove(backup.first)) {
-                qCritical() << "Unable to remove staged CAN bitrate reset" << backup.first;
-                return false;
-            }
-        }
-        return restoreResetBackups(backups);
-    };
-    QStringList interfaces = g_pendingCanBitRateResets.values();
-    std::sort(interfaces.begin(), interfaces.end());
-    for (const QString &interfaceName : interfaces) {
-        const QString path = g_pendingCanBitRateResetPaths.value(interfaceName);
-        if (!QFile::exists(path)) continue;
-        if (!isUiOwnedOverlay(path)) {
-            rollback();
-            return {false, true, false};
-        }
-        const QString backup = resetBackupPath(path);
-        if (QFile::exists(backup) || !QFile::rename(path, backup)) {
-            rollback();
-            return {false, true, false};
-        }
-        backups.append(qMakePair(path, backup));
-        NetworkDocument updated;
-        const NetworkDocument original = readDocument(backup);
-        if (!buildCanOverlayDocument(original, 0, false, updated) ||
-            (!updated.lines.isEmpty() && !writeOverlay(path, updated))) {
-            rollback();
-            return {false, true, false};
-        }
+ResetApplyResult applyPendingResets(QSet<QString> &pendingInterfaces,
+                                    const std::function<QString(const QString &)> &pathForInterface,
+                                    const CommandRunner &run) {
+    QList<ResetMutation> mutations;
+    for (const QString &interfaceName : pendingInterfaces) {
+        mutations.append({interfaceName, pathForInterface(interfaceName), true});
     }
-    const ResetApplyResult result = applyPendingResets(
-        g_pendingResetInterfaces,
-        [](const QString &interfaceName) { return g_pendingResetOverlayPaths.value(interfaceName); }, run);
-    if (!result.success) {
-        const bool restored = rollback();
-        if (restored) applyNetworkConfiguration(run);
-        return result;
+    const ResetApplyResult result = applyResetTransaction(mutations, run, writeOverlay);
+    if (result.success) {
+        pendingInterfaces.clear();
     }
-    for (const auto &backup : backups) {
-        const QString committedPath = resetCommittedPath(backup.first);
-        if (QFile::exists(committedPath) || !QFile::rename(backup.second, committedPath)) {
-            const bool reverted = revertCommittedBackups(committedBackups);
-            const bool restored = reverted && rollback();
-            if (restored) applyNetworkConfiguration(run);
-            return {false, false, true};
-        }
-        committedBackups.append(backup);
+    return result;
+}
+
+ResetApplyResult applyPendingNetworkResets(const CommandRunner &run,
+                                          const OverlayWriter &write = writeOverlay) {
+    QList<ResetMutation> mutations;
+    for (const QString &interfaceName : g_pendingResetInterfaces) {
+        mutations.append({interfaceName, g_pendingResetOverlayPaths.value(interfaceName), true});
     }
-    for (const auto &backup : committedBackups) {
-        const QString committedPath = resetCommittedPath(backup.first);
-        if (QFile::exists(committedPath) && !QFile::remove(committedPath)) {
-            qWarning() << "Unable to remove committed CAN bitrate reset backup" << committedPath;
-        }
+    for (const QString &interfaceName : g_pendingCanBitRateResets) {
+        mutations.append({interfaceName, g_pendingCanBitRateResetPaths.value(interfaceName), false});
     }
-    g_pendingCanBitRateResets.clear();
-    g_pendingCanBitRateResetPaths.clear();
+    const ResetApplyResult result = applyResetTransaction(mutations, run, write);
+    if (result.success) {
+        g_pendingResetInterfaces.clear();
+        g_pendingResetOverlayPaths.clear();
+        g_pendingCanBitRateResets.clear();
+        g_pendingCanBitRateResetPaths.clear();
+    }
     return result;
 }
 
@@ -1738,7 +1757,7 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                 }
             }
         }
-        const ResetApplyResult resetResult = applyPendingCanBitRateResets(runCommand);
+        const ResetApplyResult resetResult = applyPendingNetworkResets(runCommand);
         if (resetResult.writeFailed) {
             return {request.requestId, QLatin1String(kGroupNetwork), request.action,
                     {{QLatin1String(kError), QLatin1String(kErrorWriteFailed)},
@@ -1749,8 +1768,6 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                     {{QLatin1String(kError), QLatin1String(kErrorApplyFailed)},
                      {QLatin1String(kParameterResetStaged), true}}, false, true};
         }
-        g_pendingResetOverlayPaths.clear();
-        g_pendingCanBitRateResetPaths.clear();
         return {request.requestId, QLatin1String(kGroupNetwork), request.action, {}, true, true};
     }
 

@@ -21,9 +21,30 @@ bool writeOwnedOverlay(const QString &path, const QByteArray &contents = {}) {
            file.write(QByteArray(kOwnedOverlayMarker) + '\n' + contents) >= 0;
 }
 
+bool writeTestDocument(const QString &path, const NetworkDocument &document) {
+    if (!QDir().mkpath(QFileInfo(path).dir().absolutePath())) {
+        return false;
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return false;
+    }
+    const QByteArray contents = document.lines.join(QLatin1Char('\n')).toUtf8() + '\n';
+    return file.write(contents) == contents.size();
+}
+
 QString testOverlayPath(const QString &root, const QString &interfaceName) {
     return root + QLatin1Char('/') + interfaceName + QStringLiteral(".network.d/50-everest-ui.conf");
 }
+
+struct PendingResetCleanup {
+    ~PendingResetCleanup() {
+        g_pendingResetInterfaces.clear();
+        g_pendingResetOverlayPaths.clear();
+        g_pendingCanBitRateResets.clear();
+        g_pendingCanBitRateResetPaths.clear();
+    }
+};
 } // namespace
 
 class NetworkConfigurationTest final : public QObject {
@@ -706,6 +727,183 @@ private slots:
                               QLatin1String(kResetBackupSuffix)));
         QVERIFY(pending.contains(QStringLiteral("eth0")));
         QVERIFY(pending.contains(QStringLiteral("eth1")));
+    }
+
+    void combinedEthernetAndCanResetsReloadAndCommitAsOneBatch() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        PendingResetCleanup cleanup;
+        const QString ethernetPath = testOverlayPath(directory.path(), QStringLiteral("a-eth"));
+        const QString canPath = testOverlayPath(directory.path(), QStringLiteral("z-can"));
+        QVERIFY(writeOwnedOverlay(ethernetPath, "[Network]\nDHCP=no\n"));
+        QVERIFY(writeOwnedOverlay(canPath,
+                                  "[Network]\nDNS=1.1.1.1\n[CAN]\nBitRate=500000\nListenOnly=yes\n"));
+        g_pendingResetInterfaces.insert(QStringLiteral("a-eth"));
+        g_pendingResetOverlayPaths.insert(QStringLiteral("a-eth"), ethernetPath);
+        g_pendingCanBitRateResets.insert(QStringLiteral("z-can"));
+        g_pendingCanBitRateResetPaths.insert(QStringLiteral("z-can"), canPath);
+
+        int reloadCount = 0;
+        const ResetApplyResult result = applyPendingNetworkResets(
+            [&reloadCount](const QString &, const QStringList &) {
+                ++reloadCount;
+                return CommandResult{true, 0, {}};
+            }, writeTestDocument);
+
+        QVERIFY(result.success);
+        QCOMPARE(reloadCount, 1);
+        QVERIFY(!QFile::exists(ethernetPath));
+        QVERIFY(QFile::exists(canPath));
+        const QString canText = readDocument(canPath).lines.join(QLatin1Char('\n'));
+        QVERIFY(canText.contains(QStringLiteral("DNS=1.1.1.1")));
+        QVERIFY(canText.contains(QStringLiteral("ListenOnly=yes")));
+        QVERIFY(!canText.contains(QStringLiteral("BitRate=")));
+        QVERIFY(g_pendingResetInterfaces.isEmpty());
+        QVERIFY(g_pendingCanBitRateResets.isEmpty());
+    }
+
+    void emptyResetBatchStillReloadsSavedNetworkConfigurationOnce() {
+        int reloadCount = 0;
+        const ResetApplyResult result = applyPendingNetworkResets(
+            [&reloadCount](const QString &, const QStringList &) {
+                ++reloadCount;
+                return CommandResult{true, 0, {}};
+            });
+
+        QVERIFY(result.success);
+        QCOMPARE(reloadCount, 1);
+    }
+
+    void combinedResetReloadFailureRestoresBothOverlayTypes() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        PendingResetCleanup cleanup;
+        const QString ethernetPath = testOverlayPath(directory.path(), QStringLiteral("a-eth"));
+        const QString canPath = testOverlayPath(directory.path(), QStringLiteral("z-can"));
+        const QByteArray ethernetContents = QByteArray(kOwnedOverlayMarker) + "\n[Network]\nDHCP=no\n";
+        const QByteArray canContents = QByteArray(kOwnedOverlayMarker) +
+                                       "\n[Network]\nDNS=1.1.1.1\n[CAN]\nBitRate=500000\nListenOnly=yes\n";
+        QVERIFY(writeOwnedOverlay(ethernetPath, "[Network]\nDHCP=no\n"));
+        QVERIFY(writeOwnedOverlay(canPath,
+                                  "[Network]\nDNS=1.1.1.1\n[CAN]\nBitRate=500000\nListenOnly=yes\n"));
+        g_pendingResetInterfaces.insert(QStringLiteral("a-eth"));
+        g_pendingResetOverlayPaths.insert(QStringLiteral("a-eth"), ethernetPath);
+        g_pendingCanBitRateResets.insert(QStringLiteral("z-can"));
+        g_pendingCanBitRateResetPaths.insert(QStringLiteral("z-can"), canPath);
+
+        int reloadCount = 0;
+        const ResetApplyResult result = applyPendingNetworkResets(
+            [&reloadCount](const QString &, const QStringList &) {
+                ++reloadCount;
+                return CommandResult{true, 1, {}};
+            }, writeTestDocument);
+
+        QVERIFY(!result.success);
+        QVERIFY(result.applyFailed);
+        QCOMPARE(reloadCount, 2);
+        for (const auto &expected : {qMakePair(ethernetPath, ethernetContents),
+                                     qMakePair(canPath, canContents)}) {
+            QFile file(expected.first);
+            QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
+            QCOMPARE(file.readAll(), expected.second);
+            QVERIFY(!QFile::exists(expected.first + QLatin1String(kResetBackupSuffix)));
+        }
+        QCOMPARE(g_pendingResetInterfaces.size(), 1);
+        QCOMPARE(g_pendingCanBitRateResets.size(), 1);
+    }
+
+    void combinedResetPromotionFailureRollsBackAlreadyPromotedEthernet() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        PendingResetCleanup cleanup;
+        const QString ethernetPath = testOverlayPath(directory.path(), QStringLiteral("a-eth"));
+        const QString canPath = testOverlayPath(directory.path(), QStringLiteral("z-can"));
+        const QByteArray ethernetContents = QByteArray(kOwnedOverlayMarker) + "\n[Network]\nDHCP=no\n";
+        const QByteArray canContents = QByteArray(kOwnedOverlayMarker) +
+                                       "\n[Network]\nDNS=1.1.1.1\n[CAN]\nBitRate=500000\nListenOnly=yes\n";
+        QVERIFY(writeOwnedOverlay(ethernetPath, "[Network]\nDHCP=no\n"));
+        QVERIFY(writeOwnedOverlay(canPath,
+                                  "[Network]\nDNS=1.1.1.1\n[CAN]\nBitRate=500000\nListenOnly=yes\n"));
+        QFile committedCollision(canPath + QLatin1String(kResetCommittedSuffix));
+        QVERIFY(committedCollision.open(QIODevice::WriteOnly | QIODevice::Text));
+        committedCollision.write("pre-existing marker");
+        committedCollision.close();
+        g_pendingResetInterfaces.insert(QStringLiteral("a-eth"));
+        g_pendingResetOverlayPaths.insert(QStringLiteral("a-eth"), ethernetPath);
+        g_pendingCanBitRateResets.insert(QStringLiteral("z-can"));
+        g_pendingCanBitRateResetPaths.insert(QStringLiteral("z-can"), canPath);
+
+        int reloadCount = 0;
+        const ResetApplyResult result = applyPendingNetworkResets(
+            [&reloadCount](const QString &, const QStringList &) {
+                ++reloadCount;
+                return CommandResult{true, 0, {}};
+            }, writeTestDocument);
+
+        QVERIFY(!result.success);
+        QVERIFY(result.applyFailed);
+        QCOMPARE(reloadCount, 2);
+        for (const auto &expected : {qMakePair(ethernetPath, ethernetContents),
+                                     qMakePair(canPath, canContents)}) {
+            QFile file(expected.first);
+            QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
+            QCOMPARE(file.readAll(), expected.second);
+            QVERIFY(!QFile::exists(expected.first + QLatin1String(kResetBackupSuffix)));
+        }
+        QVERIFY(QFile::exists(canPath + QLatin1String(kResetCommittedSuffix)));
+        QCOMPARE(g_pendingResetInterfaces.size(), 1);
+        QCOMPARE(g_pendingCanBitRateResets.size(), 1);
+    }
+
+    void mixedResetStagingFailureDoesNotReloadOrChangeEarlierOverlay() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString ethernetPath = testOverlayPath(directory.path(), QStringLiteral("a-eth"));
+        const QString canPath = testOverlayPath(directory.path(), QStringLiteral("z-can"));
+        const QByteArray ethernetContents = QByteArray(kOwnedOverlayMarker) + "\n[Network]\nDHCP=no\n";
+        QVERIFY(writeOwnedOverlay(ethernetPath, "[Network]\nDHCP=no\n"));
+        QVERIFY(writeOwnedOverlay(canPath, "[CAN]\nBitRate=500000\n"));
+        QFile backupCollision(canPath + QLatin1String(kResetBackupSuffix));
+        QVERIFY(backupCollision.open(QIODevice::WriteOnly | QIODevice::Text));
+        backupCollision.write("pre-existing backup");
+        backupCollision.close();
+
+        int reloadCount = 0;
+        const ResetApplyResult result = applyResetTransaction(
+            {{QStringLiteral("a-eth"), ethernetPath, true},
+             {QStringLiteral("z-can"), canPath, false}},
+            [&reloadCount](const QString &, const QStringList &) {
+                ++reloadCount;
+                return CommandResult{true, 0, {}};
+            });
+
+        QVERIFY(!result.success);
+        QVERIFY(result.writeFailed);
+        QCOMPARE(reloadCount, 0);
+        QFile restored(ethernetPath);
+        QVERIFY(restored.open(QIODevice::ReadOnly | QIODevice::Text));
+        QCOMPARE(restored.readAll(), ethernetContents);
+        QVERIFY(QFile::exists(canPath));
+        QVERIFY(QFile::exists(canPath + QLatin1String(kResetBackupSuffix)));
+    }
+
+    void fullOverlayResetDominatesCanResetForSamePath() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = testOverlayPath(directory.path(), QStringLiteral("can0"));
+        QVERIFY(writeOwnedOverlay(path, "[Network]\nDNS=1.1.1.1\n[CAN]\nBitRate=500000\n"));
+        int reloadCount = 0;
+
+        const ResetApplyResult result = applyResetTransaction(
+            {{QStringLiteral("can0"), path, false}, {QStringLiteral("eth0"), path, true}},
+            [&reloadCount](const QString &, const QStringList &) {
+                ++reloadCount;
+                return CommandResult{true, 0, {}};
+            });
+
+        QVERIFY(result.success);
+        QCOMPARE(reloadCount, 1);
+        QVERIFY(!QFile::exists(path));
     }
 
     void orphanedResetBackupIsRecovered() {
