@@ -77,6 +77,7 @@ constexpr char kErrorInvalidSettings[] = "invalid_network_settings";
 constexpr char kErrorWriteFailed[] = "network_config_write_failed";
 constexpr char kErrorApplyFailed[] = "network_config_apply_failed";
 constexpr char kErrorUnownedDropIn[] = "network_config_unowned_dropin";
+constexpr char kErrorRecoveryFailed[] = "network_config_recovery_failed";
 constexpr char kNetworkFileEtc[] = "/etc/systemd/network/";
 constexpr char kNetworkFileLib[] = "/lib/systemd/network/";
 constexpr char kNetworkFileUsrLib[] = "/usr/lib/systemd/network/";
@@ -651,18 +652,41 @@ QString resetCommittedPath(const QString &path) {
     return path + QLatin1String(kResetCommittedSuffix);
 }
 
-bool recoverResetBackupsInDirectory(const QString &root,
-                                    const std::function<bool(const QString &)> &interfaceAvailable) {
-    bool recovered = true;
+struct ResetRecoveryArtifacts {
+    QStringList backupPaths;
+    QStringList committedPaths;
+    bool filesChanged = false;
+};
+
+bool restoreBackupContents(const QString &backupPath, const QString &originalPath) {
+    QFile backup(backupPath);
+    if (!backup.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    const QByteArray contents = backup.readAll();
+    const QFileDevice::Permissions permissions = backup.permissions();
+    if (backup.error() != QFile::NoError) {
+        return false;
+    }
+
+    QSaveFile original(originalPath);
+    if (!original.open(QIODevice::WriteOnly) || original.write(contents) != contents.size()) {
+        return false;
+    }
+    if (!original.setPermissions(permissions)) {
+        return false;
+    }
+    return original.commit();
+}
+
+bool collectLegacyResetRecovery(const QString &root,
+                                const std::function<bool(const QString &)> &interfaceAvailable,
+                                ResetRecoveryArtifacts &artifacts) {
     const QDir directory(root);
     const QStringList committed = directory.entryList(
         QStringList() << QStringLiteral("*.network") + QLatin1String(kResetCommittedSuffix), QDir::Files);
-    for (const QString &committedName : committed) {
-        const QString committedPath = directory.filePath(committedName);
-        if (!QFile::remove(committedPath)) {
-            qWarning() << "Unable to remove committed network reset backup" << committedPath;
-            recovered = false;
-        }
+    for (const QString &name : committed) {
+        artifacts.committedPaths.append(directory.filePath(name));
     }
 
     const QStringList backups = directory.entryList(
@@ -680,65 +704,99 @@ bool recoverResetBackupsInDirectory(const QString &root,
         }
         if (!interfaceAvailable(interfaceName)) {
             qWarning() << "Deferring reset backup recovery for unavailable interface" << interfaceName;
-            recovered = false;
-            continue;
+            return false;
         }
         const QString originalPath = directory.filePath(originalName);
         const QString backupPath = directory.filePath(backupName);
-        if (QFile::exists(originalPath)) {
-            qWarning() << "Keeping reset backup because network override already exists" << backupPath;
+        if (QFile::exists(resetCommittedPath(originalPath))) {
+            artifacts.backupPaths.append(backupPath);
             continue;
         }
-        if (!QFile::rename(backupPath, originalPath)) {
-            qCritical() << "Unable to recover network override from" << backupPath;
-            recovered = false;
+        if (QFile::exists(originalPath)) {
+            qWarning() << "Keeping legacy reset backup because its original path exists" << backupPath;
+            continue;
         }
+        if (!restoreBackupContents(backupPath, originalPath)) {
+            qCritical() << "Unable to restore network override from" << backupPath;
+            return false;
+        }
+        artifacts.backupPaths.append(backupPath);
+        artifacts.filesChanged = true;
     }
-    return recovered;
+    return true;
 }
 
-bool recoverOverlayResetBackupsInDirectory(const QString &root) {
-    bool recovered = true;
-    QDir rootDirectory(root);
+bool collectOverlayResetRecovery(const QString &root, ResetRecoveryArtifacts &artifacts) {
+    const QDir rootDirectory(root);
     const QStringList dropInDirectories = rootDirectory.entryList(
         QStringList() << QStringLiteral("*.network.d"), QDir::Dirs | QDir::NoDotAndDotDot);
     for (const QString &directoryName : dropInDirectories) {
-        const QString directoryPath = rootDirectory.filePath(directoryName);
-        QDir directory(directoryPath);
+        const QDir directory(rootDirectory.filePath(directoryName));
         const QStringList committed = directory.entryList(
             QStringList() << QStringLiteral("*.conf") + QLatin1String(kResetCommittedSuffix), QDir::Files);
-        for (const QString &fileName : committed) {
-            if (!QFile::remove(directory.filePath(fileName))) {
-                recovered = false;
-            }
+        for (const QString &name : committed) {
+            artifacts.committedPaths.append(directory.filePath(name));
         }
+
         const QStringList backups = directory.entryList(
             QStringList() << QStringLiteral("*.conf") + QLatin1String(kResetBackupSuffix), QDir::Files);
         for (const QString &backupName : backups) {
             const QString originalName = backupName.left(
                 backupName.size() - QLatin1String(kResetBackupSuffix).size());
             const QString originalPath = directory.filePath(originalName);
-            if (QFile::exists(originalPath)) {
+            const QString backupPath = directory.filePath(backupName);
+            if (QFile::exists(resetCommittedPath(originalPath))) {
+                artifacts.backupPaths.append(backupPath);
                 continue;
             }
-            if (!QFile::rename(directory.filePath(backupName), originalPath)) {
-                recovered = false;
+            if (QFile::exists(originalPath) && !isUiOwnedOverlay(originalPath)) {
+                qCritical() << "Refusing to overwrite unowned network drop-in during recovery" << originalPath;
+                return false;
             }
+            if (!restoreBackupContents(backupPath, originalPath)) {
+                qCritical() << "Unable to restore network drop-in from" << backupPath;
+                return false;
+            }
+            artifacts.backupPaths.append(backupPath);
+            artifacts.filesChanged = true;
         }
     }
-    return recovered;
+    return true;
 }
 
-void recoverResetBackups() {
-    if (g_resetRecoveryDone) {
-        return;
+bool completeResetRecovery(ResetRecoveryArtifacts &artifacts, const CommandRunner &run) {
+    if (artifacts.filesChanged && !applyNetworkConfiguration(run)) {
+        qCritical() << "Unable to reload networkd after restoring reset backups";
+        return false;
     }
-    const bool legacyRecovered = recoverResetBackupsInDirectory(
-        QString::fromLatin1(kNetworkFileEtc),
-        [](const QString &interfaceName) { return validInterfaceName(interfaceName); });
-    const bool overlaysRecovered =
-        recoverOverlayResetBackupsInDirectory(QString::fromLatin1(kNetworkFileEtc));
-    g_resetRecoveryDone = legacyRecovered && overlaysRecovered;
+
+    bool cleaned = true;
+    for (const QString &path : artifacts.backupPaths + artifacts.committedPaths) {
+        if (QFile::exists(path) && !QFile::remove(path)) {
+            qWarning() << "Unable to remove recovered network reset artifact" << path;
+            cleaned = false;
+        }
+    }
+    return cleaned;
+}
+
+bool recoverResetBackupsInDirectories(const QString &legacyRoot, const QString &overlayRoot,
+                                      const std::function<bool(const QString &)> &interfaceAvailable,
+                                      const CommandRunner &run) {
+    ResetRecoveryArtifacts artifacts;
+    return collectLegacyResetRecovery(legacyRoot, interfaceAvailable, artifacts) &&
+           collectOverlayResetRecovery(overlayRoot, artifacts) &&
+           completeResetRecovery(artifacts, run);
+}
+
+bool recoverResetBackups() {
+    if (g_resetRecoveryDone) {
+        return true;
+    }
+    g_resetRecoveryDone = recoverResetBackupsInDirectories(
+        QString::fromLatin1(kNetworkFileEtc), QString::fromLatin1(kNetworkFileEtc),
+        [](const QString &interfaceName) { return validInterfaceName(interfaceName); }, runCommand);
+    return g_resetRecoveryDone;
 }
 
 bool restoreResetBackups(const QList<QPair<QString, QString>> &backups) {
@@ -1472,7 +1530,9 @@ ModuleResponse errorResponse(const ModuleRequest &request, const QString &error)
 
 namespace NetworkConfiguration {
 ModuleResponse handleRequest(const ModuleRequest &request) {
-    recoverResetBackups();
+    if (!recoverResetBackups()) {
+        return errorResponse(request, QLatin1String(kErrorRecoveryFailed));
+    }
     const bool expertMode = request.parameters.value(QLatin1String(kParameterExpertMode)).toBool();
     if (request.action == QLatin1String(kActionReadInterfaces)) {
         if (!featureAvailable(QStringLiteral("network"))) {
