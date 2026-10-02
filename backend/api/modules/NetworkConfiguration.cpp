@@ -601,6 +601,12 @@ bool isUiOwnedOverlay(const QString &path) {
     return QString::fromUtf8(file.readLine()).trimmed() == QLatin1String(kOwnedOverlayMarker);
 }
 
+QString resetOverlayOwnershipError(const QString &path) {
+    return QFile::exists(path) && !isUiOwnedOverlay(path)
+               ? QLatin1String(kErrorUnownedDropIn)
+               : QString();
+}
+
 bool prepareOverlayDirectory(const QString &path) {
     const QFileInfo targetInfo(path);
     if (!targetInfo.dir().exists() && !QDir().mkpath(targetInfo.dir().absolutePath())) {
@@ -1679,8 +1685,9 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
         if (overlayPath.isEmpty()) {
             return errorResponse(request, QLatin1String(kErrorNetworkFileNotFound));
         }
-        if (QFile::exists(overlayPath) && !isUiOwnedOverlay(overlayPath)) {
-            return errorResponse(request, QLatin1String(kErrorUnownedDropIn));
+        const QString ownershipError = resetOverlayOwnershipError(overlayPath);
+        if (!ownershipError.isEmpty()) {
+            return errorResponse(request, ownershipError);
         }
         const QString interfaceKind = networkInterfaceKind(interfaceName);
         if (isCanInterfaceKind(interfaceKind)) {
