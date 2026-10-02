@@ -351,7 +351,7 @@ private slots:
                  QStringLiteral("/etc/systemd/network/10-wired.network.d/50-everest-ui.conf"));
     }
 
-    void lowerPriorityOwnedNameIsNotShadowedByNewOverlay() {
+    void saveAllowsAdoptingExistingEtcTargetButNotShadowingLowerPriorityTarget() {
         const QTemporaryDir directory;
         QVERIFY(directory.isValid());
         const QString networkFile = QStringLiteral("/usr/lib/systemd/network/10-wired.network");
@@ -371,8 +371,24 @@ private slots:
         QVERIFY(adopted.open(QIODevice::WriteOnly | QIODevice::Text));
         adopted.write("user-owned until adopted");
         adopted.close();
+        QVERIFY(!isUiOwnedOverlay(target));
         QVERIFY(!lowerPriorityOverlayConflict(networkFile, target,
                                               {directory.filePath(QStringLiteral("run"))}));
+
+        const NetworkDocument underlay{{QStringLiteral("[Network]"), QStringLiteral("DHCP=yes")}};
+        const NetworkDocument effective{{QStringLiteral("[Network]"), QStringLiteral("DHCP=yes"),
+                                         QStringLiteral("KeepConfiguration=static")}};
+        NetworkDocument replacement;
+        QVERIFY(buildOverlayDocument(
+            underlay, QJsonObject{{QStringLiteral("dhcp_ipv4"), false},
+                                  {QStringLiteral("dhcp_ipv6"), false},
+                                  {QStringLiteral("ipv4_address"), QStringLiteral("192.168.5.10")},
+                                  {QStringLiteral("ipv4_prefix_length"), 24},
+                                  {QStringLiteral("gateway"), QString()},
+                                  {QStringLiteral("dns"), QJsonArray{}}},
+            replacement, &effective));
+        QVERIFY(replacement.lines.join(QLatin1Char('\n')).contains(QStringLiteral("DHCP=no")));
+        QVERIFY(!replacement.lines.join(QLatin1Char('\n')).contains(QStringLiteral("KeepConfiguration")));
     }
 
     void mergesDropInsByNameAndDirectoryPrecedence() {
@@ -478,6 +494,26 @@ private slots:
         QVERIFY(!isUiOwnedOverlay(path));
         QVERIFY(writeOwnedOverlay(path, "[Network]\nDHCP=no\n"));
         QVERIFY(isUiOwnedOverlay(path));
+    }
+
+    void resetOwnershipRefusalLeavesUnmarkedDropInUnchanged() {
+        const QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath(QStringLiteral("50-everest-ui.conf"));
+        const QByteArray contents("[Network]\nDHCP=no\nKeepConfiguration=static\n");
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        QCOMPARE(file.write(contents), qint64(contents.size()));
+        file.close();
+
+        const ModuleResponse refusal = errorResponse(ModuleRequest{}, resetOverlayOwnershipError(path));
+        QVERIFY(!refusal.success);
+        QCOMPARE(refusal.parameters.value(QStringLiteral("error")).toString(),
+                 QStringLiteral("network_config_unowned_dropin"));
+        QFile unchanged(path);
+        QVERIFY(unchanged.open(QIODevice::ReadOnly | QIODevice::Text));
+        QCOMPARE(unchanged.readAll(), contents);
+        QVERIFY(!QFile::exists(path + QLatin1String(kResetBackupSuffix)));
     }
 
     void resetRejectsUnmarkedOverlayAndPreservesMainNetworkFile() {
