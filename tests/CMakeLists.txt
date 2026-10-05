@@ -112,3 +112,31 @@ target_link_libraries(everest_config_test
 )
 
 add_test(NAME everest_config_test COMMAND everest_config_test)
+
+add_executable(safety_controller_test
+    SafetyControllerTest.cpp
+    ../backend/api/RpcApiClient.cpp
+    ../backend/api/libs/BackendConfig.cpp
+    ../backend/api/libs/ConsoleConnector.cpp
+    ../backend/api/libs/EverestServiceControl.cpp
+    ../backend/api/libs/SystemdService.cpp
+    ../backend/api/libs/YamlUtils.cpp
+)
+
+target_include_directories(safety_controller_test PRIVATE
+    "${CMAKE_BINARY_DIR}"
+    "${CMAKE_SOURCE_DIR}/backend/api"
+    "${CMAKE_SOURCE_DIR}/backend/api/modules"
+    "${CMAKE_SOURCE_DIR}/backend/api/libs"
+)
+
+target_link_libraries(safety_controller_test
+    ${QT_PACKAGE_NAME}::Core
+    ${QT_PACKAGE_NAME}::Network
+    ${QT_PACKAGE_NAME}::WebSockets
+    ${QT_PACKAGE_NAME}::DBus
+    ${QT_PACKAGE_NAME}::Test
+    yaml-cpp
+)
+
+add_test(NAME safety_controller_test COMMAND safety_controller_test)

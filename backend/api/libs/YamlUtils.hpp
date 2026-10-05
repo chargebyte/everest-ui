@@ -16,6 +16,8 @@ struct YamlLoadResult {
 };
 
 YamlLoadResult loadYamlFile(const QString &path);
+YamlLoadResult loadEffectiveEverestConfig();
+QJsonValue applyJsonMergePatch(const QJsonValue &target, const QJsonValue &patch);
 QString formatYamlScalar(const QJsonValue &value);
 
 #endif // YAML_UTILS_HPP

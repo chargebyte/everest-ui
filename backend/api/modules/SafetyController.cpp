@@ -11,8 +11,12 @@
 #include "RpcApiClient.hpp"
 #include "YamlUtils.hpp"
 
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
+#include <QRegularExpression>
+#include <QSaveFile>
 #include <QStringList>
 #include <QTextStream>
 
@@ -20,24 +24,22 @@
 #include <QStringConverter>
 #endif
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace SafetyController {
+QJsonObject readRequestedParametersFromYaml(const QJsonObject& requestParameters, const QJsonObject& yamlRoot);
 namespace {
-RpcApiClient *g_rpcApiClient = nullptr;
-constexpr char kErrorSafetyControllerDumpFailed[] = "safety_controller_dump_failed";
-constexpr char kErrorSafetyControllerPbDumpFailed[] = "safety_controller_pb_dump_failed";
+RpcApiClient* g_rpcApiClient = nullptr;
+constexpr char kModuleEvseManager[] = "EvseManager";
 constexpr char kErrorSafetyControllerYamlWriteFailed[] = "safety_controller_yaml_write_failed";
 constexpr char kErrorSafetyControllerPbCreateFailed[] = "safety_controller_pb_create_failed";
 constexpr char kErrorSafetyControllerFlashFailed[] = "safety_controller_flash_failed";
-constexpr char kErrorSafetyControllerYamlMissingReloadRequired[] = "safety_controller_yaml_missing_reload_required";
 constexpr char kErrorStdErr[] = "stderr";
 constexpr char kParametersPt1000[] = "pt1000_";
 constexpr char kParametersContactors[] = "contactors_";
 constexpr char kParametersEstops[] = "estops_";
-constexpr char kCmdRaDataDump[] = "ra-update -a data dump";
 constexpr char kCmdRaDataFlash[] = "ra-update -a data flash";
-constexpr char kCmdRaPbDump[] = "ra-pb-dump";
 constexpr char kCmdRaPbCreate[] = "ra-pb-create";
 constexpr char kCmdFlagI[] = "-i";
 constexpr char kCmdFlagO[] = "-o";
@@ -62,8 +64,41 @@ constexpr char kUnitMs[] = " ms";
 constexpr char kConfSafetyControllerSettingsBin[] = "safety_controller_settings_bin";
 constexpr char kConfSafetyControllerSettingsYaml[] = "safety_controller_settings_yaml";
 constexpr char kConfSafetyControllerAvailableSettings[] = "safety_controller_available_settings";
+constexpr char kCacheDirectory[] = "/run/ra-utils";
+constexpr char kKeyActiveModules[] = "active_modules";
+constexpr char kKeyConnections[] = "connections";
+constexpr char kKeyBsp[] = "bsp";
+constexpr char kKeyModuleId[] = "module_id";
+constexpr char kKeySerialPort[] = "serial_port";
+constexpr char kKeyDefault[] = "default";
+constexpr char kKeyConfig[] = "config";
+constexpr char kKeyControllers[] = "controllers";
+constexpr char kKeyDeviceName[] = "device_name";
+constexpr char kKeyBspInstance[] = "bsp_instance";
+constexpr char kKeyDriverModule[] = "driver_module";
+constexpr char kKeySettings[] = "settings";
+constexpr char kKeyAvailable[] = "available";
+constexpr char kKeyWritable[] = "writable";
+constexpr char kKeyMessage[] = "message";
+constexpr char kKeyRpcAvailable[] = "rpc_available";
+constexpr char kKeyResolutionError[] = "resolution_error";
+constexpr char kErrorDeviceInvalid[] = "safety_controller_device_invalid";
+constexpr char kErrorDeviceNotConfigured[] = "safety_controller_device_not_configured";
+constexpr char kErrorYamlPublishAfterFlash[] = "safety_controller_yaml_publish_failed_after_flash";
 
-SafetyControllerAction toSafetyControllerAction(const QString &action) {
+struct SafetyControllerDevice {
+    QString name;
+    QString bspInstance;
+    QString driverModule;
+    QString yamlPath;
+};
+
+struct SafetyControllerDeviceResolution {
+    QList<SafetyControllerDevice> devices;
+    QStringList errors;
+};
+
+SafetyControllerAction toSafetyControllerAction(const QString& action) {
     if (action == QLatin1String(kActionReadSettings)) {
         return SafetyControllerAction::ReadSettings;
     }
@@ -74,7 +109,7 @@ SafetyControllerAction toSafetyControllerAction(const QString &action) {
     return SafetyControllerAction::Unknown;
 }
 
-QString stripUnitSuffix(const QJsonValue &value) {
+QString stripUnitSuffix(const QJsonValue& value) {
     QString text = value.toString().trimmed();
     text.replace(QStringLiteral("Â°C"), QStringLiteral("\u00b0C"));
     text.replace(QStringLiteral("Î©"), QStringLiteral("\u03a9"));
@@ -89,7 +124,7 @@ QString unitOhm() {
     return QStringLiteral(" \u03a9");
 }
 
-QString jsonValueToText(const QJsonValue &value) {
+QString jsonValueToText(const QJsonValue& value) {
     if (value.isString()) {
         return value.toString().trimmed();
     }
@@ -122,7 +157,7 @@ QStringList loadAvailableSafetyControllerSettings() {
 
     QStringList availableSettings;
     const QStringList configuredSettingList = configuredSettings.split(QLatin1Char(','));
-    for (const QString &configuredSetting : configuredSettingList) {
+    for (const QString& configuredSetting : configuredSettingList) {
         const QString setting = configuredSetting.trimmed();
         if (!setting.isEmpty()) {
             availableSettings.append(setting);
@@ -136,27 +171,159 @@ QStringList loadAvailableSafetyControllerSettings() {
     return availableSettings;
 }
 
-bool isSafetyControllerSettingAvailable(const QStringList &availableSettings,
-                                        const QString &setting) {
-    if (availableSettings.contains(QLatin1String(kSafetyControllerSettingNone),
-                                   Qt::CaseInsensitive)) {
+bool isSafetyControllerSettingAvailable(const QStringList& availableSettings, const QString& setting) {
+    if (availableSettings.contains(QLatin1String(kSafetyControllerSettingNone), Qt::CaseInsensitive)) {
         return false;
     }
 
-    return availableSettings.contains(QLatin1String(kSafetyControllerSettingAll),
-                                      Qt::CaseInsensitive) ||
-        availableSettings.contains(setting, Qt::CaseInsensitive);
+    return availableSettings.contains(QLatin1String(kSafetyControllerSettingAll), Qt::CaseInsensitive) ||
+           availableSettings.contains(setting, Qt::CaseInsensitive);
+}
+
+bool isSafeDeviceName(const QString& deviceName) {
+    static const QRegularExpression deviceNamePattern(QStringLiteral("^[A-Za-z0-9_.-]+$"));
+    return deviceNamePattern.match(deviceName).hasMatch() && deviceName != QStringLiteral(".") &&
+           deviceName != QStringLiteral("..");
+}
+
+bool resolveDeviceName(const QString& serialPort, QString& deviceName) {
+    QString normalized = serialPort.trimmed();
+    if (normalized.startsWith(QStringLiteral("/dev/"))) {
+        normalized.remove(0, 5);
+    }
+    if (!isSafeDeviceName(normalized)) {
+        return false;
+    }
+    deviceName = normalized;
+    return true;
+}
+
+bool defaultSerialPortFromManifest(const QString& moduleName, const QString& manifestRoot, QString& serialPort,
+                                   QString& error) {
+    if (!isSafeDeviceName(moduleName)) {
+        error = QStringLiteral("invalid driver module name: %1").arg(moduleName);
+        return false;
+    }
+    const QString manifestPath = QDir(manifestRoot).filePath(moduleName + QStringLiteral("/manifest.yaml"));
+    const YamlLoadResult manifestResult = loadYamlFile(manifestPath);
+    if (!manifestResult.success) {
+        error = QStringLiteral("unable to load module manifest %1").arg(manifestPath);
+        return false;
+    }
+
+    const QJsonObject config = manifestResult.yamlRoot.value(QLatin1String(kKeyConfig)).toObject();
+    const QJsonObject serialPortConfig = config.value(QLatin1String(kKeySerialPort)).toObject();
+    serialPort = serialPortConfig.value(QLatin1String(kKeyDefault)).toString().trimmed();
+    if (serialPort.isEmpty()) {
+        error = QStringLiteral("serial_port has no default in %1").arg(manifestPath);
+        return false;
+    }
+    return true;
+}
+
+SafetyControllerDeviceResolution resolveSafetyControllerDevices(const QJsonObject& effectiveConfig,
+                                                                const QString& manifestRoot) {
+    SafetyControllerDeviceResolution resolution;
+    const QJsonObject activeModules = effectiveConfig.value(QLatin1String(kKeyActiveModules)).toObject();
+    bool foundEvseManager = false;
+
+    for (const QString& instanceName : activeModules.keys()) {
+        const QJsonObject evseModule = activeModules.value(instanceName).toObject();
+        if (evseModule.value(QLatin1String(kEverestConfModule)).toString() != QLatin1String(kModuleEvseManager)) {
+            continue;
+        }
+        foundEvseManager = true;
+        const QJsonArray bspConnections =
+            evseModule.value(QLatin1String(kKeyConnections)).toObject().value(QLatin1String(kKeyBsp)).toArray();
+        for (const QJsonValue& connectionValue : bspConnections) {
+            const QString bspInstance = connectionValue.toObject().value(QLatin1String(kKeyModuleId)).toString();
+            const QJsonObject bspModule = activeModules.value(bspInstance).toObject();
+            const QString driverModule = bspModule.value(QLatin1String(kEverestConfModule)).toString();
+            if (bspInstance.isEmpty() || driverModule.isEmpty()) {
+                resolution.errors.append(
+                    QStringLiteral("EvseManager %1 has an unresolved BSP module reference").arg(instanceName));
+                continue;
+            }
+
+            QString serialPort = bspModule.value(QLatin1String(kEverestConfConfigModule))
+                                     .toObject()
+                                     .value(QLatin1String(kKeySerialPort))
+                                     .toString()
+                                     .trimmed();
+            if (serialPort.isEmpty()) {
+                QString manifestError;
+                if (!defaultSerialPortFromManifest(driverModule, manifestRoot, serialPort, manifestError)) {
+                    resolution.errors.append(
+                        QStringLiteral("BSP %1 (%2): %3").arg(bspInstance, driverModule, manifestError));
+                    continue;
+                }
+            }
+
+            QString deviceName;
+            if (!resolveDeviceName(serialPort, deviceName)) {
+                resolution.errors.append(
+                    QStringLiteral("BSP %1 (%2) has an invalid serial_port value").arg(bspInstance, driverModule));
+                continue;
+            }
+
+            const bool alreadyResolved =
+                std::any_of(resolution.devices.cbegin(), resolution.devices.cend(),
+                            [&deviceName](const SafetyControllerDevice& device) { return device.name == deviceName; });
+            if (alreadyResolved) {
+                continue;
+            }
+            resolution.devices.append(
+                {deviceName, bspInstance, driverModule,
+                 QDir(QLatin1String(kCacheDirectory)).filePath(deviceName + QStringLiteral(".yaml"))});
+        }
+    }
+
+    if (!foundEvseManager) {
+        resolution.errors.append(QStringLiteral("No active EvseManager module was found"));
+    } else if (resolution.devices.isEmpty() && resolution.errors.isEmpty()) {
+        resolution.errors.append(QStringLiteral("No BSP connection was found for active EvseManager modules"));
+    }
+    return resolution;
+}
+
+QJsonObject safetyControllerDeviceToJson(const SafetyControllerDevice& device, const QJsonObject& requestedParameters,
+                                         bool rpcAvailable) {
+    QJsonObject controller{
+        {QLatin1String(kKeyDeviceName), device.name},
+        {QLatin1String(kKeyBspInstance), device.bspInstance},
+        {QLatin1String(kKeyDriverModule), device.driverModule},
+        {QLatin1String(kKeyAvailable), false},
+        {QLatin1String(kKeyWritable), false},
+        {QLatin1String(kKeyMessage), QString()},
+    };
+
+    const YamlLoadResult yamlResult = loadYamlFile(device.yamlPath);
+    if (!yamlResult.success) {
+        controller.insert(QLatin1String(kKeyMessage),
+                          QStringLiteral("Safety Controller settings are unavailable at %1").arg(device.yamlPath));
+        return controller;
+    }
+
+    controller.insert(QLatin1String(kKeyAvailable), true);
+    controller.insert(QLatin1String(kKeyWritable), rpcAvailable);
+    controller.insert(QLatin1String(kKeySettings),
+                      readRequestedParametersFromYaml(requestedParameters, yamlResult.yamlRoot));
+    if (!rpcAvailable) {
+        controller.insert(QLatin1String(kKeyMessage),
+                          QStringLiteral("EVerest JSON-RPC is unavailable; settings are read-only."));
+    }
+    return controller;
 }
 } // namespace
 
-void setRpcApiClient(RpcApiClient *rpcApiClient) {
+void setRpcApiClient(RpcApiClient* rpcApiClient) {
     g_rpcApiClient = rpcApiClient;
 }
-QString loadBackendConfigValue(const QString &configKey) {
+QString loadBackendConfigValue(const QString& configKey) {
     return ::readBackendConfigValue(configKey);
 }
 
-SafetyControllerConfigPathResult loadSafetyControllerSettingsPath(const QString &configKey) {
+SafetyControllerConfigPathResult loadSafetyControllerSettingsPath(const QString& configKey) {
     const QString value = loadBackendConfigValue(configKey);
     if (!value.isEmpty()) {
         return SafetyControllerConfigPathResult{
@@ -173,111 +340,7 @@ SafetyControllerConfigPathResult loadSafetyControllerSettingsPath(const QString 
     };
 }
 
-ModuleResponse readSafetyControllerSettingsAsBin(const QString &binPath, ModuleResponse response) {
-    const EverestStateAllowedResult stateAllowedResult =
-        EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
-    if (!stateAllowedResult.success) {
-        QString error = stateAllowedResult.error;
-        if (stateAllowedResult.error == QLatin1String(kErrorEverestStateNotAllowed)) {
-            error =
-                QStringLiteral("settings can't be read because ra-update command cannot be run while EVerest is in state \"%1\" and needs to be stopped first")
-                    .arg(stateAllowedResult.state);
-        }
-
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), error},
-        };
-        return response;
-    }
-
-    const EverestServiceControlResult stopResult =
-        EverestServiceControl::executeEverestStop();
-    if (!stopResult.success) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), stopResult.error},
-        };
-        return response;
-    }
-
-    ConsoleConnector console;
-    ConsoleConnector::ExecOptions options;
-    const ConsoleConnector::RunResult result = console.executeTemplate(
-        QLatin1String(kCmdRaDataDump) + QStringLiteral(" ") + QLatin1String(kCmdBinPath),
-        {{QLatin1String(kCmdBinPath), binPath}},
-        options,
-        ConsoleConnector::ExecMode::Sync);
-
-    const EverestServiceControlResult restartResult =
-        EverestServiceControl::executeEverestRestart(g_rpcApiClient);
-    if (!restartResult.success) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), restartResult.error},
-        };
-        return response;
-    }
-
-    if (result.exitCode == 0) {
-        return response;
-    }
-
-    response.parameters = QJsonObject{
-        {QLatin1String(kError), QLatin1String(kErrorSafetyControllerDumpFailed)},
-        {QLatin1String(kErrorStdErr), QString::fromUtf8(result.stderrData).trimmed()},
-    };
-    return response;
-}
-
-ModuleResponse convertSafetyControllerBinToYaml(const QString &binPath,
-                                                const QString &yamlPath,
-                                                ModuleResponse response) {
-    ConsoleConnector console;
-    ConsoleConnector::ExecOptions options;
-    const ConsoleConnector::RunResult result = console.executeTemplate(
-        QLatin1String(kCmdRaPbDump) + QStringLiteral(" ") + QLatin1String(kCmdBinPath),
-        {{QLatin1String(kCmdBinPath), binPath}},
-        options,
-        ConsoleConnector::ExecMode::Sync);
-
-    if (result.exitCode != 0) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), QLatin1String(kErrorSafetyControllerPbDumpFailed)},
-            {QLatin1String(kErrorStdErr), QString::fromUtf8(result.stderrData).trimmed()},
-        };
-        return response;
-    }
-
-    QFile yamlFile(yamlPath);
-    if (!yamlFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), QLatin1String(kErrorSafetyControllerYamlWriteFailed)},
-        };
-        return response;
-    }
-
-    if (yamlFile.write(result.stdoutData) < 0) {
-        yamlFile.close();
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), QLatin1String(kErrorSafetyControllerYamlWriteFailed)},
-        };
-        return response;
-    }
-
-    yamlFile.close();
-    return response;
-}
-
-ModuleResponse readSafetyControllerSettingsAsYaml(const QString &binPath,
-                                                  const QString &yamlPath,
-                                                  ModuleResponse response) {
-    response = readSafetyControllerSettingsAsBin(binPath, response);
-    if (!response.parameters.isEmpty()) {
-        return response;
-    }
-
-    return convertSafetyControllerBinToYaml(binPath, yamlPath, response);
-}
-
-QJsonObject readPt1000ParametersFromYaml(const QJsonObject &requestBlock, const QJsonValue &yamlEntry) {
+QJsonObject readPt1000ParametersFromYaml(const QJsonObject& requestBlock, const QJsonValue& yamlEntry) {
     QJsonObject filledBlock = requestBlock;
 
     if (yamlEntry.isString() && yamlEntry.toString() == QLatin1String(kSftyCtrlrParamDisabled)) {
@@ -300,7 +363,7 @@ QJsonObject readPt1000ParametersFromYaml(const QJsonObject &requestBlock, const 
     return filledBlock;
 }
 
-QJsonObject readContactorParametersFromYaml(const QJsonObject &requestBlock, const QJsonValue &yamlEntry) {
+QJsonObject readContactorParametersFromYaml(const QJsonObject& requestBlock, const QJsonValue& yamlEntry) {
     QJsonObject filledBlock = requestBlock;
 
     if (yamlEntry.isString() && yamlEntry.toString() == QLatin1String(kSftyCtrlrParamDisabled)) {
@@ -323,7 +386,7 @@ QJsonObject readContactorParametersFromYaml(const QJsonObject &requestBlock, con
     return filledBlock;
 }
 
-QJsonObject readEstopParametersFromYaml(const QJsonObject &requestBlock, const QJsonValue &yamlEntry) {
+QJsonObject readEstopParametersFromYaml(const QJsonObject& requestBlock, const QJsonValue& yamlEntry) {
     QJsonObject filledBlock = requestBlock;
 
     if (yamlEntry.isString()) {
@@ -333,8 +396,7 @@ QJsonObject readEstopParametersFromYaml(const QJsonObject &requestBlock, const Q
     return filledBlock;
 }
 
-QJsonObject readRequestedParametersFromYaml(const QJsonObject &requestParameters,
-                                            const QJsonObject &yamlRoot) {
+QJsonObject readRequestedParametersFromYaml(const QJsonObject& requestParameters, const QJsonObject& yamlRoot) {
     QJsonObject filledParameters = requestParameters;
     const QStringList availableSettings = loadAvailableSafetyControllerSettings();
     const QJsonArray pt1000Entries = yamlRoot.value(QLatin1String(kSftyCtrlrParamPt1000S)).toArray();
@@ -342,11 +404,10 @@ QJsonObject readRequestedParametersFromYaml(const QJsonObject &requestParameters
     const QJsonArray estopEntries = yamlRoot.value(QLatin1String(kSftyCtrlrParamEstops)).toArray();
 
     const auto parameterKeys = requestParameters.keys();
-    for (const QString &parameterKey : parameterKeys) {
+    for (const QString& parameterKey : parameterKeys) {
         const QJsonObject requestBlock = requestParameters.value(parameterKey).toObject();
         if (parameterKey.startsWith(QLatin1String(kParametersPt1000))) {
-            if (!isSafetyControllerSettingAvailable(
-                    availableSettings, QLatin1String(kSafetyControllerSettingPt1000))) {
+            if (!isSafetyControllerSettingAvailable(availableSettings, QLatin1String(kSafetyControllerSettingPt1000))) {
                 filledParameters.remove(parameterKey);
                 continue;
             }
@@ -361,25 +422,23 @@ QJsonObject readRequestedParametersFromYaml(const QJsonObject &requestParameters
         }
 
         if (parameterKey.startsWith(QLatin1String(kParametersContactors))) {
-            if (!isSafetyControllerSettingAvailable(
-                    availableSettings, QLatin1String(kSafetyControllerSettingContactors))) {
+            if (!isSafetyControllerSettingAvailable(availableSettings,
+                                                    QLatin1String(kSafetyControllerSettingContactors))) {
                 filledParameters.remove(parameterKey);
                 continue;
             }
 
-            const QString indexString =
-                parameterKey.mid(QLatin1String(kParametersContactors).size());
+            const QString indexString = parameterKey.mid(QLatin1String(kParametersContactors).size());
             const int index = indexString.toInt();
             if (index >= 0 && index < contactorEntries.size()) {
-                filledParameters.insert(
-                    parameterKey, readContactorParametersFromYaml(requestBlock, contactorEntries.at(index)));
+                filledParameters.insert(parameterKey,
+                                        readContactorParametersFromYaml(requestBlock, contactorEntries.at(index)));
             }
             continue;
         }
 
         if (parameterKey.startsWith(QLatin1String(kParametersEstops))) {
-            if (!isSafetyControllerSettingAvailable(
-                    availableSettings, QLatin1String(kSafetyControllerSettingEstops))) {
+            if (!isSafetyControllerSettingAvailable(availableSettings, QLatin1String(kSafetyControllerSettingEstops))) {
                 filledParameters.remove(parameterKey);
                 continue;
             }
@@ -396,7 +455,7 @@ QJsonObject readRequestedParametersFromYaml(const QJsonObject &requestParameters
     return filledParameters;
 }
 
-QJsonValue updatePt1000ParametersInYaml(const QJsonObject &requestBlock) {
+QJsonValue updatePt1000ParametersInYaml(const QJsonObject& requestBlock) {
     const bool overtemperatureProtection =
         requestBlock.value(QLatin1String(kSftyCtrlrParamOvertempProtection)).toBool();
     if (!overtemperatureProtection) {
@@ -405,15 +464,13 @@ QJsonValue updatePt1000ParametersInYaml(const QJsonObject &requestBlock) {
 
     return QJsonObject{
         {QLatin1String(kSftyCtrlrParamAbortTemp),
-         jsonValueToText(requestBlock.value(QLatin1String(kSftyCtrlrParamAbortTemp))) +
-             unitCelsius()},
+         jsonValueToText(requestBlock.value(QLatin1String(kSftyCtrlrParamAbortTemp))) + unitCelsius()},
         {QLatin1String(kSftyCtrlrParamResistanceOffset),
-         jsonValueToText(requestBlock.value(QLatin1String(kSftyCtrlrParamResistanceOffset))) +
-             unitOhm()},
+         jsonValueToText(requestBlock.value(QLatin1String(kSftyCtrlrParamResistanceOffset))) + unitOhm()},
     };
 }
 
-QJsonValue updateContactorParametersInYaml(const QJsonObject &requestBlock) {
+QJsonValue updateContactorParametersInYaml(const QJsonObject& requestBlock) {
     const QString type = requestBlock.value(QLatin1String(kKeyType)).toString();
     if (type == QLatin1String(kSftyCtrlrParamDisabled)) {
         return QLatin1String(kSftyCtrlrParamDisabled);
@@ -422,20 +479,17 @@ QJsonValue updateContactorParametersInYaml(const QJsonObject &requestBlock) {
     return QJsonObject{
         {QLatin1String(kKeyType), type},
         {QLatin1String(kSftyCtrlrParamCloseTime),
-         jsonValueToText(requestBlock.value(QLatin1String(kSftyCtrlrParamCloseTime))) +
-             QLatin1String(kUnitMs)},
+         jsonValueToText(requestBlock.value(QLatin1String(kSftyCtrlrParamCloseTime))) + QLatin1String(kUnitMs)},
         {QLatin1String(kSftyCtrlrParamOpenTime),
-         jsonValueToText(requestBlock.value(QLatin1String(kSftyCtrlrParamOpenTime))) +
-             QLatin1String(kUnitMs)},
+         jsonValueToText(requestBlock.value(QLatin1String(kSftyCtrlrParamOpenTime))) + QLatin1String(kUnitMs)},
     };
 }
 
-QJsonValue updateEstopParametersInYaml(const QJsonObject &requestBlock) {
+QJsonValue updateEstopParametersInYaml(const QJsonObject& requestBlock) {
     return requestBlock.value(QLatin1String(kSftyCtrlrParamEnabled));
 }
 
-QJsonObject updateRequestParametersInYaml(const QJsonObject &requestParameters,
-                                          const QJsonObject &yamlRoot) {
+QJsonObject updateRequestParametersInYaml(const QJsonObject& requestParameters, const QJsonObject& yamlRoot) {
     QJsonObject updatedYamlRoot = yamlRoot;
     const QStringList availableSettings = loadAvailableSafetyControllerSettings();
     QJsonArray pt1000Entries = updatedYamlRoot.value(QLatin1String(kSftyCtrlrParamPt1000S)).toArray();
@@ -443,49 +497,44 @@ QJsonObject updateRequestParametersInYaml(const QJsonObject &requestParameters,
     QJsonArray estopEntries = updatedYamlRoot.value(QLatin1String(kSftyCtrlrParamEstops)).toArray();
 
     const auto parameterKeys = requestParameters.keys();
-    for (const QString &parameterKey : parameterKeys) {
+    for (const QString& parameterKey : parameterKeys) {
         const QJsonObject requestBlock = requestParameters.value(parameterKey).toObject();
         if (parameterKey.startsWith(QLatin1String(kParametersPt1000))) {
-            if (!isSafetyControllerSettingAvailable(
-                    availableSettings, QLatin1String(kSafetyControllerSettingPt1000))) {
+            if (!isSafetyControllerSettingAvailable(availableSettings, QLatin1String(kSafetyControllerSettingPt1000))) {
                 continue;
             }
 
             const QString indexString = parameterKey.mid(QLatin1String(kParametersPt1000).size());
             const int index = indexString.toInt();
             if (index >= 0 && index < pt1000Entries.size()) {
-                pt1000Entries.replace(index,
-                                      updatePt1000ParametersInYaml(requestBlock));
+                pt1000Entries.replace(index, updatePt1000ParametersInYaml(requestBlock));
             }
             continue;
         }
 
         if (parameterKey.startsWith(QLatin1String(kParametersContactors))) {
-            if (!isSafetyControllerSettingAvailable(
-                    availableSettings, QLatin1String(kSafetyControllerSettingContactors))) {
+            if (!isSafetyControllerSettingAvailable(availableSettings,
+                                                    QLatin1String(kSafetyControllerSettingContactors))) {
                 continue;
             }
 
             const QString indexString = parameterKey.mid(QLatin1String(kParametersContactors).size());
             const int index = indexString.toInt();
             if (index >= 0 && index < contactorEntries.size()) {
-                contactorEntries.replace(
-                    index, updateContactorParametersInYaml(requestBlock));
+                contactorEntries.replace(index, updateContactorParametersInYaml(requestBlock));
             }
             continue;
         }
 
         if (parameterKey.startsWith(QLatin1String(kParametersEstops))) {
-            if (!isSafetyControllerSettingAvailable(
-                    availableSettings, QLatin1String(kSafetyControllerSettingEstops))) {
+            if (!isSafetyControllerSettingAvailable(availableSettings, QLatin1String(kSafetyControllerSettingEstops))) {
                 continue;
             }
 
             const QString indexString = parameterKey.mid(QLatin1String(kParametersEstops).size());
             const int index = indexString.toInt();
             if (index >= 0 && index < estopEntries.size()) {
-                estopEntries.replace(index,
-                                     updateEstopParametersInYaml(requestBlock));
+                estopEntries.replace(index, updateEstopParametersInYaml(requestBlock));
             }
         }
     }
@@ -496,8 +545,8 @@ QJsonObject updateRequestParametersInYaml(const QJsonObject &requestParameters,
     return updatedYamlRoot;
 }
 
-bool writeSafetyControllerYamlFile(const QString &yamlPath, const QJsonObject &yamlRoot) {
-    QFile yamlFile(yamlPath);
+bool writeSafetyControllerYamlFile(const QString& yamlPath, const QJsonObject& yamlRoot) {
+    QSaveFile yamlFile(yamlPath);
     if (!yamlFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
         return false;
     }
@@ -508,24 +557,21 @@ bool writeSafetyControllerYamlFile(const QString &yamlPath, const QJsonObject &y
 #else
     stream.setCodec("UTF-8");
 #endif
-    stream << "version: "
-           << formatYamlScalar(yamlRoot.value(QStringLiteral("version"))) << "\n\n";
+    stream << "version: " << formatYamlScalar(yamlRoot.value(QStringLiteral("version"))) << "\n\n";
 
-    const auto writeSequence = [&stream](const QString &key,
-                                         const QJsonArray &entries,
-                                         const QStringList &objectFieldOrder) {
+    const auto writeSequence = [&stream](const QString& key, const QJsonArray& entries,
+                                         const QStringList& objectFieldOrder) {
         stream << key << ":\n";
-        for (const QJsonValue &entry : entries) {
+        for (const QJsonValue& entry : entries) {
             if (entry.isObject()) {
                 const QJsonObject entryObject = entry.toObject();
                 bool firstField = true;
-                for (const QString &fieldName : objectFieldOrder) {
+                for (const QString& fieldName : objectFieldOrder) {
                     if (!entryObject.contains(fieldName)) {
                         continue;
                     }
 
-                    stream << (firstField ? QStringLiteral("  - ") : QStringLiteral("    "))
-                           << fieldName << ": "
+                    stream << (firstField ? QStringLiteral("  - ") : QStringLiteral("    ")) << fieldName << ": "
                            << formatYamlScalar(entryObject.value(fieldName)) << "\n";
                     firstField = false;
                 }
@@ -539,31 +585,29 @@ bool writeSafetyControllerYamlFile(const QString &yamlPath, const QJsonObject &y
     writeSequence(QLatin1String(kSftyCtrlrParamPt1000S),
                   yamlRoot.value(QLatin1String(kSftyCtrlrParamPt1000S)).toArray(),
                   {QLatin1String(kSftyCtrlrParamAbortTemp), QLatin1String(kSftyCtrlrParamResistanceOffset)});
-    writeSequence(QLatin1String(kSftyCtrlrParamContactors),
-                  yamlRoot.value(QLatin1String(kSftyCtrlrParamContactors)).toArray(),
-                  {QLatin1String(kKeyType), QLatin1String(kSftyCtrlrParamCloseTime), QLatin1String(kSftyCtrlrParamOpenTime)});
-    writeSequence(QLatin1String(kSftyCtrlrParamEstops),
-                  yamlRoot.value(QLatin1String(kSftyCtrlrParamEstops)).toArray(),
+    writeSequence(
+        QLatin1String(kSftyCtrlrParamContactors), yamlRoot.value(QLatin1String(kSftyCtrlrParamContactors)).toArray(),
+        {QLatin1String(kKeyType), QLatin1String(kSftyCtrlrParamCloseTime), QLatin1String(kSftyCtrlrParamOpenTime)});
+    writeSequence(QLatin1String(kSftyCtrlrParamEstops), yamlRoot.value(QLatin1String(kSftyCtrlrParamEstops)).toArray(),
                   {});
 
-    return stream.status() == QTextStream::Ok;
+    return stream.status() == QTextStream::Ok && yamlFile.commit();
 }
 
-ModuleResponse convertSafetyControllerYamlToBin(const QString &yamlPath,
-                                                const QString &binPath,
+ModuleResponse convertSafetyControllerYamlToBin(const QString& yamlPath, const QString& binPath,
                                                 ModuleResponse response) {
     ConsoleConnector console;
     ConsoleConnector::ExecOptions options;
 
-    const auto command = QLatin1String(kCmdRaPbCreate) + QStringLiteral(" ") + QLatin1String(kCmdFlagI) + QStringLiteral(" ") + QLatin1String(kCmdYamlPath) + QStringLiteral(" ") + QLatin1String(kCmdFlagO) + QStringLiteral(" ") + QLatin1String(kCmdBinPath);
-    const ConsoleConnector::RunResult result = console.executeTemplate(
-        command,
-        {
-            {QLatin1String(kCmdYamlPath), yamlPath},
-            {QLatin1String(kCmdBinPath), binPath},
-        },
-        options,
-        ConsoleConnector::ExecMode::Sync);
+    const auto command = QLatin1String(kCmdRaPbCreate) + QStringLiteral(" ") + QLatin1String(kCmdFlagI) +
+                         QStringLiteral(" ") + QLatin1String(kCmdYamlPath) + QStringLiteral(" ") +
+                         QLatin1String(kCmdFlagO) + QStringLiteral(" ") + QLatin1String(kCmdBinPath);
+    const ConsoleConnector::RunResult result = console.executeTemplate(command,
+                                                                       {
+                                                                           {QLatin1String(kCmdYamlPath), yamlPath},
+                                                                           {QLatin1String(kCmdBinPath), binPath},
+                                                                       },
+                                                                       options, ConsoleConnector::ExecMode::Sync);
 
     if (result.exitCode == 0) {
         return response;
@@ -576,15 +620,22 @@ ModuleResponse convertSafetyControllerYamlToBin(const QString &yamlPath,
     return response;
 }
 
-ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse response) {
+QString raDataFlashCommand(const QString& deviceName, const QString& binPath) {
+    return QLatin1String(kCmdRaDataFlash) + QStringLiteral(" -d /dev/") + deviceName + QStringLiteral(" ") + binPath;
+}
+
+ModuleResponse flashSafetyControllerBin(const QString& binPath, const QString& deviceName, ModuleResponse response,
+                                        bool& flashSucceeded) {
+    flashSucceeded = false;
     const EverestStateAllowedResult stateAllowedResult =
         EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
     if (!stateAllowedResult.success) {
         QString error = stateAllowedResult.error;
         if (stateAllowedResult.error == QLatin1String(kErrorEverestStateNotAllowed)) {
-            error =
-                QStringLiteral("settings can't be applied because ra-update command cannot be run while EVerest is in state \"%1\" and needs to be stopped first")
-                    .arg(stateAllowedResult.state);
+            error = QStringLiteral("settings can't be applied because ra-update "
+                                   "command cannot be run while EVerest is in state "
+                                   "\"%1\" and needs to be stopped first")
+                        .arg(stateAllowedResult.state);
         }
 
         response.parameters = QJsonObject{
@@ -593,8 +644,7 @@ ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse r
         return response;
     }
 
-    const EverestServiceControlResult stopResult =
-        EverestServiceControl::executeEverestStop();
+    const EverestServiceControlResult stopResult = EverestServiceControl::executeEverestStop();
     if (!stopResult.success) {
         response.parameters = QJsonObject{
             {QLatin1String(kError), stopResult.error},
@@ -604,14 +654,12 @@ ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse r
 
     ConsoleConnector console;
     ConsoleConnector::ExecOptions options;
-    const ConsoleConnector::RunResult result = console.executeTemplate(
-        QLatin1String(kCmdRaDataFlash) + QStringLiteral(" ") + QLatin1String(kCmdBinPath),
-        {{QLatin1String(kCmdBinPath), binPath}},
-        options,
-        ConsoleConnector::ExecMode::Sync);
+    const ConsoleConnector::RunResult result =
+        console.executeTemplate(raDataFlashCommand(deviceName, binPath), {}, options, ConsoleConnector::ExecMode::Sync);
 
-    const EverestServiceControlResult restartResult =
-        EverestServiceControl::executeEverestRestart(g_rpcApiClient);
+    flashSucceeded = result.exitCode == 0;
+
+    const EverestServiceControlResult restartResult = EverestServiceControl::executeEverestRestart(g_rpcApiClient);
     if (!restartResult.success) {
         response.parameters = QJsonObject{
             {QLatin1String(kError), restartResult.error},
@@ -624,8 +672,8 @@ ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse r
             EverestServiceControl::monitorEverestErrorPresent(g_rpcApiClient, 1);
         if (errorResult.success) {
             response.parameters = QJsonObject{
-                {QLatin1String(kError),
-                 QStringLiteral("settings put EVerest into an error, please revert immediately")},
+                {QLatin1String(kError), QStringLiteral("settings put EVerest into an error, please revert "
+                                                       "immediately")},
             };
             return response;
         }
@@ -647,7 +695,7 @@ ModuleResponse flashSafetyControllerBin(const QString &binPath, ModuleResponse r
     return response;
 }
 
-ModuleResponse handleReadRequest(const ModuleRequest &request) {
+ModuleResponse handleReadRequest(const ModuleRequest& request) {
     ModuleResponse response{
         .requestId = request.requestId,
         .group = QLatin1String(kGroupSafety),
@@ -657,44 +705,33 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
         .final = true,
     };
 
-    const SafetyControllerConfigPathResult binPathResult =
-        loadSafetyControllerSettingsPath(QLatin1String(kConfSafetyControllerSettingsBin));
-    if (!binPathResult.success) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), binPathResult.error},
-        };
-        return response;
+    const YamlLoadResult configResult = loadEffectiveEverestConfig();
+    const bool rpcAvailable = g_rpcApiClient && g_rpcApiClient->isReady();
+    QJsonArray controllers;
+    QStringList resolutionErrors;
+    if (configResult.success) {
+        const SafetyControllerDeviceResolution resolution =
+            resolveSafetyControllerDevices(configResult.yamlRoot, QStringLiteral("/usr/libexec/everest/modules"));
+        resolutionErrors = resolution.errors;
+        for (const SafetyControllerDevice& device : resolution.devices) {
+            controllers.append(safetyControllerDeviceToJson(device, request.parameters, rpcAvailable));
+        }
+    } else {
+        resolutionErrors.append(configResult.error);
     }
 
-    const SafetyControllerConfigPathResult yamlPathResult =
-        loadSafetyControllerSettingsPath(QLatin1String(kConfSafetyControllerSettingsYaml));
-    if (!yamlPathResult.success) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), yamlPathResult.error},
-        };
-        return response;
+    response.parameters = QJsonObject{
+        {QLatin1String(kKeyControllers), controllers},
+        {QLatin1String(kKeyRpcAvailable), rpcAvailable},
+    };
+    if (!resolutionErrors.isEmpty()) {
+        response.parameters.insert(QLatin1String(kKeyResolutionError), resolutionErrors.join(QLatin1Char(';')));
     }
-
-    response = readSafetyControllerSettingsAsYaml(binPathResult.path, yamlPathResult.path, response);
-    if (!response.parameters.isEmpty()) {
-        return response;
-    }
-
-    const YamlLoadResult yamlLoadResult = loadYamlFile(yamlPathResult.path);
-    if (!yamlLoadResult.success) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), yamlLoadResult.error},
-        };
-        return response;
-    }
-
-    response.parameters =
-        readRequestedParametersFromYaml(request.parameters, yamlLoadResult.yamlRoot);
     response.success = true;
     return response;
 }
 
-ModuleResponse handleWriteRequest(const ModuleRequest &request) {
+ModuleResponse handleWriteRequest(const ModuleRequest& request) {
     ModuleResponse response{
         .requestId = request.requestId,
         .group = QLatin1String(kGroupSafety),
@@ -703,6 +740,38 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
         .success = false,
         .final = true,
     };
+
+    const QString deviceName = request.parameters.value(QLatin1String(kKeyDeviceName)).toString();
+    if (!isSafeDeviceName(deviceName)) {
+        response.parameters = {{QLatin1String(kError), QLatin1String(kErrorDeviceInvalid)}};
+        return response;
+    }
+
+    if (!g_rpcApiClient || !g_rpcApiClient->isReady()) {
+        response.parameters = {{QLatin1String(kError), QStringLiteral("rpc_api_not_connected")}};
+        return response;
+    }
+
+    const YamlLoadResult configResult = loadEffectiveEverestConfig();
+    if (!configResult.success) {
+        response.parameters = {{QLatin1String(kError), configResult.error}};
+        return response;
+    }
+    const SafetyControllerDeviceResolution resolution =
+        resolveSafetyControllerDevices(configResult.yamlRoot, QStringLiteral("/usr/libexec/everest/modules"));
+    const auto deviceIt =
+        std::find_if(resolution.devices.cbegin(), resolution.devices.cend(),
+                     [&deviceName](const SafetyControllerDevice& device) { return device.name == deviceName; });
+    if (deviceIt == resolution.devices.cend()) {
+        response.parameters = {{QLatin1String(kError), QLatin1String(kErrorDeviceNotConfigured)}};
+        return response;
+    }
+
+    const YamlLoadResult yamlLoadResult = loadYamlFile(deviceIt->yamlPath);
+    if (!yamlLoadResult.success) {
+        response.parameters = {{QLatin1String(kError), yamlLoadResult.error}};
+        return response;
+    }
 
     const SafetyControllerConfigPathResult binPathResult =
         loadSafetyControllerSettingsPath(QLatin1String(kConfSafetyControllerSettingsBin));
@@ -722,16 +791,9 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
         return response;
     }
 
-    const YamlLoadResult yamlLoadResult = loadYamlFile(yamlPathResult.path);
-    if (!yamlLoadResult.success) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), QLatin1String(kErrorSafetyControllerYamlMissingReloadRequired)},
-        };
-        return response;
-    }
-
-    QJsonObject updatedParameters =
-        updateRequestParametersInYaml(request.parameters, yamlLoadResult.yamlRoot);
+    QJsonObject settings = request.parameters;
+    settings.remove(QLatin1String(kKeyDeviceName));
+    QJsonObject updatedParameters = updateRequestParametersInYaml(settings, yamlLoadResult.yamlRoot);
     if (!writeSafetyControllerYamlFile(yamlPathResult.path, updatedParameters)) {
         response.parameters = QJsonObject{
             {QLatin1String(kError), QLatin1String(kErrorSafetyControllerYamlWriteFailed)},
@@ -744,16 +806,33 @@ ModuleResponse handleWriteRequest(const ModuleRequest &request) {
         return response;
     }
 
-    response = flashSafetyControllerBin(binPathResult.path, response);
+    bool flashSucceeded = false;
+    response = flashSafetyControllerBin(binPathResult.path, deviceName, response, flashSucceeded);
+    if (flashSucceeded && !writeSafetyControllerYamlFile(deviceIt->yamlPath, updatedParameters)) {
+        const QJsonObject flashResponseParameters = response.parameters;
+        response.parameters = {
+            {QLatin1String(kError), QLatin1String(kErrorYamlPublishAfterFlash)},
+            {QLatin1String(kKeyDeviceName), deviceName},
+            {QStringLiteral("flash_succeeded"), true},
+            {QStringLiteral("message"), QStringLiteral("The controller was flashed, but its cached YAML could "
+                                                       "not be updated at %1.")
+                                            .arg(deviceIt->yamlPath)},
+        };
+        if (!flashResponseParameters.isEmpty()) {
+            response.parameters.insert(QStringLiteral("post_flash_error"), flashResponseParameters);
+        }
+        return response;
+    }
     if (!response.parameters.isEmpty()) {
         return response;
     }
 
+    response.parameters = {{QLatin1String(kKeyDeviceName), deviceName}};
     response.success = true;
     return response;
 }
 
-ModuleResponse handleRequest(const ModuleRequest &request) {
+ModuleResponse handleRequest(const ModuleRequest& request) {
     switch (toSafetyControllerAction(request.action)) {
     case SafetyControllerAction::ReadSettings:
         return handleReadRequest(request);

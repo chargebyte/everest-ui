@@ -121,25 +121,9 @@ ConfigPathResult resolveEverestUserConfigPath(const QString &configPath) {
 }
 
 QJsonValue applyJsonMergePatch(const QJsonValue &target, const QJsonValue &patch) {
-    if (!patch.isObject()) {
-        return patch;
-    }
-
-    QJsonObject result = target.isObject() ? target.toObject() : QJsonObject{};
-    const QJsonObject patchObject = patch.toObject();
-    const auto patchKeys = patchObject.keys();
-    for (const QString &key : patchKeys) {
-        const QJsonValue patchValue = patchObject.value(key);
-        if (patchValue.isNull()) {
-            result.remove(key);
-            continue;
-        }
-
-        result.insert(key, applyJsonMergePatch(result.value(key), patchValue));
-    }
-
-    return result;
+    return ::applyJsonMergePatch(target, patch);
 }
+
 } // namespace
 
 void setRpcApiClient(RpcApiClient *rpcApiClient) {
@@ -582,45 +566,14 @@ ModuleResponse handleReadRequest(const ModuleRequest &request) {
         .final = true,
     };
 
-    const ConfigPathResult configPathResult =
-        loadEverestConfigPath(QLatin1String(kConfEverestConfPath));
-    if (!configPathResult.success) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), configPathResult.error},
-        };
-        return response;
-    }
-
-    const YamlLoadResult yamlLoadResult = loadYamlFile(configPathResult.path);
+    const YamlLoadResult yamlLoadResult = loadEffectiveEverestConfig();
     if (!yamlLoadResult.success) {
         response.parameters = QJsonObject{
             {QLatin1String(kError), yamlLoadResult.error},
         };
         return response;
     }
-
-    QJsonObject effectiveYamlRoot = yamlLoadResult.yamlRoot;
-    const ConfigPathResult overlayPathResult =
-        resolveEverestUserConfigPath(configPathResult.path);
-    if (!overlayPathResult.success) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), overlayPathResult.error},
-        };
-        return response;
-    }
-
-    const QFileInfo overlayFileInfo(overlayPathResult.path);
-    if (overlayFileInfo.exists()) {
-        const YamlLoadResult overlayYamlLoadResult = loadYamlFile(overlayPathResult.path);
-        if (!overlayYamlLoadResult.success) {
-            response.parameters = QJsonObject{
-                {QLatin1String(kError), overlayYamlLoadResult.error},
-            };
-            return response;
-        }
-
-        effectiveYamlRoot = applyJsonMergePatch(effectiveYamlRoot, overlayYamlLoadResult.yamlRoot).toObject();
-    }
+    const QJsonObject effectiveYamlRoot = yamlLoadResult.yamlRoot;
 
     const QStringList availableModules = findAvailableModules(effectiveYamlRoot);
     if (!availableModules.contains(QString::fromLatin1(kModuleEvseManager))) {

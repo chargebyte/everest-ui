@@ -13,96 +13,171 @@ export function renderSafetyPage(container, {
   sendPayload,
   addLog
 }) {
-  // load runtime parameter object from parameter catalog
   const pageConfig = loadPageConfig(MODULE_IDS.SAFETY, parameterCatalog);
   const settingsMatrixBlock = pageConfig.blocks.find((block) => block.kind === 'settings_matrix');
+  const readTemplate = renderSettingsMatrixBlock(settingsMatrixBlock, {
+    buttonLabel: 'Save Configuration'
+  });
+  const pendingWrites = new Map();
 
-  // render UI elements
   container.innerHTML = '';
-
   const pageElement = document.createElement('div');
   pageElement.className = 'page';
   pageElement.innerHTML = `<h1>${pageConfig.title}</h1>`;
 
-  const settingsMatrix = renderSettingsMatrixBlock(settingsMatrixBlock, {
-    buttonLabel: 'Save Configuration'
-  });
-  settingsMatrix.element.hidden = true;
-
   const loadingElement = createSafetyLoadingElement();
-  pageElement.appendChild(loadingElement);
-
-  settingsMatrix.bindSubmit(() => {
-    const values = settingsMatrix.getValues(settingsMatrix.requestResponseObject);
-    const writeSafetySettingsRequest = buildRequest(
-      pageConfig.actions.write_settings.group,
-      pageConfig.actions.write_settings.action,
-      values
-    );
-    sendSafetyRequest(
-      sendPayload,
-      addLog,
-      writeSafetySettingsRequest,
-      pageConfig.actions.write_settings.group,
-      pageConfig.actions.write_settings.action
-    );
-  });
-
-  pageElement.appendChild(settingsMatrix.element);
+  const noticeElement = document.createElement('p');
+  noticeElement.className = 'safety-page-notice';
+  noticeElement.hidden = true;
+  const panesElement = document.createElement('div');
+  panesElement.className = 'safety-controller-panes';
+  pageElement.append(loadingElement, noticeElement, panesElement);
   container.appendChild(pageElement);
+
+  function requestSettings() {
+    loadingElement.hidden = false;
+    setSafetyLoadingPending(loadingElement, true);
+    setSafetyLoadingMessage(loadingElement, 'Loading safety controller settings...');
+    noticeElement.hidden = true;
+    panesElement.replaceChildren();
+    const request = buildRequest(
+      pageConfig.actions.read_settings.group,
+      pageConfig.actions.read_settings.action,
+      readTemplate.requestResponseObject
+    );
+    sendSafetyRequest(sendPayload, addLog, request,
+      pageConfig.actions.read_settings.group, pageConfig.actions.read_settings.action);
+  }
+
+  function createControllerPane(controller, index) {
+    const pane = document.createElement('section');
+    pane.className = 'safety-controller-pane';
+
+    const identity = document.createElement('h2');
+    identity.className = 'safety-controller-identity';
+    identity.textContent = `/dev/${controller.device_name} - owned by ${controller.driver_module} (${controller.bsp_instance})`;
+    pane.appendChild(identity);
+
+    const status = document.createElement('p');
+    status.className = 'safety-controller-status';
+    status.setAttribute('role', 'status');
+    status.hidden = true;
+    pane.appendChild(status);
+
+    if (!controller.available) {
+      status.textContent = controller.message || 'Safety Controller settings are unavailable.';
+      status.classList.add('is-unavailable');
+      status.hidden = false;
+      return pane;
+    }
+
+    const paneConfig = structuredClone(settingsMatrixBlock);
+    paneConfig.sections.forEach((section) => {
+      section.id = `${section.id}-controller-${index}`;
+    });
+    const matrix = renderSettingsMatrixBlock(paneConfig, {
+      buttonLabel: 'Save Configuration'
+    });
+    const settings = controller.settings || {};
+    matrix.applyAvailableParameters(settings);
+    matrix.setValues(mapResponse('settings_matrix', matrix.requestResponseObject, {
+      parameters: settings
+    }));
+    matrix.setDisabled(!controller.writable);
+    pane.appendChild(matrix.element);
+
+    if (controller.message) {
+      status.textContent = controller.message;
+      status.classList.add(controller.writable ? 'is-unavailable' : 'is-read-only');
+      status.hidden = false;
+    }
+
+    matrix.bindSubmit(() => {
+      if (!controller.writable) {
+        return;
+      }
+      const request = buildRequest(
+        pageConfig.actions.write_settings.group,
+        pageConfig.actions.write_settings.action,
+        matrix.getValues(matrix.requestResponseObject)
+      );
+      request.parameters.device_name = controller.device_name;
+      pendingWrites.set(request.requestId, { matrix, status, writable: controller.writable });
+      status.hidden = true;
+      matrix.setDisabled(true);
+      const sent = sendSafetyRequest(sendPayload, addLog, request,
+        pageConfig.actions.write_settings.group, pageConfig.actions.write_settings.action);
+      if (!sent) {
+        pendingWrites.delete(request.requestId);
+        matrix.setDisabled(!controller.writable);
+        status.textContent = 'The request could not be sent.';
+        status.classList.add('is-unavailable');
+        status.hidden = false;
+      }
+    });
+
+    return pane;
+  }
 
   return {
     onMessage(message) {
       if (message.type === 'safety.read_settings.result') {
         addLog('safety.read_settings.result received');
-        settingsMatrix.applyAvailableParameters(message.parameters);
-        settingsMatrix.setValues(
-          mapResponse('settings_matrix', settingsMatrix.requestResponseObject, message)
-        );
         loadingElement.hidden = true;
         setSafetyLoadingPending(loadingElement, false);
-        settingsMatrix.element.hidden = false;
+        const parameters = message.parameters || {};
+        const controllers = parameters.controllers || [];
+        if (parameters.resolution_error) {
+          noticeElement.textContent = parameters.resolution_error;
+          noticeElement.hidden = false;
+        }
+        if (controllers.length === 0 && !parameters.resolution_error) {
+          noticeElement.textContent = 'No Safety Controller devices were found in the active EVerest configuration.';
+          noticeElement.hidden = false;
+        }
+        controllers.forEach((controller, index) => {
+          panesElement.appendChild(createControllerPane(controller, index));
+        });
         return;
       }
 
       if (message.type === 'safety.write_settings.ack') {
         addLog('safety.write_settings.ack received');
+        return;
+      }
+
+      if (message.type === 'safety.write_settings.result' ||
+          message.type === 'safety.write_settings.error') {
+        const pending = pendingWrites.get(message.requestId);
+        if (!pending) {
+          return;
+        }
+        pendingWrites.delete(message.requestId);
+        pending.matrix.setDisabled(!pending.writable);
+        pending.status.textContent = message.type === 'safety.write_settings.result'
+          ? 'Safety Controller settings flashed successfully.'
+          : message.parameters?.message ||
+            `Unable to apply Safety Controller settings: ${message.parameters?.error || 'unknown error'}`;
+        pending.status.classList.toggle('is-unavailable', message.type === 'safety.write_settings.error');
+        pending.status.hidden = false;
       }
 
       if (message.type === 'safety.read_settings.error') {
         const error = message.parameters.error;
         addLog(`safety.read_settings.error: ${error}`);
-        setSafetyLoadingMessage(loadingElement, `Unable to load safety controller settings: ${error}`);
+        loadingElement.hidden = true;
+        setSafetyLoadingMessage(loadingElement, `Unable to load Safety Controller settings: ${error}`);
         setSafetyLoadingPending(loadingElement, false);
-      }
-
-      if (message.type === 'safety.write_settings.error') {
-        const error = message.parameters.error
-        addLog(`safety.write_settings.error: ${error}`);
       }
     },
     onConnectionChange(connected) {
-      // request current Safety configuration after page is loaded and WS is connected
       if (connected === true) {
-        loadingElement.hidden = false;
-        setSafetyLoadingPending(loadingElement, true);
-        setSafetyLoadingMessage(loadingElement, 'Loading safety controller settings...');
-        const values = settingsMatrix.getValues(settingsMatrix.requestResponseObject);
-        const readSafetySettingsRequest = buildRequest(
-          pageConfig.actions.read_settings.group,
-          pageConfig.actions.read_settings.action,
-          values
-        );
-        sendSafetyRequest(
-          sendPayload,
-          addLog,
-          readSafetySettingsRequest,
-          pageConfig.actions.read_settings.group,
-          pageConfig.actions.read_settings.action
-        );
+        requestSettings();
       }
     },
-    destroy() {}
+    destroy() {
+      pendingWrites.clear();
+    }
   };
 }
 
@@ -132,7 +207,6 @@ function setSafetyLoadingPending(loadingElement, pending) {
 
 function sendSafetyRequest(sendPayload, addLog, request, group, action) {
   const result = sendPayload(request);
-  const ok = result.ok;
-  addLog(`${group}.${action} ${ok ? 'sent' : 'rejected'}`);
-  return ok;
+  addLog(`${group}.${action} ${result.ok ? 'sent' : 'rejected'}`);
+  return result.ok;
 }
