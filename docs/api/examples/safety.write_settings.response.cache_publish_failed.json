@@ -1,0 +1,13 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "safety.write_settings.error",
+  "parameters": {
+    "error": "safety_controller_yaml_publish_failed_after_flash",
+    "device_name": "ttySC0",
+    "flash_succeeded": true,
+    "message": "The controller was flashed, but its cached YAML could not be updated at /run/ra-utils/ttySC0.yaml."
+  },
+  "responseId": "r-2"
+}

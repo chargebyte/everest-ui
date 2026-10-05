@@ -2,6 +2,11 @@
   "requestId": 42,
   "group": "safety",
   "action": "read_settings",
-  "parameters": {}
+  "parameters": {
+    "pt1000_0": {
+      "overtemperature-protection": null,
+      "abort-temperature": null,
+      "resistance-offset": null
+    }
+  }
 }
-

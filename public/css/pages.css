@@ -146,6 +146,33 @@
   align-items: center;
 }
 
+.safety-page-notice,
+.safety-controller-status {
+  color: var(--cb-text-soft);
+  line-height: 1.4;
+}
+
+.safety-controller-pane {
+  border-top: 1px solid var(--cb-border);
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.safety-controller-identity {
+  margin: 0 0 4px;
+  font-size: 19px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.safety-controller-status.is-unavailable {
+  color: #8a4b16;
+}
+
+.safety-controller-status.is-read-only {
+  color: #526579;
+}
+
 .matrix-grid {
   display: grid;
   grid-template-columns: 240px repeat(var(--matrix-columns), minmax(140px, 1fr));

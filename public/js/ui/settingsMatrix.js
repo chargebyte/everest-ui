@@ -45,6 +45,11 @@ export function renderSettingsMatrixBlock(blockConfig, options) {
         requestResponseObject,
         fieldMap
       );
+    },
+    setDisabled(disabled) {
+      element.querySelectorAll('input, select, button').forEach((control) => {
+        control.disabled = disabled;
+      });
     }
   };
 }

@@ -63,8 +63,8 @@ public:
     void start();
     bool isReady() const;
     QString appTitle() const;
-    RpcApiEvseStateResult getEvseState(int evseIndex);
-    RpcApiEvseErrorPresentResult getEvseErrorPresent(int evseIndex);
+    virtual RpcApiEvseStateResult getEvseState(int evseIndex);
+    virtual RpcApiEvseErrorPresentResult getEvseErrorPresent(int evseIndex);
 
 private slots:
     void onConnected();

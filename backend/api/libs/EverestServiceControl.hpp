@@ -5,7 +5,9 @@
 #ifndef EVEREST_SERVICE_CONTROL_HPP
 #define EVEREST_SERVICE_CONTROL_HPP
 
+#include <QList>
 #include <QString>
+#include <QStringList>
 
 class RpcApiClient;
 
@@ -28,7 +30,11 @@ struct EverestErrorPresentResult {
 
 namespace EverestServiceControl {
 EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient *rpcApiClient, int evseIndex);
+EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient *rpcApiClient, const QList<int> &evseIndices);
+EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient *rpcApiClient, const QList<int> &evseIndices,
+                                                   const QStringList &allowedStates);
 EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient *rpcApiClient, int evseIndex);
+EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient *rpcApiClient, const QList<int> &evseIndices);
 EverestServiceControlResult executeEverestRestart(RpcApiClient *rpcApiClient);
 EverestServiceControlResult executeEverestStop();
 EverestServiceControlResult waitForEverestServiceState(bool shouldBeActive);

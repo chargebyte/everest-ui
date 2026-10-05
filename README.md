@@ -82,6 +82,10 @@ The authentication database is created on first setup at:
 
 The EVerest paths are configured in [`backend.conf`](./backend/api/config/backend.conf).
 
+The `everest_rpc_api_ready_timeout_seconds` backend setting controls how long the UI backend waits for the EVerest
+JSON-RPC API to reconnect after restarting EVerest. It defaults to 15 seconds. Optional platform overrides use the
+exact `/proc/device-tree/compatible` value as a suffix; the first matching compatible entry takes precedence.
+
 PCAP captures are bounded by these backend settings:
 
 - `pcap_max_size_bytes`
