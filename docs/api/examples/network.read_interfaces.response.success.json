@@ -1,0 +1,40 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "network.read_interfaces.result",
+  "parameters": {
+    "available": true,
+    "interfaces": [
+      {
+        "name": "eth0",
+        "index": 2,
+        "kind": "ethernet",
+        "operational_state": "routable",
+        "setup_state": "configured",
+        "driver": "e1000e",
+        "network_file": "/etc/systemd/network/10-eth0.network",
+        "bridge_member": false,
+        "loopback": false,
+        "probably_iso_high_level_comms": false,
+        "editable": true,
+        "warning": []
+      },
+      {
+        "name": "br0",
+        "index": 3,
+        "kind": "bridge",
+        "operational_state": "routable",
+        "setup_state": "configured",
+        "driver": "",
+        "network_file": "/etc/systemd/network/20-br0.network",
+        "bridge_member": false,
+        "loopback": false,
+        "probably_iso_high_level_comms": false,
+        "editable": true,
+        "warning": []
+      }
+    ]
+  },
+  "responseId": "r-1"
+}

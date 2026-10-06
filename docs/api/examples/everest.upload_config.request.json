@@ -1,0 +1,10 @@
+{
+  "requestId": 42,
+  "group": "everest",
+  "action": "upload_config",
+  "parameters": {
+    "file_name": "config.yaml",
+    "config_yaml": "active_modules: {}\\n"
+  }
+}
+

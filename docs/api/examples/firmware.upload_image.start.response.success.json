@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "firmware.upload_image.start.ack",
+  "parameters": {},
+  "responseId": "r-1"
+}
+

@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "safety.read_settings.result",
+  "parameters": {
+    "pt1000_0": {
+      "overtemperature-protection": true,
+      "abort-temperature": 80
+    }
+  },
+  "responseId": "r-1"
+}
+

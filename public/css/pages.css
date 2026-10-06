@@ -300,6 +300,77 @@
   border-color: #c7cfdf;
 }
 
+.network-ipv4-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.network-ipv4-mode label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.network-cidr-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.network-cidr-inputs #network-address {
+  flex: 1;
+  min-width: 0;
+}
+
+.network-cidr-inputs #network-prefix {
+  box-sizing: border-box;
+  width: 5.5rem;
+  min-width: 5.5rem;
+  padding-right: 24px;
+}
+
+.network-settings-grid [hidden] {
+  display: none;
+}
+
+#network-ipv4-settings[hidden] {
+  display: none;
+}
+
+.network-can-settings[hidden],
+.network-can-custom[hidden] {
+  display: none;
+}
+
+.network-can-rates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, max-content));
+  gap: 10px 18px;
+  border: 0;
+  padding: 0;
+  margin: 0 0 16px;
+}
+
+.network-can-rates legend {
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+.network-can-rates label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.network-can-custom {
+  display: grid;
+  grid-template-columns: minmax(130px, 180px) minmax(180px, 280px);
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
 .input-short {
   width: 12ch;
 }

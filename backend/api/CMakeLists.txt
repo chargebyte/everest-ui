@@ -16,6 +16,7 @@ add_executable(api
     modules/NetworkConfiguration.cpp
     libs/ConsoleConnector.cpp
     libs/BackendConfig.cpp
+    libs/NetworkInterfaceUtils.cpp
     libs/ResponseBuilder.cpp
     libs/SystemdService.cpp
     libs/EverestServiceControl.cpp

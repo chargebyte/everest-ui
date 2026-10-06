@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "firmware.read_version.result",
+  "parameters": {
+    "image": {
+      "version": "1.2.3"
+    }
+  },
+  "responseId": "r-1"
+}
+

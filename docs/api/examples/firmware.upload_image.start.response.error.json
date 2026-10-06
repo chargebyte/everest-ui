@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "firmware.upload_image.start.error",
+  "parameters": {
+    "error": "<action-specific-error-code>"
+  },
+  "responseId": "r-2"
+}
+

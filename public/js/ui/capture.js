@@ -309,8 +309,8 @@ function createCaptureBooleanInput(parameter, fieldMap) {
 
 function formatInterfaceOption(optionData) {
   const labels = [optionData.name || ''];
-  if (optionData.likely_powerline) {
-    labels.push('Likely PLC/HomePlug');
+  if (optionData.likely_iso_high_level_comms) {
+    labels.push('Likely ISO high level communications');
   }
   if (optionData.available === false && !optionData.warning) {
     labels.push('Unavailable');

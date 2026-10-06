@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "network.reset_settings.error",
+  "parameters": {
+    "error": "network_config_unowned_dropin"
+  },
+  "responseId": "r-2"
+}

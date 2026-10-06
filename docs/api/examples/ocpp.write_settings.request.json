@@ -1,0 +1,11 @@
+{
+  "requestId": 42,
+  "group": "ocpp",
+  "action": "write_settings",
+  "parameters": {
+    "InternalCtrlr": {
+      "ChargePointId": "station-001"
+    }
+  }
+}
+

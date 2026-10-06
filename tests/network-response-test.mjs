@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  CAN_BITRATE_PRESETS,
+  canBitRateSelection,
   formatInterfaceWarnings,
+  isValidIpv4Address,
+  isValidIpv4PrefixLength,
   isCurrentSettingsResponse,
   isSuccessfulApplyResponse,
   networkActionState,
+  networkFieldDisabledState,
   networkSettingsEqual,
-  normalizeNetworkSettings
+  normalizeNetworkSettings,
+  parseCanBitRate
 } from '../public/js/pages/network.js';
 import { hasUnsavedSettings } from '../public/js/pages/everest.js';
 import {
@@ -26,11 +32,22 @@ test('ignores settings responses for an older request or interface', () => {
   assert.equal(isCurrentSettingsResponse(wrongInterface, 2, 'eth1'), false);
 });
 
+test('parses custom CAN rates and selects presets or custom values', () => {
+  assert.equal(CAN_BITRATE_PRESETS.length, 8);
+  assert.equal(parseCanBitRate('500k'), 500000);
+  assert.equal(parseCanBitRate('1M'), 1000000);
+  assert.equal(parseCanBitRate('500kbps'), null);
+  assert.equal(parseCanBitRate('4296M'), null);
+  assert.deepEqual(canBitRateSelection(500000), { selected: '500000', customValue: '' });
+  assert.deepEqual(canBitRateSelection(333333), { selected: 'custom', customValue: '333333' });
+  assert.deepEqual(canBitRateSelection(null), { selected: '', customValue: '' });
+});
+
 test('keeps interface warnings visible after settings data is loaded', () => {
   assert.deepEqual(
-    formatInterfaceWarnings({ warning: ['This interface probably belongs to a PLC/HomePlug adapter.'] }),
+    formatInterfaceWarnings({ warning: ['This interface is likely used for ISO high level communications (PLC/HomePlug).'] }),
     {
-      text: 'This interface probably belongs to a PLC/HomePlug adapter.',
+      text: 'This interface is likely used for ISO high level communications (PLC/HomePlug).',
       visible: true
     }
   );
@@ -41,8 +58,8 @@ test('normalizes network settings for dirty-state comparison', () => {
   const baseline = {
     dhcp_ipv4: false,
     dhcp_ipv6: true,
-    dhcp_ipv4_static: false,
-    ipv4_addresses: [' 192.168.1.20/24 '],
+    ipv4_address: ' 192.168.1.20 ',
+    ipv4_prefix_length: 24,
     gateway: ' 192.168.1.1 ',
     dns: ['192.168.1.1']
   };
@@ -51,42 +68,22 @@ test('normalizes network settings for dirty-state comparison', () => {
   assert.deepEqual(normalizeNetworkSettings({ dhcp_ipv4: true, gateway: '192.168.1.1' }), {
     dhcp_ipv4: true,
     dhcp_ipv6: false,
-    dhcp_ipv4_static: false,
-    ipv4_addresses: [],
+    ipv4_address: '',
+    ipv4_prefix_length: 24,
     gateway: '',
     dns: []
   });
 });
 
-test('preserves static IPv4 fields for explicit mixed DHCP mode', () => {
-  assert.deepEqual(normalizeNetworkSettings({
-    dhcp_ipv4: true,
-    dhcp_ipv4_static: true,
-    ipv4_addresses: ['192.168.1.20/24'],
-    gateway: '192.168.1.1'
-  }), {
-    dhcp_ipv4: true,
-    dhcp_ipv6: false,
-    dhcp_ipv4_static: true,
-    ipv4_addresses: ['192.168.1.20/24'],
-    gateway: '192.168.1.1',
-    dns: []
-  });
-});
-
-test('keeps an empty primary slot before a fallback address', () => {
-  assert.deepEqual(normalizeNetworkSettings({
-    dhcp_ipv4: true,
-    dhcp_ipv4_static: true,
-    ipv4_addresses: ['', '169.254.12.53/16']
-  }), {
-    dhcp_ipv4: true,
-    dhcp_ipv6: false,
-    dhcp_ipv4_static: true,
-    ipv4_addresses: ['', '169.254.12.53/16'],
-    gateway: '',
-    dns: []
-  });
+test('validates bare IPv4 addresses and prefix lengths', () => {
+  assert.equal(isValidIpv4Address('192.168.1.20'), true);
+  assert.equal(isValidIpv4Address('256.168.1.20'), false);
+  assert.equal(isValidIpv4Address('192.168.1'), false);
+  assert.equal(isValidIpv4PrefixLength('24'), true);
+  assert.equal(isValidIpv4PrefixLength('0'), true);
+  assert.equal(isValidIpv4PrefixLength('32'), true);
+  assert.equal(isValidIpv4PrefixLength('33'), false);
+  assert.equal(isValidIpv4PrefixLength('24.5'), false);
 });
 
 test('disables Apply for unsaved edits but keeps Save and Reset available', () => {
@@ -98,6 +95,48 @@ test('disables Apply for unsaved edits but keeps Save and Reset available', () =
   assert.equal(networkActionState({ loaded: true, editable: true, dirty: true, userOverride: false, resetStaged: true }).applyDisabled, false);
   assert.equal(networkActionState({ loaded: true, editable: true, dirty: false, userOverride: true, resetStaged: true }).saveDisabled, true);
   assert.equal(networkActionState({ loaded: true, editable: true, dirty: false, userOverride: true }).applyDisabled, false);
+});
+
+test('disables static fields in DHCP mode', () => {
+  assert.deepEqual(networkFieldDisabledState({
+    loaded: true,
+    editable: true,
+    resetStaged: false,
+    dhcpIpv4: true,
+  }), {
+    mode: false,
+    ipv4Address: true,
+    ipv4PrefixLength: true,
+    gateway: true,
+    dns: true
+  });
+});
+
+test('enables static fields in static mode', () => {
+  const state = networkFieldDisabledState({
+    loaded: true,
+    editable: true,
+    resetStaged: false,
+    dhcpIpv4: false
+  });
+  assert.equal(state.mode, false);
+  assert.equal(state.ipv4Address, false);
+  assert.equal(state.ipv4PrefixLength, false);
+  assert.equal(state.dns, false);
+});
+
+test('keeps all network fields disabled until editable settings are loaded or while reset is staged', () => {
+  for (const gating of [
+    { loaded: false, editable: true, resetStaged: false },
+    { loaded: true, editable: false, resetStaged: false },
+    { loaded: true, editable: true, resetStaged: true }
+  ]) {
+    const state = networkFieldDisabledState({
+      ...gating,
+      dhcpIpv4: false
+    });
+    assert.ok(Object.values(state).every(Boolean));
+  }
 });
 
 test('accepts both successful Apply acknowledgements and results', () => {

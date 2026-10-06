@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "ocpp.read_settings.result",
+  "parameters": {
+    "InternalCtrlr": {
+      "ChargePointId": "station-001"
+    },
+    "_available_modules": [
+      "EvseManager",
+      "InternalCtrlr"
+    ]
+  },
+  "responseId": "r-1"
+}
+

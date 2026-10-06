@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "system_logs.extract.result",
+  "parameters": {
+    "file": "system-log-extract.txt",
+    "dataB64": "<base64 journal bytes>"
+  },
+  "responseId": "r-1"
+}

@@ -1,0 +1,6 @@
+{
+  "type": "pcap.chunk_ack",
+  "requestId": 42,
+  "sequence": 0
+}
+

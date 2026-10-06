@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "final": false,
+  "requestId": 42,
+  "type": "pcap.read.result",
+  "parameters": {
+    "file": "capture.pcap",
+    "transfer": "binary",
+    "chunk_size_bytes": 65536,
+    "size_bytes": 123456
+  },
+  "responseId": "r-1"
+}

@@ -1,0 +1,7 @@
+{
+  "http_status": 409,
+  "headers": {},
+  "body": {
+    "error": "setup_not_required"
+  }
+}

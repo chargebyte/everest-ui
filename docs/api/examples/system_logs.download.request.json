@@ -1,0 +1,11 @@
+{
+  "requestId": 42,
+  "group": "system_logs",
+  "action": "download",
+  "parameters": {
+    "files": {
+      "0": "/var/log/journal/example.journal"
+    }
+  }
+}
+

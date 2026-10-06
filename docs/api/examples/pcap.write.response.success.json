@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "pcap.write.ack",
+  "parameters": {},
+  "responseId": "r-1"
+}
+

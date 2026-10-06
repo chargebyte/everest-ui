@@ -1,0 +1,7 @@
+{
+  "requestId": 42,
+  "group": "pcap",
+  "action": "read_interfaces",
+  "parameters": {}
+}
+

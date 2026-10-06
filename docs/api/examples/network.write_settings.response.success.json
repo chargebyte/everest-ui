@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "network.write_settings.result",
+  "parameters": {
+    "network_file": "/lib/systemd/network/10-eth0.network",
+    "overlay_file": "/etc/systemd/network/10-eth0.network.d/50-everest-ui.conf",
+    "user_override": true
+  },
+  "responseId": "r-1"
+}

@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "everest.read_config_parameters.result",
+  "parameters": {
+    "Profinet": {
+      "device": "eth2"
+    },
+    "_available_modules": [
+      "EvseManager",
+      "Profinet"
+    ]
+  },
+  "responseId": "r-1"
+}

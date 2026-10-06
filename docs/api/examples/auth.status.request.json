@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "path": "/auth/status",
+  "headers": {},
+  "body": null
+}
+

@@ -1,0 +1,21 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "network.read_settings.result",
+  "parameters": {
+    "interface": "eth0",
+    "network_file": "/lib/systemd/network/10-eth0.network",
+    "dhcp_ipv4": false,
+    "dhcp_ipv6": true,
+    "ipv4_address": "10.0.0.22",
+    "ipv4_prefix_length": 16,
+    "gateway": "10.0.0.1",
+    "dns": ["10.0.0.1", "8.8.8.8"],
+    "editable": true,
+    "user_override": false,
+    "reset_staged": false,
+    "warning": []
+  },
+  "responseId": "r-1"
+}

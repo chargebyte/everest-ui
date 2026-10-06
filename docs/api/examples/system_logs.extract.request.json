@@ -1,0 +1,11 @@
+{
+  "requestId": 42,
+  "group": "system_logs",
+  "action": "extract",
+  "parameters": {
+    "boot": "current",
+    "service": false,
+    "output": "download"
+  }
+}
+
