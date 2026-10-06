@@ -20,6 +20,7 @@ import {
 import { renderFirmwarePage } from './pages/firmware.js';
 import { renderSystemLogsPage } from './pages/systemLogs.js';
 import { renderNetworkPage } from './pages/network.js';
+import { renderSshPage } from './pages/ssh.js';
 import { MODULE_IDS } from './protocol/constants.js';
 import { buildRequest } from './protocol/requestBuilder.js';
 
@@ -303,7 +304,8 @@ function createRoutes() {
     pcap: renderPcapPage,
     firmware: renderFirmwarePage,
     system_logs: renderSystemLogsPage,
-    network: renderNetworkPage
+    network: renderNetworkPage,
+    ssh: renderSshPage
   };
 }
 

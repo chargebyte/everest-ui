@@ -15,13 +15,21 @@ public:
     explicit SystemdService(QObject *parent = nullptr);
 
     bool restartUnit(const QString &unitName);
+    bool startUnit(const QString &unitName);
     bool stopUnit(const QString &unitName);
+    bool enableUnit(const QString &unitName);
+    bool disableUnit(const QString &unitName);
     bool isUnitActive(const QString &unitName);
+    bool waitForUnitActive(const QString &unitName, bool active, int timeoutMs);
+    bool isUnitEnabled(const QString &unitName);
 
 private:
     void init();
     bool isSystemBusAvailable() const;
     bool isManagerInterfaceAvailable() const;
+    bool callUnitJob(const QString &method, const QString &unitName);
+    bool callEnableDisableUnitFiles(const QString &method, const QString &unitName);
+    bool readUnitActiveState(const QString &unitName, bool *active);
 
     QDBusInterface *m_systemdManagerInterface;
 };

@@ -9,7 +9,8 @@ const kNavEntries = [
   { page: 'pcap', label: 'PCAP Trace' },
   { page: 'firmware', label: 'Firmware Update' },
   { page: 'system_logs', label: 'System Logs' },
-  { page: 'network', label: 'Network Configuration' }
+  { page: 'network', label: 'Network Configuration' },
+  { page: 'ssh', label: 'SSH Configuration' }
 ];
 
 export function renderSideBar() {

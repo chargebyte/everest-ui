@@ -53,6 +53,7 @@ inline constexpr const char kGroupOcpp[] = "ocpp";
 inline constexpr const char kGroupFirmware[] = "firmware";
 inline constexpr const char kGroupSystemLogs[] = "system_logs";
 inline constexpr const char kGroupNetwork[] = "network";
+inline constexpr const char kGroupSSH[] = "ssh";
 inline constexpr const char kGroupSystem[] = "system";
 
 inline constexpr const char kActionRead[] = "read";
@@ -78,6 +79,9 @@ inline constexpr const char kActionExtract[] = "extract";
 inline constexpr const char kActionApply[] = "apply";
 inline constexpr const char kActionProgress[] = "progress";
 inline constexpr const char kActionReadAppTitle[] = "read_app_title";
+inline constexpr const char kActionEnable[] = "enable";
+inline constexpr const char kActionDisable[] = "disable";
+inline constexpr const char kActionSetPassword[] = "set_password";
 
 // Parameter keys
 inline constexpr const char kKeyGeneral[] = "general";
