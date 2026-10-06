@@ -186,17 +186,23 @@ ConsoleConnector::RunResult ConsoleConnector::runPrompt(
     const CommandSpec &spec, const ExecOptions &options) const {
     QProcess process;
     process.start(spec.program, spec.args);
+    if (!process.waitForStarted(options.startTimeoutMs)) {
+        return {-1, process.readAllStandardOutput(), process.readAllStandardError(), false, false, false,
+                process.errorString()};
+    }
+
     if (!process.waitForFinished(options.syncTimeoutMs)) {
         process.kill();
         process.waitForFinished(options.killTimeoutMs);
         const QByteArray out = process.readAllStandardOutput();
         const QByteArray err = process.readAllStandardError();
-        return {1, out, err};
+        return {1, out, err, true, true, false, process.errorString()};
     }
     const int exitCode = process.exitCode();
     const QByteArray out = process.readAllStandardOutput();
     const QByteArray err = process.readAllStandardError();
-    return {exitCode, out, err};
+    const bool normalExit = process.exitStatus() == QProcess::NormalExit;
+    return {exitCode, out, err, true, false, normalExit, normalExit ? QString() : process.errorString()};
 }
 
 ConsoleConnector::RunResult ConsoleConnector::runPromptAsync(

@@ -140,3 +140,15 @@ target_link_libraries(safety_controller_test
 )
 
 add_test(NAME safety_controller_test COMMAND safety_controller_test)
+
+add_executable(console_connector_test
+    ConsoleConnectorTest.cpp
+    ../backend/api/libs/ConsoleConnector.cpp
+)
+
+target_link_libraries(console_connector_test
+    ${QT_PACKAGE_NAME}::Core
+    ${QT_PACKAGE_NAME}::Test
+)
+
+add_test(NAME console_connector_test COMMAND console_connector_test)

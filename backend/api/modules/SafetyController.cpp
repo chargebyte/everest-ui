@@ -11,6 +11,7 @@
 #include "RpcApiClient.hpp"
 #include "YamlUtils.hpp"
 
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -657,7 +658,19 @@ ModuleResponse flashSafetyControllerBin(const QString& binPath, const QString& d
     const ConsoleConnector::RunResult result =
         console.executeTemplate(raDataFlashCommand(deviceName, binPath), {}, options, ConsoleConnector::ExecMode::Sync);
 
-    flashSucceeded = result.exitCode == 0;
+    flashSucceeded = result.started && !result.timedOut && result.normalExit && result.exitCode == 0;
+    if (!flashSucceeded) {
+        qWarning().noquote() << QStringLiteral("Safety Controller flash failed: command='%1'; device='/dev/%2'; "
+                              "started=%3; timed_out=%4; normal_exit=%5; exit_code=%6; process_error='%7'; "
+                              "stdout='%8'; stderr='%9'")
+                                    .arg(raDataFlashCommand(deviceName, binPath), deviceName)
+                                    .arg(result.started)
+                                    .arg(result.timedOut)
+                                    .arg(result.normalExit)
+                                    .arg(result.exitCode)
+                                    .arg(result.processError, QString::fromUtf8(result.stdoutData).trimmed(),
+                                         QString::fromUtf8(result.stderrData).trimmed());
+    }
 
     const EverestServiceControlResult restartResult = EverestServiceControl::executeEverestRestart(g_rpcApiClient);
     if (!restartResult.success) {
@@ -688,9 +701,19 @@ ModuleResponse flashSafetyControllerBin(const QString& binPath, const QString& d
         return response;
     }
 
+    QString flashOutcome = QStringLiteral("unexpected_exit");
+    if (!result.started) {
+        flashOutcome = QStringLiteral("start_failed");
+    } else if (result.timedOut) {
+        flashOutcome = QStringLiteral("timeout");
+    } else if (result.normalExit) {
+        flashOutcome = QStringLiteral("nonzero_exit");
+    }
+
     response.parameters = QJsonObject{
         {QLatin1String(kError), QLatin1String(kErrorSafetyControllerFlashFailed)},
-        {QLatin1String(kErrorStdErr), QString::fromUtf8(result.stderrData).trimmed()},
+        {QStringLiteral("flash_outcome"), flashOutcome},
+        {QStringLiteral("exit_code"), result.exitCode},
     };
     return response;
 }

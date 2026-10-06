@@ -156,8 +156,7 @@ export function renderSafetyPage(container, {
         pending.matrix.setDisabled(!pending.writable);
         pending.status.textContent = message.type === 'safety.write_settings.result'
           ? 'Safety Controller settings flashed successfully.'
-          : message.parameters?.message ||
-            `Unable to apply Safety Controller settings: ${message.parameters?.error || 'unknown error'}`;
+          : message.parameters?.message || getSafetyWriteErrorMessage(message.parameters);
         pending.status.classList.toggle('is-unavailable', message.type === 'safety.write_settings.error');
         pending.status.hidden = false;
       }
@@ -209,4 +208,22 @@ function sendSafetyRequest(sendPayload, addLog, request, group, action) {
   const result = sendPayload(request);
   addLog(`${group}.${action} ${result.ok ? 'sent' : 'rejected'}`);
   return result.ok;
+}
+
+function getSafetyWriteErrorMessage(parameters = {}) {
+  const error = parameters.error || 'unknown error';
+  if (error !== 'safety_controller_flash_failed') {
+    return `Unable to apply Safety Controller settings: ${error}`;
+  }
+
+  const outcomeMessages = {
+    start_failed: 'Flash command could not start.',
+    timeout: 'Flash command timed out.',
+    unexpected_exit: 'Flash command terminated unexpectedly.',
+  };
+  const status = outcomeMessages[parameters.flash_outcome] ||
+    (parameters.flash_outcome === 'nonzero_exit' && Number.isInteger(parameters.exit_code)
+      ? `Flash command exited with code ${parameters.exit_code}.`
+      : 'Flash command failed.');
+  return `Unable to apply Safety Controller settings: ${status}`;
 }
