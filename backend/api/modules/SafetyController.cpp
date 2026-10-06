@@ -40,7 +40,6 @@ constexpr char kErrorStdErr[] = "stderr";
 constexpr char kParametersPt1000[] = "pt1000_";
 constexpr char kParametersContactors[] = "contactors_";
 constexpr char kParametersEstops[] = "estops_";
-constexpr char kCmdRaDataFlash[] = "ra-update -a data flash";
 constexpr char kCmdRaPbCreate[] = "ra-pb-create";
 constexpr char kCmdFlagI[] = "-i";
 constexpr char kCmdFlagO[] = "-o";
@@ -71,6 +70,7 @@ constexpr char kKeyConnections[] = "connections";
 constexpr char kKeyBsp[] = "bsp";
 constexpr char kKeyModuleId[] = "module_id";
 constexpr char kKeySerialPort[] = "serial_port";
+constexpr char kKeyResetGpioLineName[] = "reset_gpio_line_name";
 constexpr char kKeyDefault[] = "default";
 constexpr char kKeyConfig[] = "config";
 constexpr char kKeyControllers[] = "controllers";
@@ -89,6 +89,7 @@ constexpr char kErrorYamlPublishAfterFlash[] = "safety_controller_yaml_publish_f
 
 struct SafetyControllerDevice {
     QString name;
+    QString resetGpioLineName;
     QString bspInstance;
     QString driverModule;
     QString yamlPath;
@@ -199,8 +200,8 @@ bool resolveDeviceName(const QString& serialPort, QString& deviceName) {
     return true;
 }
 
-bool defaultSerialPortFromManifest(const QString& moduleName, const QString& manifestRoot, QString& serialPort,
-                                   QString& error) {
+bool defaultModuleConfigFromManifest(const QString& moduleName, const QString& configKey, const QString& manifestRoot,
+                                     QString& value, QString& error) {
     if (!isSafeDeviceName(moduleName)) {
         error = QStringLiteral("invalid driver module name: %1").arg(moduleName);
         return false;
@@ -213,10 +214,10 @@ bool defaultSerialPortFromManifest(const QString& moduleName, const QString& man
     }
 
     const QJsonObject config = manifestResult.yamlRoot.value(QLatin1String(kKeyConfig)).toObject();
-    const QJsonObject serialPortConfig = config.value(QLatin1String(kKeySerialPort)).toObject();
-    serialPort = serialPortConfig.value(QLatin1String(kKeyDefault)).toString().trimmed();
-    if (serialPort.isEmpty()) {
-        error = QStringLiteral("serial_port has no default in %1").arg(manifestPath);
+    const QJsonObject valueConfig = config.value(configKey).toObject();
+    value = valueConfig.value(QLatin1String(kKeyDefault)).toString().trimmed();
+    if (value.isEmpty()) {
+        error = QStringLiteral("%1 has no default in %2").arg(configKey, manifestPath);
         return false;
     }
     return true;
@@ -253,7 +254,23 @@ SafetyControllerDeviceResolution resolveSafetyControllerDevices(const QJsonObjec
                                      .trimmed();
             if (serialPort.isEmpty()) {
                 QString manifestError;
-                if (!defaultSerialPortFromManifest(driverModule, manifestRoot, serialPort, manifestError)) {
+                if (!defaultModuleConfigFromManifest(driverModule, QLatin1String(kKeySerialPort), manifestRoot,
+                                                     serialPort, manifestError)) {
+                    resolution.errors.append(
+                        QStringLiteral("BSP %1 (%2): %3").arg(bspInstance, driverModule, manifestError));
+                    continue;
+                }
+            }
+
+            QString resetGpioLineName = bspModule.value(QLatin1String(kEverestConfConfigModule))
+                                            .toObject()
+                                            .value(QLatin1String(kKeyResetGpioLineName))
+                                            .toString()
+                                            .trimmed();
+            if (resetGpioLineName.isEmpty()) {
+                QString manifestError;
+                if (!defaultModuleConfigFromManifest(driverModule, QLatin1String(kKeyResetGpioLineName), manifestRoot,
+                                                     resetGpioLineName, manifestError)) {
                     resolution.errors.append(
                         QStringLiteral("BSP %1 (%2): %3").arg(bspInstance, driverModule, manifestError));
                     continue;
@@ -274,7 +291,7 @@ SafetyControllerDeviceResolution resolveSafetyControllerDevices(const QJsonObjec
                 continue;
             }
             resolution.devices.append(
-                {deviceName, bspInstance, driverModule,
+                {deviceName, resetGpioLineName, bspInstance, driverModule,
                  QDir(QLatin1String(kCacheDirectory)).filePath(deviceName + QStringLiteral(".yaml"))});
         }
     }
@@ -621,11 +638,20 @@ ModuleResponse convertSafetyControllerYamlToBin(const QString& yamlPath, const Q
     return response;
 }
 
-QString raDataFlashCommand(const QString& deviceName, const QString& binPath) {
-    return QLatin1String(kCmdRaDataFlash) + QStringLiteral(" -d /dev/") + deviceName + QStringLiteral(" ") + binPath;
+QString quoteCommandArgument(const QString& argument) {
+    QString escapedArgument = argument;
+    escapedArgument.replace(QStringLiteral("\\"), QStringLiteral("\\\\"));
+    escapedArgument.replace(QStringLiteral("\""), QStringLiteral("\\\""));
+    return QStringLiteral("\"") + escapedArgument + QStringLiteral("\"");
 }
 
-ModuleResponse flashSafetyControllerBin(const QString& binPath, const QString& deviceName, ModuleResponse response,
+QString raDataFlashCommand(const QString& deviceName, const QString& resetGpioLineName, const QString& binPath) {
+    return QStringLiteral("ra-update -a data -d /dev/%1 -r %2 flash %3")
+        .arg(deviceName, quoteCommandArgument(resetGpioLineName), binPath);
+}
+
+ModuleResponse flashSafetyControllerBin(const QString& binPath, const QString& deviceName,
+                                        const QString& resetGpioLineName, ModuleResponse response,
                                         bool& flashSucceeded) {
     flashSucceeded = false;
     const EverestStateAllowedResult stateAllowedResult =
@@ -655,15 +681,16 @@ ModuleResponse flashSafetyControllerBin(const QString& binPath, const QString& d
 
     ConsoleConnector console;
     ConsoleConnector::ExecOptions options;
-    const ConsoleConnector::RunResult result =
-        console.executeTemplate(raDataFlashCommand(deviceName, binPath), {}, options, ConsoleConnector::ExecMode::Sync);
+    const ConsoleConnector::RunResult result = console.executeTemplate(
+        raDataFlashCommand(deviceName, resetGpioLineName, binPath), {}, options, ConsoleConnector::ExecMode::Sync);
 
     flashSucceeded = result.started && !result.timedOut && result.normalExit && result.exitCode == 0;
     if (!flashSucceeded) {
-        qWarning().noquote() << QStringLiteral("Safety Controller flash failed: command='%1'; device='/dev/%2'; "
-                              "started=%3; timed_out=%4; normal_exit=%5; exit_code=%6; process_error='%7'; "
-                              "stdout='%8'; stderr='%9'")
-                                    .arg(raDataFlashCommand(deviceName, binPath), deviceName)
+        qWarning().noquote() << QStringLiteral(
+                                    "Safety Controller flash failed: command='%1'; device='/dev/%2'; "
+                                    "started=%3; timed_out=%4; normal_exit=%5; exit_code=%6; process_error='%7'; "
+                                    "stdout='%8'; stderr='%9'")
+                                    .arg(raDataFlashCommand(deviceName, resetGpioLineName, binPath), deviceName)
                                     .arg(result.started)
                                     .arg(result.timedOut)
                                     .arg(result.normalExit)
@@ -830,7 +857,8 @@ ModuleResponse handleWriteRequest(const ModuleRequest& request) {
     }
 
     bool flashSucceeded = false;
-    response = flashSafetyControllerBin(binPathResult.path, deviceName, response, flashSucceeded);
+    response =
+        flashSafetyControllerBin(binPathResult.path, deviceName, deviceIt->resetGpioLineName, response, flashSucceeded);
     if (flashSucceeded && !writeSafetyControllerYamlFile(deviceIt->yamlPath, updatedParameters)) {
         const QJsonObject flashResponseParameters = response.parameters;
         response.parameters = {
