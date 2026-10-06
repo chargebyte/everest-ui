@@ -9,7 +9,8 @@ export const MODULE_IDS = Object.freeze({
   PCAP: 'pcap',
   FIRMWARE: 'firmware',
   SYSTEM_LOGS: 'system_logs',
-  NETWORK: 'network'
+  NETWORK: 'network',
+  SSH: 'ssh'
 });
 
 export const EVEREST_ACTIONS = Object.freeze({
