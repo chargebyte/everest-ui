@@ -734,8 +734,8 @@ ModuleResponse flashSafetyControllerBin(const QString& binPath, const QString& d
             EverestServiceControl::monitorEverestErrorPresent(g_rpcApiClient, 1);
         if (errorResult.success) {
             response.parameters = QJsonObject{
-                {QLatin1String(kError), QStringLiteral("settings put EVerest into an error, please revert "
-                                                       "immediately")},
+                {QLatin1String(kError), QStringLiteral("settings put EVerest into an error, check logs and "
+                                                       "revert if necessary")},
             };
             return response;
         }
