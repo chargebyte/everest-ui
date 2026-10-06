@@ -1,0 +1,10 @@
+{
+  "requestId": 43,
+  "group": "network",
+  "action": "write_settings",
+  "parameters": {
+    "interface": "can0",
+    "expert_mode": false,
+    "can_bitrate": 500000
+  }
+}

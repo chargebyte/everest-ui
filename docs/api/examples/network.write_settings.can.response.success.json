@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 43,
+  "type": "network.write_settings.result",
+  "parameters": {
+    "network_file": "/lib/systemd/network/80-can.network",
+    "overlay_file": "/etc/systemd/network/80-can.network.d/50-everest-ui.conf",
+    "user_override": true,
+    "can_bitrate_override": true
+  },
+  "responseId": "r-1"
+}

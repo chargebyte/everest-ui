@@ -1,0 +1,9 @@
+{
+  "requestId": 42,
+  "group": "network",
+  "action": "read_settings",
+  "parameters": {
+    "interface": "can0",
+    "expert_mode": false
+  }
+}
