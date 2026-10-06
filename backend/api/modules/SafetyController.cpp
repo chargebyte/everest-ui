@@ -90,6 +90,7 @@ constexpr char kErrorYamlPublishAfterFlash[] = "safety_controller_yaml_publish_f
 struct SafetyControllerDevice {
     QString name;
     QString resetGpioLineName;
+    QString bootModeGpioLineName;
     QString bspInstance;
     QString driverModule;
     QString yamlPath;
@@ -223,6 +224,18 @@ bool defaultModuleConfigFromManifest(const QString& moduleName, const QString& c
     return true;
 }
 
+// Platform-specific GPIO naming convention; remove when boot-mode lines become configurable.
+bool deriveBootModeGpioLineName(const QString& resetGpioLineName, QString& bootModeGpioLineName) {
+    static const QRegularExpression resetLinePattern(QStringLiteral("SAFETY(\\w*)_RESET_INT$"));
+    const QRegularExpressionMatch match = resetLinePattern.match(resetGpioLineName);
+    if (!match.hasMatch()) {
+        return false;
+    }
+
+    bootModeGpioLineName = QStringLiteral("SAFETY%1_BOOTMODE_SET").arg(match.captured(1));
+    return true;
+}
+
 SafetyControllerDeviceResolution resolveSafetyControllerDevices(const QJsonObject& effectiveConfig,
                                                                 const QString& manifestRoot) {
     SafetyControllerDeviceResolution resolution;
@@ -277,6 +290,13 @@ SafetyControllerDeviceResolution resolveSafetyControllerDevices(const QJsonObjec
                 }
             }
 
+            QString bootModeGpioLineName;
+            if (!deriveBootModeGpioLineName(resetGpioLineName, bootModeGpioLineName)) {
+                resolution.errors.append(QStringLiteral("BSP %1 (%2) has an unsupported reset_gpio_line_name: %3")
+                                             .arg(bspInstance, driverModule, resetGpioLineName));
+                continue;
+            }
+
             QString deviceName;
             if (!resolveDeviceName(serialPort, deviceName)) {
                 resolution.errors.append(
@@ -291,7 +311,7 @@ SafetyControllerDeviceResolution resolveSafetyControllerDevices(const QJsonObjec
                 continue;
             }
             resolution.devices.append(
-                {deviceName, resetGpioLineName, bspInstance, driverModule,
+                {deviceName, resetGpioLineName, bootModeGpioLineName, bspInstance, driverModule,
                  QDir(QLatin1String(kCacheDirectory)).filePath(deviceName + QStringLiteral(".yaml"))});
         }
     }
@@ -645,14 +665,15 @@ QString quoteCommandArgument(const QString& argument) {
     return QStringLiteral("\"") + escapedArgument + QStringLiteral("\"");
 }
 
-QString raDataFlashCommand(const QString& deviceName, const QString& resetGpioLineName, const QString& binPath) {
-    return QStringLiteral("ra-update -a data -d /dev/%1 -r %2 flash %3")
-        .arg(deviceName, quoteCommandArgument(resetGpioLineName), binPath);
+QString raDataFlashCommand(const QString& deviceName, const QString& resetGpioLineName,
+                           const QString& bootModeGpioLineName, const QString& binPath) {
+    return QStringLiteral("ra-update -a data -d /dev/%1 -r %2 -m %3 flash %4")
+        .arg(deviceName, quoteCommandArgument(resetGpioLineName), quoteCommandArgument(bootModeGpioLineName), binPath);
 }
 
 ModuleResponse flashSafetyControllerBin(const QString& binPath, const QString& deviceName,
-                                        const QString& resetGpioLineName, ModuleResponse response,
-                                        bool& flashSucceeded) {
+                                        const QString& resetGpioLineName, const QString& bootModeGpioLineName,
+                                        ModuleResponse response, bool& flashSucceeded) {
     flashSucceeded = false;
     const EverestStateAllowedResult stateAllowedResult =
         EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
@@ -681,22 +702,23 @@ ModuleResponse flashSafetyControllerBin(const QString& binPath, const QString& d
 
     ConsoleConnector console;
     ConsoleConnector::ExecOptions options;
-    const ConsoleConnector::RunResult result = console.executeTemplate(
-        raDataFlashCommand(deviceName, resetGpioLineName, binPath), {}, options, ConsoleConnector::ExecMode::Sync);
+    const ConsoleConnector::RunResult result =
+        console.executeTemplate(raDataFlashCommand(deviceName, resetGpioLineName, bootModeGpioLineName, binPath), {},
+                                options, ConsoleConnector::ExecMode::Sync);
 
     flashSucceeded = result.started && !result.timedOut && result.normalExit && result.exitCode == 0;
     if (!flashSucceeded) {
-        qWarning().noquote() << QStringLiteral(
-                                    "Safety Controller flash failed: command='%1'; device='/dev/%2'; "
-                                    "started=%3; timed_out=%4; normal_exit=%5; exit_code=%6; process_error='%7'; "
-                                    "stdout='%8'; stderr='%9'")
-                                    .arg(raDataFlashCommand(deviceName, resetGpioLineName, binPath), deviceName)
-                                    .arg(result.started)
-                                    .arg(result.timedOut)
-                                    .arg(result.normalExit)
-                                    .arg(result.exitCode)
-                                    .arg(result.processError, QString::fromUtf8(result.stdoutData).trimmed(),
-                                         QString::fromUtf8(result.stderrData).trimmed());
+        qWarning().noquote()
+            << QStringLiteral("Safety Controller flash failed: command='%1'; device='/dev/%2'; "
+                              "started=%3; timed_out=%4; normal_exit=%5; exit_code=%6; process_error='%7'; "
+                              "stdout='%8'; stderr='%9'")
+                   .arg(raDataFlashCommand(deviceName, resetGpioLineName, bootModeGpioLineName, binPath), deviceName)
+                   .arg(result.started)
+                   .arg(result.timedOut)
+                   .arg(result.normalExit)
+                   .arg(result.exitCode)
+                   .arg(result.processError, QString::fromUtf8(result.stdoutData).trimmed(),
+                        QString::fromUtf8(result.stderrData).trimmed());
     }
 
     const EverestServiceControlResult restartResult = EverestServiceControl::executeEverestRestart(g_rpcApiClient);
@@ -857,8 +879,8 @@ ModuleResponse handleWriteRequest(const ModuleRequest& request) {
     }
 
     bool flashSucceeded = false;
-    response =
-        flashSafetyControllerBin(binPathResult.path, deviceName, deviceIt->resetGpioLineName, response, flashSucceeded);
+    response = flashSafetyControllerBin(binPathResult.path, deviceName, deviceIt->resetGpioLineName,
+                                        deviceIt->bootModeGpioLineName, response, flashSucceeded);
     if (flashSucceeded && !writeSafetyControllerYamlFile(deviceIt->yamlPath, updatedParameters)) {
         const QJsonObject flashResponseParameters = response.parameters;
         response.parameters = {
