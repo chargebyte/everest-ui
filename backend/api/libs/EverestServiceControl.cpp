@@ -5,29 +5,44 @@
 #include "EverestServiceControl.hpp"
 
 #include "BackendConfig.hpp"
+#include "ProtocolSchema.hpp"
 #include "RpcApiClient.hpp"
 #include "SystemdService.hpp"
-#include "ProtocolSchema.hpp"
 
 #include <QEventLoop>
 #include <QTimer>
 #include <QtGlobal>
 
+#include <limits>
+
 namespace {
 constexpr int kEverestRestartWaitTimeoutMs = 10000;
 constexpr int kEverestRestartPollIntervalMs = 200;
+constexpr int kDefaultRpcApiReadyTimeoutSeconds = 15;
+constexpr int kMaxRpcApiReadyTimeoutSeconds = std::numeric_limits<int>::max() / 1000;
 constexpr int kEverestErrorPresentMonitorTimeoutMs = 10000;
 constexpr int kEverestErrorPresentMonitorPollIntervalMs = 200;
+constexpr char kRpcApiReadyTimeoutConfigKey[] = "everest_rpc_api_ready_timeout_seconds";
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
 constexpr auto kSkipEmptyParts = Qt::SkipEmptyParts;
 #else
 constexpr auto kSkipEmptyParts = QString::SkipEmptyParts;
 #endif
+
+int rpcApiReadyTimeoutMs() {
+    const QString configKey = QLatin1String(kRpcApiReadyTimeoutConfigKey);
+    const QStringList candidates = backendConfigValueCandidates(readBackendConfigValue(configKey),
+                                                                readBackendConfigValues(configKey + QLatin1Char('.')),
+                                                                readDeviceTreeCompatibleData());
+    const int timeoutSeconds = resolvePositiveIntegerConfigValue(candidates, kDefaultRpcApiReadyTimeoutSeconds,
+                                                                 kMaxRpcApiReadyTimeoutSeconds, configKey);
+    return timeoutSeconds * 1000;
 }
+} // namespace
 
 namespace EverestServiceControl {
-EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient *rpcApiClient, int evseIndex) {
+EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient* rpcApiClient, int evseIndex) {
     if (!rpcApiClient) {
         return EverestStateAllowedResult{
             .success = false,
@@ -36,8 +51,7 @@ EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient *rpcApiClient, i
         };
     }
 
-    const QString whitelistValue =
-        readBackendConfigValue(QStringLiteral("everest_restart_allowed_states"));
+    const QString whitelistValue = readBackendConfigValue(QStringLiteral("everest_restart_allowed_states"));
     if (whitelistValue.isEmpty()) {
         return EverestStateAllowedResult{
             .success = false,
@@ -56,7 +70,7 @@ EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient *rpcApiClient, i
     }
 
     QStringList allowedStates = whitelistValue.split(QLatin1Char(','), kSkipEmptyParts);
-    for (QString &allowedState : allowedStates) {
+    for (QString& allowedState : allowedStates) {
         allowedState = allowedState.trimmed();
     }
 
@@ -75,7 +89,7 @@ EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient *rpcApiClient, i
     };
 }
 
-EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient *rpcApiClient, int evseIndex) {
+EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient* rpcApiClient, int evseIndex) {
     if (!rpcApiClient) {
         return EverestErrorPresentResult{
             .success = false,
@@ -97,8 +111,7 @@ EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient *rpcApiClient,
     timeoutTimer.setSingleShot(true);
 
     QObject::connect(&pollTimer, &QTimer::timeout, &waitLoop, [&]() {
-        const RpcApiEvseErrorPresentResult errorPresentResult =
-            rpcApiClient->getEvseErrorPresent(evseIndex);
+        const RpcApiEvseErrorPresentResult errorPresentResult = rpcApiClient->getEvseErrorPresent(evseIndex);
         if (!errorPresentResult.success) {
             rpcError = errorPresentResult.error;
             waitLoop.quit();
@@ -149,7 +162,7 @@ EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient *rpcApiClient,
     };
 }
 
-EverestServiceControlResult executeEverestRestart(RpcApiClient *rpcApiClient) {
+EverestServiceControlResult executeEverestRestart(RpcApiClient* rpcApiClient) {
     SystemdService systemdService;
     if (!systemdService.restartUnit(QStringLiteral("everest.service"))) {
         return EverestServiceControlResult{
@@ -222,9 +235,8 @@ EverestServiceControlResult waitForEverestServiceState(bool shouldBeActive) {
     if (waitTimedOut || !reachedRequestedState) {
         return EverestServiceControlResult{
             .success = false,
-            .error = shouldBeActive
-                         ? QStringLiteral("everest_restart_timeout")
-                         : QStringLiteral("everest_stop_timeout"),
+            .error =
+                shouldBeActive ? QStringLiteral("everest_restart_timeout") : QStringLiteral("everest_stop_timeout"),
         };
     }
 
@@ -234,7 +246,7 @@ EverestServiceControlResult waitForEverestServiceState(bool shouldBeActive) {
     };
 }
 
-EverestServiceControlResult waitForRpcApiReady(RpcApiClient *rpcApiClient) {
+EverestServiceControlResult waitForRpcApiReady(RpcApiClient* rpcApiClient) {
     if (!rpcApiClient) {
         return EverestServiceControlResult{
             .success = false,
@@ -250,7 +262,7 @@ EverestServiceControlResult waitForRpcApiReady(RpcApiClient *rpcApiClient) {
 
     pollTimer.setInterval(kEverestRestartPollIntervalMs);
     pollTimer.setSingleShot(false);
-    timeoutTimer.setInterval(kEverestRestartWaitTimeoutMs);
+    timeoutTimer.setInterval(rpcApiReadyTimeoutMs());
     timeoutTimer.setSingleShot(true);
 
     QObject::connect(&pollTimer, &QTimer::timeout, &waitLoop, [&]() {

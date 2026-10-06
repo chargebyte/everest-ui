@@ -44,6 +44,23 @@ target_link_libraries(network_interface_utils_test
 
 add_test(NAME network_interface_utils_test COMMAND network_interface_utils_test)
 
+add_executable(backend_config_test
+    BackendConfigTest.cpp
+    ../backend/api/libs/BackendConfig.cpp
+)
+
+target_include_directories(backend_config_test PRIVATE
+    "${CMAKE_BINARY_DIR}"
+    "${CMAKE_SOURCE_DIR}/backend/api/libs"
+)
+
+target_link_libraries(backend_config_test
+    ${QT_PACKAGE_NAME}::Core
+    ${QT_PACKAGE_NAME}::Test
+)
+
+add_test(NAME backend_config_test COMMAND backend_config_test)
+
 add_executable(request_handler_test
     RequestHandlerTest.cpp
     ../backend/api/RequestHandler.cpp
