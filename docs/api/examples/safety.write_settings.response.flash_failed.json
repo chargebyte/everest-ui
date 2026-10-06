@@ -1,0 +1,12 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "safety.write_settings.error",
+  "parameters": {
+    "error": "safety_controller_flash_failed",
+    "flash_outcome": "nonzero_exit",
+    "exit_code": 1
+  },
+  "responseId": "r-2"
+}

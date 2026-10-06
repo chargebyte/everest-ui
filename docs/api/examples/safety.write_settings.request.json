@@ -3,10 +3,11 @@
   "group": "safety",
   "action": "write_settings",
   "parameters": {
+    "device_name": "ttySC0",
     "pt1000_0": {
       "overtemperature-protection": true,
-      "abort-temperature": 80
+      "abort-temperature": "80",
+      "resistance-offset": "0"
     }
   }
 }
-
