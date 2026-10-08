@@ -5,6 +5,7 @@
 #include "RequestParsing.hpp"
 
 #include <QString>
+#include <QRegularExpression>
 
 namespace {
 int effectivePort(const QUrl &url) {
@@ -189,17 +190,33 @@ bool isRequestValid(const QByteArray &peek,
     }
 
     for (int i = 1; i < request.lines.size(); ++i) {
-        const QByteArray line = request.lines.at(i).trimmed();
+        const QByteArray rawLine = request.lines.at(i);
+        if (rawLine.startsWith(' ') || rawLine.startsWith('\t')) {
+            fillBadRequest(errorResponse, "Folded header is not supported");
+            return false;
+        }
+        const QByteArray line = rawLine.trimmed();
         if (line.isEmpty()) {
             continue;
         }
 
         const int sep = line.indexOf(':');
-        if (sep <= 0) {
-            continue;
+        static const QRegularExpression headerName("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$");
+        if (sep <= 0 || !headerName.match(QString::fromLatin1(line.left(sep))).hasMatch()) {
+            fillBadRequest(errorResponse, "Invalid header name");
+            return false;
         }
 
-        const QByteArray key = line.left(sep).trimmed().toLower();
+        const QByteArray key = line.left(sep).toLower();
+        if ((key == "host" || key == "origin" || key == "content-type" || key == "content-length") &&
+            request.headers.contains(key)) {
+            fillBadRequest(errorResponse, "Duplicate header");
+            return false;
+        }
+        if (key == "transfer-encoding") {
+            fillBadRequest(errorResponse, "Transfer-Encoding is not supported");
+            return false;
+        }
         const QByteArray value = line.mid(sep + 1).trimmed();
         request.headers.insert(key, value);
         if (key == "cookie") {

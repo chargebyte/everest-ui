@@ -1,5 +1,17 @@
 find_package(${QT_PACKAGE_NAME} REQUIRED COMPONENTS Test)
 
+add_executable(request_parsing_test
+    RequestParsingTest.cpp
+    ../backend/webserver/http/RequestParsing.cpp
+    ../backend/webserver/http/StaticResponse.cpp
+)
+target_include_directories(request_parsing_test PRIVATE ../backend/webserver/http)
+target_link_libraries(request_parsing_test PRIVATE
+    ${QT_PACKAGE_NAME}::Core
+    ${QT_PACKAGE_NAME}::Test
+)
+add_test(NAME request_parsing_test COMMAND request_parsing_test)
+
 add_executable(pcap_test
     PCAPTest.cpp
     ../backend/api/modules/PCAP.cpp
