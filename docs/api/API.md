@@ -21,6 +21,12 @@ POST /auth/logout
 
 Login sets the HttpOnly, SameSite=Strict cookie `everest_ui_session`; non-browser clients must retain and send it during the WebSocket handshake. `/auth/status` returns `setupRequired`, `authenticated`, `uiBusy`, and `appTitle`. Authentication and upgrade behavior are implemented in `backend/webserver/http/StaticServer.cpp`.
 
+`POST /auth/setup` accepts a JSON body containing `username` and `password`. It returns `409` with `setup_not_required` if credentials already exist. Successful setup returns `{"success":true}`; it does not set a session cookie.
+
+The setup endpoint requires `Content-Type: application/json`. `Origin` may be omitted; when present, it must be a same-origin HTTP origin, and the literal `Origin: null` is rejected. A disallowed Origin returns `403` with `origin_forbidden`, and an unsupported content type returns `415` with `unsupported_media_type`. Forwarded headers and TLS-terminating reverse proxies are not supported by this Origin policy.
+
+The setup endpoint also validates `Host`: it must be an IP literal, `localhost`, the device hostname, its `.local` name, the hostname configured by `allow_origin`, or an entry in `allowed_hosts`. Any syntactically valid IP literal is accepted; the server does not check whether it belongs to a local interface. Hostnames are compared against this allowlist, and are not resolved through DNS by this check. An invalid Host returns `400`; a valid but unlisted hostname returns `421` with `host_not_allowed`. The Host allowlist applies only to `/auth/setup`; other HTTP routes and WebSocket upgrades are not restricted by it. Add other DNS aliases used for setup to `allowed_hosts` in `frontend.conf`.
+
 Request and response templates: [`auth.status`](examples/auth.status.request.json) ([response](examples/auth.status.response.json)), [`auth.setup`](examples/auth.setup.request.json) ([success](examples/auth.setup.response.json), [error](examples/auth.setup.response.error.json)), [`auth.login`](examples/auth.login.request.json) ([success](examples/auth.login.response.json), [error](examples/auth.login.response.error.json)), and [`auth.logout`](examples/auth.logout.request.json) ([response](examples/auth.logout.response.json)). These files wrap the HTTP method, path, headers, and body for requests; the `http_status`, headers, and `body` fields document the HTTP response. Only `body` is the JSON response body on the wire. `null` means the endpoint has no request body.
 
 ## Request

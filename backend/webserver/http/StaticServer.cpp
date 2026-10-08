@@ -6,6 +6,7 @@
 #include "AppTitleResolver.hpp"
 #include "AuthManager.hpp"
 #include "RequestParsing.hpp"
+#include "RequestSecurity.hpp"
 #include "StaticContent.hpp"
 #include "UiOccupancyTracker.hpp"
 
@@ -75,6 +76,7 @@ StaticServer::StaticServer(const ServerConfig &cfg,
                            UiOccupancyTracker *uiOccupancyTracker,
                            QObject *parent)
     : QTcpServer(parent),
+      m_allowedHosts(RequestSecurity::allowedHosts(cfg.allowedHosts, cfg.allowOriginUrl.host())),
       m_authManager(authManager),
       m_appTitleResolver(appTitleResolver),
       m_uiOccupancyTracker(uiOccupancyTracker),
@@ -134,6 +136,23 @@ void StaticServer::handleRequest(QTcpSocket *socket, QTimer *headerTimer) {
     if (!isRequestValid(peek, request, &response)) {
         sendResponseAndClose(socket, response);
         return;
+    }
+
+    if (request.normalizedPath == "/auth/setup") {
+        const int hostStatus = RequestSecurity::validateHost(request, m_allowedHosts);
+        if (hostStatus != 200) {
+            if (hostStatus == 421) {
+                sendResponseAndClose(
+                    socket,
+                    makeJsonResponse(421, QStringLiteral("Misdirected Request"),
+                                     QJsonObject{{QStringLiteral("error"),
+                                                  QStringLiteral("host_not_allowed")}}));
+            } else {
+                sendResponseAndClose(socket, makeTextResponse(
+                    hostStatus, QStringLiteral("Bad Request"), QByteArrayLiteral("Invalid Host")));
+            }
+            return;
+        }
     }
 
     if (isAuthEndpoint(request.normalizedPath)) {
@@ -247,6 +266,26 @@ StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request,
     if (request.method != "POST") {
         return makeTextResponse(405, QStringLiteral("Method Not Allowed"),
                                 QByteArrayLiteral("Method Not Allowed"));
+    }
+
+    if (request.normalizedPath == "/auth/setup") {
+        const int validation = RequestSecurity::validateAuthMutation(request);
+        if (validation != 200) {
+            if (validation == 500) {
+                return makeJsonResponse(
+                    500, QStringLiteral("Internal Server Error"),
+                    QJsonObject{{QStringLiteral("error"), QStringLiteral("internal_error")}});
+            }
+            if (validation == 415) {
+                return makeJsonResponse(
+                    415, QStringLiteral("Unsupported Media Type"),
+                    QJsonObject{{QStringLiteral("error"),
+                                 QStringLiteral("unsupported_media_type")}});
+            }
+            return makeJsonResponse(
+                validation, QStringLiteral("Forbidden"),
+                QJsonObject{{QStringLiteral("error"), QStringLiteral("origin_forbidden")}});
+        }
     }
 
     if (request.normalizedPath == "/auth/logout") {

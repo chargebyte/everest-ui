@@ -6,6 +6,7 @@
 #define STATIC_SERVER_HPP
 
 #include "ServerConfig.hpp"
+#include <QSet>
 #include "StaticResponse.hpp"
 
 #include <QTcpServer>
@@ -42,6 +43,7 @@ private:
     StaticResponse handleAuthRequest(const ParsedRequest &request, const QString &peerAddress);
     static void sendResponseAndClose(QTcpSocket *socket, const StaticResponse &response);
 
+    QSet<QString> m_allowedHosts;
     AuthManager *m_authManager = nullptr;
     AppTitleResolver *m_appTitleResolver = nullptr;
     UiOccupancyTracker *m_uiOccupancyTracker = nullptr;

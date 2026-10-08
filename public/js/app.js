@@ -188,6 +188,7 @@ function formatAuthError(error) {
     invalid_json: 'The login request could not be processed.',
     setup_not_required: 'A WebUI user already exists.',
     setup_required: 'Create the WebUI user before logging in.',
+    host_not_allowed: 'Open this page via the device IP address or add the hostname to allowed_hosts.',
     'Invalid username': 'Use only letters, numbers, dots, dashes, or underscores for the username.',
     'Invalid password': 'Use a password with at least 8 characters.'
   };

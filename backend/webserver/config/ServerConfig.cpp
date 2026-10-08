@@ -3,6 +3,7 @@
 // Copyright 2026 chargebyte GmbH
 
 #include "ServerConfig.hpp"
+#include "RequestSecurity.hpp"
 
 #include <QDir>
 #include <QFile>
@@ -57,6 +58,7 @@ bool validateAndReadConfigLines(const QString &path,
         QStringLiteral("allow_origin"),
         QStringLiteral("auth_file"),
         QStringLiteral("app_title"),
+        QStringLiteral("allowed_hosts"),
     };
 
     rawParams.clear();
@@ -192,6 +194,17 @@ bool applyDirectParameters(const RawConfigMap &rawParams,
         cfg.authFile = QDir(baseDir).absoluteFilePath(cfg.authFile);
     }
 
+    const auto hostList = rawParams.value("allowed_hosts").trimmed();
+    if (!hostList.isEmpty()) {
+        for (const auto &entry : hostList.split(',')) {
+            const auto name = entry.trimmed();
+            if (!RequestSecurity::validHostName(name)) {
+                errorMessage = "Invalid allowed_hosts entry";
+                return false;
+            }
+            cfg.allowedHosts.append(name);
+        }
+    }
     cfg.appTitle = rawParams.value(QStringLiteral("app_title")).trimmed();
 
     return true;

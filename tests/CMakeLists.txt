@@ -12,6 +12,18 @@ target_link_libraries(request_parsing_test PRIVATE
 )
 add_test(NAME request_parsing_test COMMAND request_parsing_test)
 
+add_executable(request_security_test
+    RequestSecurityTest.cpp
+    ../backend/webserver/http/RequestSecurity.cpp
+)
+target_include_directories(request_security_test PRIVATE ../backend/webserver/http)
+target_link_libraries(request_security_test PRIVATE
+    ${QT_PACKAGE_NAME}::Core
+    ${QT_PACKAGE_NAME}::Network
+    ${QT_PACKAGE_NAME}::Test
+)
+add_test(NAME request_security_test COMMAND request_security_test)
+
 add_executable(pcap_test
     PCAPTest.cpp
     ../backend/api/modules/PCAP.cpp

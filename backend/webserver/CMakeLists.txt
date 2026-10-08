@@ -1,17 +1,19 @@
 add_executable(webserver
-    main.cpp
     auth/AuthManager.cpp
     auth/AuthManager.hpp
     config/ServerConfig.cpp
     config/ServerConfig.hpp
     http/RequestParsing.cpp
     http/RequestParsing.hpp
+    http/RequestSecurity.cpp
+    http/RequestSecurity.hpp
     http/StaticContent.cpp
     http/StaticContent.hpp
     http/StaticResponse.cpp
     http/StaticResponse.hpp
     http/StaticServer.cpp
     http/StaticServer.hpp
+    main.cpp
     ui/AppTitleResolver.cpp
     ui/AppTitleResolver.hpp
     ui/UiOccupancyTracker.cpp
