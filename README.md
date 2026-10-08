@@ -112,6 +112,23 @@ listed; for example, `available_features=network`. Other feature names are reser
 
 ## Recover forgotten WebUI credentials
 
+After a hard/cold boot, the login page shows **Forgotten password?** and, while
+reset is available, a **Reset password** button for the configured window
+(60 seconds by default) from the first webserver start. Confirming the reset
+removes the existing username and password and ends all authenticated sessions,
+including open WebSocket connections. The existing first-time setup screen
+then lets you choose a new username and password **without a time limit**, even
+after a reload or restart. Successful setup logs you in automatically.
+
+One reset is allowed per boot. Restarting the WebUI service does not reopen or
+extend the window. A regular software reboot does not enable reset; the login
+page instead asks you to switch the device off and on. An expired or already used
+window shows the same instruction. Unknown boot information leaves reset disabled.
+The countdown runs locally in the browser without polling; the server checks the
+deadline when the reset request arrives. A temporary lock conflict can be retried
+manually while the original window remains open. See [`docs/api/API.md`](docs/api/API.md)
+for the HTTP endpoints and their request and response formats.
+
 ### Configuration and kernel requirements
 
 The authentication server reads these optional settings from `frontend.conf`:
@@ -141,6 +158,22 @@ but leaves ordinary login available. Manual starts do not create a fallback
 directory. Tests can supply an existing temporary directory through the variable.
 Do not remove the state or lock file during a boot. `/run` is cleared on device
 reboot; the stored Linux boot ID is also checked.
+
+### Validation
+
+Build with `-DEVEREST_UI_BUILD_TESTS=ON`, then run `ctest --test-dir <build> --output-on-failure`.
+The reset tests use temporary NVMEM/state/auth files and loopback HTTP/WebSocket
+connections. Frontend tests run with:
+
+```bash
+node --experimental-default-type=module --test tests/password-reset-ui-test.mjs
+```
+
+Before firmware delivery, record `systemctl --version` on the target and confirm
+that `RUNTIME_DIRECTORY` reaches the webserver. Verify the revised kernel's
+marker retention and four-byte write permissions, power-cycle versus regular
+reboot, service restart and separate stop/start, and a representative watchdog
+reset. These hardware checks are additional to the host-side automated tests.
 
 ## Network Configuration
 
