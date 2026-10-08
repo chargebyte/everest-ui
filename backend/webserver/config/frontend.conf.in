@@ -10,3 +10,6 @@ max_request_bytes=8192
 log_level=info
 # Set to browser Origin value (for example: http://127.0.0.1:8080) to enforce origin checks.
 allow_origin=
+
+# Additional trusted hostnames/IP literals, comma-separated, without schemes or ports.
+allowed_hosts=

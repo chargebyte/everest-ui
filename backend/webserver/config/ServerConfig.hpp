@@ -9,6 +9,7 @@
 
 #include <QHostAddress>
 #include <QString>
+#include <QStringList>
 #include <QUrl>
 
 struct ServerConfig {
@@ -23,6 +24,7 @@ struct ServerConfig {
     QString allowOrigin;
     QString authFile;
     QString appTitle;
+    QStringList allowedHosts;
 
     // Derived/finalized parameters for consumer components.
     QHostAddress bindAddress = QHostAddress::Any;
