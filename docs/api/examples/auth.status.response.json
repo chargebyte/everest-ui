@@ -5,6 +5,12 @@
     "setupRequired": false,
     "authenticated": false,
     "uiBusy": false,
+    "passwordReset": {
+      "available": true,
+      "remainingSeconds": 42,
+      "windowSeconds": 60,
+      "reason": ""
+    },
     "appTitle": "EVerest WebUI"
   }
 }

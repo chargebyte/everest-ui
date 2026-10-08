@@ -222,3 +222,19 @@ void WebSocketProxySession::sendHeartbeatPing() {
     m_client->ping();
     m_heartbeatTimeoutTimer->start();
 }
+
+void WebSocketProxySession::invalidateCredentials() {
+    // Cut forwarding immediately, including queued messages and connecting backends.
+    m_client->disconnect(this);
+    connect(m_client, &QWebSocket::disconnected, m_client, &QObject::deleteLater);
+    m_backend->disconnect(this);
+    m_heartbeatTimer->stop();
+    m_heartbeatTimeoutTimer->stop();
+    m_pendingText.clear();
+    m_pendingBinary.clear();
+    m_backendConnected = false;
+    releaseOccupancy();
+    m_backend->abort();
+    m_client->close(QWebSocketProtocol::CloseCodePolicyViolated, QStringLiteral("credentials reset"));
+    deleteLater();
+}

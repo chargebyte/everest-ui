@@ -6,6 +6,7 @@
 #define STATIC_SERVER_HPP
 
 #include "ServerConfig.hpp"
+#include "PasswordReset.hpp"
 #include <QSet>
 #include "StaticResponse.hpp"
 
@@ -30,6 +31,7 @@ public:
 
 signals:
     void webSocketUpgradeRequested(QTcpSocket *socket);
+    void credentialsReset();
 
 protected:
     void incomingConnection(qintptr handle) override;
@@ -43,6 +45,7 @@ private:
     StaticResponse handleAuthRequest(const ParsedRequest &request, const QString &peerAddress);
     static void sendResponseAndClose(QTcpSocket *socket, const StaticResponse &response);
 
+    PasswordReset m_passwordReset;
     QSet<QString> m_allowedHosts;
     AuthManager *m_authManager = nullptr;
     AppTitleResolver *m_appTitleResolver = nullptr;
