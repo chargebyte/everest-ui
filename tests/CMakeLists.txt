@@ -136,3 +136,27 @@ target_link_libraries(everest_config_test
 )
 
 add_test(NAME everest_config_test COMMAND everest_config_test)
+
+add_executable(password_reset_test
+    PasswordResetTest.cpp
+    ../backend/webserver/ws/WebSocketProxySession.cpp
+    ../backend/webserver/auth/AuthManager.cpp
+    ../backend/webserver/auth/PasswordReset.cpp
+    ../backend/webserver/config/ServerConfig.cpp
+    ../backend/webserver/http/RequestParsing.cpp
+    ../backend/webserver/http/RequestSecurity.cpp
+    ../backend/webserver/http/StaticServer.cpp
+    ../backend/webserver/http/StaticContent.cpp
+    ../backend/webserver/http/StaticResponse.cpp
+    ../backend/webserver/ui/AppTitleResolver.cpp
+    ../backend/webserver/ui/UiOccupancyTracker.cpp
+)
+target_include_directories(password_reset_test PRIVATE
+    ../backend/webserver/auth ../backend/webserver/config
+    ../backend/webserver/http ../backend/webserver/ui ../backend/webserver/ws
+)
+target_link_libraries(password_reset_test PRIVATE
+    ${QT_PACKAGE_NAME}::Core ${QT_PACKAGE_NAME}::Network
+    ${QT_PACKAGE_NAME}::WebSockets ${QT_PACKAGE_NAME}::Test
+)
+add_test(NAME password_reset_test COMMAND password_reset_test)

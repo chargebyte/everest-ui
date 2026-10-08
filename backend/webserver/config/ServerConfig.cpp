@@ -58,6 +58,8 @@ bool validateAndReadConfigLines(const QString &path,
         QStringLiteral("allow_origin"),
         QStringLiteral("auth_file"),
         QStringLiteral("app_title"),
+        QStringLiteral("password_reset_window_seconds"),
+        QStringLiteral("password_reset_boot_status_path"),
         QStringLiteral("allowed_hosts"),
     };
 
@@ -194,6 +196,20 @@ bool applyDirectParameters(const RawConfigMap &rawParams,
         cfg.authFile = QDir(baseDir).absoluteFilePath(cfg.authFile);
     }
 
+    if (rawParams.contains("password_reset_window_seconds")) {
+        cfg.passwordResetWindowSeconds = rawParams.value("password_reset_window_seconds").toInt(&ok);
+        if (!ok || cfg.passwordResetWindowSeconds < 0) {
+            errorMessage = "Invalid password_reset_window_seconds";
+            return false;
+        }
+    }
+    if (rawParams.contains("password_reset_boot_status_path")) {
+        cfg.passwordResetBootStatusPath = rawParams.value("password_reset_boot_status_path");
+        if (!QDir::isAbsolutePath(cfg.passwordResetBootStatusPath)) {
+            errorMessage = "password_reset_boot_status_path must be absolute";
+            return false;
+        }
+    }
     const auto hostList = rawParams.value("allowed_hosts").trimmed();
     if (!hostList.isEmpty()) {
         for (const auto &entry : hostList.split(',')) {

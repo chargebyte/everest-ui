@@ -110,6 +110,38 @@ The optional `available_features` entry in `backend.conf` is a comma-separated l
 If it is omitted, all features are enabled. The Network Configuration page is enabled when `network` is
 listed; for example, `available_features=network`. Other feature names are reserved for future use.
 
+## Recover forgotten WebUI credentials
+
+### Configuration and kernel requirements
+
+The authentication server reads these optional settings from `frontend.conf`:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `password_reset_window_seconds` | `60` | Window from first webserver start; `0` disables reset. |
+| `password_reset_boot_status_path` | `/sys/bus/nvmem/devices/44440000.bbnsm:nvmem0/nvmem` | Writable BBNSM NVMEM device. |
+| `allowed_hosts` | empty | Additional trusted hostnames or IP literals, comma-separated; no schemes, ports, or wildcards. |
+
+**The revised kernel must retain the boot marker until the WebUI reads it.**
+The original development patch which cleared the marker during driver probe is
+not compatible. The server reads a little-endian 32-bit value at byte offset 28:
+zero permits reset; `0x5741524d` (WARM) denies it. Unmarked unclean resets, such as
+some watchdog resets, also fall into the zero-marker category. After recording
+the original classification, the server clears only those four bytes, without
+truncating NVMEM. Failed clearing is retried on the next webserver start while
+reset remains disabled for that boot.
+
+The systemd unit creates `/run/everest-ui` with mode `0700` and uses
+`RuntimeDirectoryPreserve=yes` to preserve it across restart and separate
+stop/start operations. The launcher passes `RUNTIME_DIRECTORY` to the webserver;
+its actual value determines the directory for `password-reset-state.json` and
+`password-reset.lock`, both mode `0600`. A non-blocking `flock` serializes
+initialization and reset. Missing or unusable runtime environment disables reset
+but leaves ordinary login available. Manual starts do not create a fallback
+directory. Tests can supply an existing temporary directory through the variable.
+Do not remove the state or lock file during a boot. `/run` is cleared on device
+reboot; the stored Linux boot ID is also checked.
+
 ## Network Configuration
 
 The Network Configuration page reads the selected systemd-networkd file reported by `networkctl status` and

@@ -22,6 +22,8 @@ struct ServerConfig {
     QString allowOrigin;
     QString authFile;
     QString appTitle;
+    int passwordResetWindowSeconds = 60;
+    QString passwordResetBootStatusPath = QStringLiteral("/sys/bus/nvmem/devices/44440000.bbnsm:nvmem0/nvmem");
     QStringList allowedHosts;
 
     // Derived/finalized parameters for consumer components.
