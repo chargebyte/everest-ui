@@ -2,11 +2,17 @@
 // Copyright 2026 chargebyte GmbH
 #include "PasswordReset.hpp"
 #include "AuthManager.hpp"
+#include "StaticServer.hpp"
 #include "ServerConfig.hpp"
+#include "UiOccupancyTracker.hpp"
+#include "WebSocketProxySession.hpp"
+#include <QWebSocket>
+#include <QWebSocketServer>
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QFile>
 #include <QJsonDocument>
+#include <QTcpSocket>
 #include <sys/file.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -40,6 +46,25 @@ class PasswordResetTest : public QObject {
         int fd = ::open(QFile::encodeName(dir.path() + "/password-reset.lock").constData(), O_CREAT | O_RDWR, 0600);
         if (fd < 0 || ::flock(fd, LOCK_EX | LOCK_NB) != 0) return -1;
         return fd;
+    }
+    QByteArray request(StaticServer &server, QByteArray path, QByteArray body = {}, QByteArray extra = {},
+                       QByteArray host = "127.0.0.1") {
+        QTcpSocket socket;
+        socket.connectToHost(QHostAddress::LocalHost, server.serverPort());
+        if (!socket.waitForConnected(1000)) return {};
+        QByteArray raw = (body.isEmpty() ? "GET " : "POST ") + path +
+                         " HTTP/1.1\r\nHost: " + host + "\r\n" + extra;
+        if (!body.isEmpty()) raw += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
+        socket.write(raw + "\r\n" + body);
+        QElapsedTimer elapsed; elapsed.start();
+        QByteArray response;
+        while (elapsed.elapsed() < 2000) {
+            QCoreApplication::processEvents();
+            response += socket.readAll();
+            if (socket.state() == QAbstractSocket::UnconnectedState) break;
+            QTest::qWait(1);
+        }
+        return response;
     }
 private slots:
     void init() {
@@ -228,6 +253,109 @@ private slots:
                                  QByteArray("password_reset_boot_status_path=relative\n")}) {
             write(config, base + extra); QVERIFY(!loadAndValidateServerConfig(config, cfg, error));
         }
+    }
+    void websocketRevocationStopsForwarding() {
+        QWebSocketServer frontend("test", QWebSocketServer::NonSecureMode);
+        QWebSocketServer backend("backend", QWebSocketServer::NonSecureMode);
+        QVERIFY(frontend.listen(QHostAddress::LocalHost, 0));
+        QVERIFY(backend.listen(QHostAddress::LocalHost, 0));
+        UiOccupancyTracker occupancy;
+        WebSocketProxySession *proxy = nullptr;
+        QWebSocket *backendPeer = nullptr;
+        connect(&frontend, &QWebSocketServer::newConnection, this, [&] {
+            auto *peer = frontend.nextPendingConnection();
+            proxy = new WebSocketProxySession(peer,
+                QUrl(QString("ws://127.0.0.1:%1").arg(backend.serverPort())), &occupancy, peer);
+        });
+        connect(&backend, &QWebSocketServer::newConnection, this, [&] { backendPeer = backend.nextPendingConnection(); });
+        QWebSocket client;
+        QSignalSpy closed(&client, &QWebSocket::disconnected);
+        client.open(QUrl(QString("ws://127.0.0.1:%1").arg(frontend.serverPort())));
+        QTRY_VERIFY(proxy != nullptr && backendPeer != nullptr);
+        QVERIFY(occupancy.isBusy());
+        QSignalSpy forwarded(backendPeer, &QWebSocket::textMessageReceived);
+        client.sendTextMessage("before"); QTRY_COMPARE(forwarded.count(), 1);
+        proxy->invalidateCredentials();
+        QVERIFY(!occupancy.isBusy());
+        client.sendTextMessage("after");
+        QTRY_COMPARE(closed.count(), 1);
+        QCOMPARE(client.closeReason(), QString("credentials reset"));
+        QCOMPARE(forwarded.count(), 1);
+    }
+    void httpResetFlow() {
+        AuthManager auth(authPath()); user(auth); const auto session = auth.createSession("alice");
+        ServerConfig cfg; cfg.passwordResetBootStatusPath = marker(); cfg.maxRequestBytes = 8192;
+        cfg.normalizedWsPath = "/ws"; cfg.canonicalRoot = dir.path();
+        write(dir.path() + "/index.html", "test page");
+        UiOccupancyTracker occupancy; StaticServer server(cfg, &auth, nullptr, &occupancy);
+        QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+        QWebSocketServer upgrades("upgrades", QWebSocketServer::NonSecureMode);
+        QWebSocketServer backend("backend", QWebSocketServer::NonSecureMode);
+        QVERIFY(backend.listen(QHostAddress::LocalHost, 0));
+        connect(&server, &StaticServer::webSocketUpgradeRequested, &upgrades, [&](QTcpSocket *socket) {
+            socket->disconnect(&server); socket->setParent(&upgrades); upgrades.handleConnection(socket);
+        });
+        bool upgraded = false;
+        connect(&upgrades, &QWebSocketServer::newConnection, &server, [&] {
+            auto *peer = upgrades.nextPendingConnection();
+            // The production upgrade callback must be able to revalidate this cookie.
+            QCOMPARE(peer->request().rawHeader("Cookie"), QByteArray("everest_ui_session=") + session.toUtf8());
+            auto *proxy = new WebSocketProxySession(peer,
+                QUrl(QString("ws://127.0.0.1:%1").arg(backend.serverPort())), &occupancy, peer);
+            connect(&server, &StaticServer::credentialsReset, proxy, &WebSocketProxySession::invalidateCredentials);
+            upgraded = true;
+        });
+        QWebSocket browser;
+        QNetworkRequest upgrade(QUrl(QString("ws://127.0.0.1:%1/ws").arg(server.serverPort())));
+        upgrade.setRawHeader("Cookie", QByteArray("everest_ui_session=") + session.toUtf8());
+        QSignalSpy browserClosed(&browser, &QWebSocket::disconnected);
+        browser.open(upgrade); QTRY_VERIFY(upgraded); QVERIFY(occupancy.isBusy());
+        QSignalSpy resetSignal(&server, &StaticServer::credentialsReset);
+        const QByteArray body = "{\"confirm\":true}";
+        auto response = request(server, "/", {}, {}, "legacy.fritz.box");
+        QVERIFY(response.startsWith("HTTP/1.1 200"));
+        response = request(server, "/auth/status", {}, {}, "legacy.fritz.box");
+        QVERIFY(response.startsWith("HTTP/1.1 200"));
+        response = request(server, "/auth/reset", body,
+                           "Content-Type: application/json\r\nOrigin: http://evil.example\r\n",
+                           "evil.example");
+        QVERIFY(response.startsWith("HTTP/1.1 421"));
+        QVERIFY(response.contains("\"error\":\"host_not_allowed\""));
+        QVERIFY(auth.hasUser());
+        response = request(server, "/auth/status");
+        QVERIFY(response.contains("\"available\":true"));
+        QVERIFY(response.contains("\"windowSeconds\":60"));
+        response = request(server, "/auth/reset", body, "Content-Type: text/plain\r\n");
+        QVERIFY(response.startsWith("HTTP/1.1 415"));
+        QVERIFY(auth.hasUser());
+        response = request(server, "/auth/reset", body,
+                           "Content-Type: application/json\r\nOrigin: http://evil.example\r\n");
+        QVERIFY(response.startsWith("HTTP/1.1 403"));
+        QVERIFY(auth.hasUser());
+        int fd = lock(); QVERIFY(fd >= 0);
+        response = request(server, "/auth/reset", body, "Content-Type: application/json\r\n");
+        QVERIFY(response.startsWith("HTTP/1.1 503")); ::close(fd);
+        response = request(server, "/auth/reset", body, "Content-Type: application/json\r\n");
+        QVERIFY2(response.startsWith("HTTP/1.1 200"), response.constData());
+        QCOMPARE(resetSignal.count(), 1); QVERIFY(auth.setupRequired()); QVERIFY(!auth.validateSession(session));
+        QTRY_COMPARE(browserClosed.count(), 1);
+        QCOMPARE(browser.closeReason(), QString("credentials reset"));
+        QVERIFY(!occupancy.isBusy());
+        QVERIFY(response.contains("Max-Age=0"));
+        const QByteArray setupBody = "{\"username\":\"bob\",\"password\":\"password2\"}";
+        response = request(server, "/auth/setup", setupBody, "Content-Type: text/plain\r\n");
+        QVERIFY(response.startsWith("HTTP/1.1 415")); QVERIFY(auth.setupRequired());
+        response = request(server, "/auth/setup", setupBody,
+                           "Content-Type: application/json\r\nOrigin: http://evil.example\r\n");
+        QVERIFY(response.startsWith("HTTP/1.1 403")); QVERIFY(auth.setupRequired());
+        response = request(server, "/auth/setup", setupBody, "Content-Type: application/json\r\n",
+                           "evil.example");
+        QVERIFY(response.startsWith("HTTP/1.1 421")); QVERIFY(auth.setupRequired());
+        QVERIFY(response.contains("\"error\":\"host_not_allowed\""));
+        response = request(server, "/auth/setup", setupBody, "Content-Type: application/json\r\n");
+        QVERIFY(response.startsWith("HTTP/1.1 200")); QVERIFY(auth.authenticate("bob", "password2"));
+        response = request(server, "/auth/reset", body, "Content-Type: application/json\r\n");
+        QVERIFY(response.startsWith("HTTP/1.1 403"));
     }
 };
 QTEST_GUILESS_MAIN(PasswordResetTest)
