@@ -257,3 +257,27 @@ foreach(config_test_target IN ITEMS pcap_test network_interface_utils_test backe
         network_configuration_test ssh_configuration_test everest_config_test safety_controller_test rpc_api_client_test)
     target_link_libraries(${config_test_target} everest_ui_config)
 endforeach()
+
+add_executable(password_reset_test
+    PasswordResetTest.cpp
+    ../backend/webserver/ws/WebSocketProxySession.cpp
+    ../backend/webserver/auth/AuthManager.cpp
+    ../backend/webserver/auth/PasswordReset.cpp
+    ../backend/webserver/config/ServerConfig.cpp
+    ../backend/webserver/http/RequestParsing.cpp
+    ../backend/webserver/http/RequestSecurity.cpp
+    ../backend/webserver/http/StaticServer.cpp
+    ../backend/webserver/http/StaticContent.cpp
+    ../backend/webserver/http/StaticResponse.cpp
+    ../backend/webserver/ui/AppTitleResolver.cpp
+    ../backend/webserver/ui/UiOccupancyTracker.cpp
+)
+target_include_directories(password_reset_test PRIVATE
+    ../backend/webserver/auth ../backend/webserver/config
+    ../backend/webserver/http ../backend/webserver/ui ../backend/webserver/ws
+)
+target_link_libraries(password_reset_test PRIVATE
+    ${QT_PACKAGE_NAME}::Core ${QT_PACKAGE_NAME}::Network
+    ${QT_PACKAGE_NAME}::WebSockets ${QT_PACKAGE_NAME}::Test
+)
+add_test(NAME password_reset_test COMMAND password_reset_test)

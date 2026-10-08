@@ -1,6 +1,8 @@
 add_executable(everest-ui-webserver
     auth/AuthManager.cpp
     auth/AuthManager.hpp
+    auth/PasswordReset.cpp
+    auth/PasswordReset.hpp
     config/ServerConfig.cpp
     config/ServerConfig.hpp
     http/RequestParsing.cpp
