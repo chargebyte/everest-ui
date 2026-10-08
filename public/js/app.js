@@ -2,6 +2,7 @@
 
 // Copyright 2026 chargebyte GmbH
 
+import { eyeIcon } from './ui/eyeIcon.js';
 import { createTransport } from './transport.js';
 import { renderLayout } from './ui/layout.js';
 import { appendLog, state } from './state.js';
@@ -117,7 +118,11 @@ function renderAuthGate(appRoot, mode, appTitle = 'EVerest WebUI', message = '')
           </div>
           <div class="auth-field">
             <label for="auth-password">Password</label>
-            <input id="auth-password" name="password" type="password" autocomplete="${mode === 'setup' ? 'new-password' : 'current-password'}" required />
+            <div class="auth-password-field">
+              <input id="auth-password" name="password" type="password" autocomplete="${mode === 'setup' ? 'new-password' : 'current-password'}" required />
+              <button class="auth-password-reveal" id="auth-password-reveal" type="button"
+                aria-label="Show password while pressed" aria-controls="auth-password" title="Show password while pressed">${eyeIcon}</button>
+            </div>
           </div>
           <p class="auth-error" id="auth-error"></p>
           <button class="auth-button" type="submit">${button}</button>
@@ -127,9 +132,35 @@ function renderAuthGate(appRoot, mode, appTitle = 'EVerest WebUI', message = '')
   `;
 
   const errorNode = appRoot.querySelector('#auth-error');
+  const passwordInput = appRoot.querySelector('#auth-password');
+  const revealButton = appRoot.querySelector('#auth-password-reveal');
+  function setPasswordVisible(visible) {
+    passwordInput.type = visible ? 'text' : 'password';
+  }
+  revealButton.addEventListener('pointerdown', (event) => {
+    if (event.button === 0 && event.isPrimary) {
+      setPasswordVisible(true);
+    }
+  });
+  ['pointerup', 'pointerleave', 'pointercancel', 'blur'].forEach((eventName) => {
+    revealButton.addEventListener(eventName, () => setPasswordVisible(false));
+  });
+  revealButton.addEventListener('keydown', (event) => {
+    if (event.key === ' ' || event.key === 'Enter') {
+      event.preventDefault();
+      setPasswordVisible(true);
+    }
+  });
+  revealButton.addEventListener('keyup', (event) => {
+    if (event.key === ' ' || event.key === 'Enter') {
+      event.preventDefault();
+      setPasswordVisible(false);
+    }
+  });
   errorNode.textContent = message;
   appRoot.querySelector('#auth-form').addEventListener('submit', async (event) => {
     event.preventDefault();
+    setPasswordVisible(false);
     errorNode.textContent = '';
     const form = event.currentTarget;
     const username = form.elements.username.value.trim();
