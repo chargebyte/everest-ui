@@ -26,6 +26,8 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace SafetyController {
@@ -67,6 +69,9 @@ constexpr char kConfSafetyControllerAvailableSettings[] = "safety_controller_ava
 constexpr char kCacheDirectory[] = "/run/ra-utils";
 constexpr char kKeyActiveModules[] = "active_modules";
 constexpr char kKeyConnections[] = "connections";
+constexpr char kKeyMapping[] = "mapping";
+constexpr char kKeyModule[] = "module";
+constexpr char kKeyEvse[] = "evse";
 constexpr char kKeyBsp[] = "bsp";
 constexpr char kKeyModuleId[] = "module_id";
 constexpr char kKeySerialPort[] = "serial_port";
@@ -85,6 +90,7 @@ constexpr char kKeyRpcAvailable[] = "rpc_available";
 constexpr char kKeyResolutionError[] = "resolution_error";
 constexpr char kErrorDeviceInvalid[] = "safety_controller_device_invalid";
 constexpr char kErrorDeviceNotConfigured[] = "safety_controller_device_not_configured";
+constexpr char kErrorEvseMappingUnavailable[] = "safety_controller_evse_mapping_unavailable";
 constexpr char kErrorYamlPublishAfterFlash[] = "safety_controller_yaml_publish_failed_after_flash";
 
 struct SafetyControllerDevice {
@@ -94,6 +100,9 @@ struct SafetyControllerDevice {
     QString bspInstance;
     QString driverModule;
     QString yamlPath;
+    QStringList evseManagerInstances;
+    QList<int> evseIndices;
+    bool evseMappingResolved = false;
 };
 
 struct SafetyControllerDeviceResolution {
@@ -241,13 +250,33 @@ SafetyControllerDeviceResolution resolveSafetyControllerDevices(const QJsonObjec
     SafetyControllerDeviceResolution resolution;
     const QJsonObject activeModules = effectiveConfig.value(QLatin1String(kKeyActiveModules)).toObject();
     bool foundEvseManager = false;
+    QStringList evseManagerInstances;
 
     for (const QString& instanceName : activeModules.keys()) {
-        const QJsonObject evseModule = activeModules.value(instanceName).toObject();
-        if (evseModule.value(QLatin1String(kEverestConfModule)).toString() != QLatin1String(kModuleEvseManager)) {
-            continue;
+        const QJsonObject module = activeModules.value(instanceName).toObject();
+        if (module.value(QLatin1String(kEverestConfModule)).toString() == QLatin1String(kModuleEvseManager)) {
+            evseManagerInstances.append(instanceName);
         }
+    }
+
+    const bool singleEvseManager = evseManagerInstances.size() == 1;
+
+    for (const QString& instanceName : evseManagerInstances) {
+        const QJsonObject evseModule = activeModules.value(instanceName).toObject();
         foundEvseManager = true;
+        const QJsonValue mappingConfiguration = evseModule.value(QLatin1String(kKeyMapping));
+        const QJsonValue configuredEvseIndex =
+            mappingConfiguration.toObject().value(QLatin1String(kKeyModule)).toObject().value(QLatin1String(kKeyEvse));
+        const bool validConfiguredIndex = configuredEvseIndex.isDouble() && configuredEvseIndex.toDouble() > 0 &&
+                                          configuredEvseIndex.toDouble() <= std::numeric_limits<int>::max() &&
+                                          std::floor(configuredEvseIndex.toDouble()) == configuredEvseIndex.toDouble();
+        const bool useSingleEvseFallback = mappingConfiguration.isUndefined() && singleEvseManager;
+        const bool evseMappingResolved = validConfiguredIndex || useSingleEvseFallback;
+        const int evseIndex = validConfiguredIndex ? configuredEvseIndex.toInt() : (useSingleEvseFallback ? 1 : 0);
+        if (!evseMappingResolved) {
+            resolution.errors.append(
+                QStringLiteral("EvseManager %1 has no usable mapping.module.evse index").arg(instanceName));
+        }
         const QJsonArray bspConnections =
             evseModule.value(QLatin1String(kKeyConnections)).toObject().value(QLatin1String(kKeyBsp)).toArray();
         for (const QJsonValue& connectionValue : bspConnections) {
@@ -304,15 +333,33 @@ SafetyControllerDeviceResolution resolveSafetyControllerDevices(const QJsonObjec
                 continue;
             }
 
-            const bool alreadyResolved =
-                std::any_of(resolution.devices.cbegin(), resolution.devices.cend(),
-                            [&deviceName](const SafetyControllerDevice& device) { return device.name == deviceName; });
-            if (alreadyResolved) {
+            auto existingDevice =
+                std::find_if(resolution.devices.begin(), resolution.devices.end(),
+                             [&deviceName](const SafetyControllerDevice& device) { return device.name == deviceName; });
+            if (existingDevice != resolution.devices.end()) {
+                if (!existingDevice->evseManagerInstances.contains(instanceName)) {
+                    existingDevice->evseManagerInstances.append(instanceName);
+                }
+                if (evseMappingResolved && !existingDevice->evseIndices.contains(evseIndex)) {
+                    existingDevice->evseIndices.append(evseIndex);
+                }
+                existingDevice->evseMappingResolved = existingDevice->evseMappingResolved && evseMappingResolved;
                 continue;
             }
-            resolution.devices.append(
-                {deviceName, resetGpioLineName, bootModeGpioLineName, bspInstance, driverModule,
-                 QDir(QLatin1String(kCacheDirectory)).filePath(deviceName + QStringLiteral(".yaml"))});
+            SafetyControllerDevice device{
+                deviceName,
+                resetGpioLineName,
+                bootModeGpioLineName,
+                bspInstance,
+                driverModule,
+                QDir(QLatin1String(kCacheDirectory)).filePath(deviceName + QStringLiteral(".yaml")),
+                {instanceName},
+                {},
+                evseMappingResolved};
+            if (evseMappingResolved) {
+                device.evseIndices.append(evseIndex);
+            }
+            resolution.devices.append(device);
         }
     }
 
@@ -343,10 +390,14 @@ QJsonObject safetyControllerDeviceToJson(const SafetyControllerDevice& device, c
     }
 
     controller.insert(QLatin1String(kKeyAvailable), true);
-    controller.insert(QLatin1String(kKeyWritable), rpcAvailable);
+    const bool writable = rpcAvailable && device.evseMappingResolved;
+    controller.insert(QLatin1String(kKeyWritable), writable);
     controller.insert(QLatin1String(kKeySettings),
                       readRequestedParametersFromYaml(requestedParameters, yamlResult.yamlRoot));
-    if (!rpcAvailable) {
+    if (!device.evseMappingResolved) {
+        controller.insert(QLatin1String(kKeyMessage),
+                          QStringLiteral("Settings are read-only because the owning EVSE mapping is unavailable."));
+    } else if (!rpcAvailable) {
         controller.insert(QLatin1String(kKeyMessage),
                           QStringLiteral("EVerest JSON-RPC is unavailable; settings are read-only."));
     }
@@ -673,10 +724,10 @@ QString raDataFlashCommand(const QString& deviceName, const QString& resetGpioLi
 
 ModuleResponse flashSafetyControllerBin(const QString& binPath, const QString& deviceName,
                                         const QString& resetGpioLineName, const QString& bootModeGpioLineName,
-                                        ModuleResponse response, bool& flashSucceeded) {
+                                        const QList<int>& evseIndices, ModuleResponse response, bool& flashSucceeded) {
     flashSucceeded = false;
     const EverestStateAllowedResult stateAllowedResult =
-        EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
+        EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, evseIndices);
     if (!stateAllowedResult.success) {
         QString error = stateAllowedResult.error;
         if (stateAllowedResult.error == QLatin1String(kErrorEverestStateNotAllowed)) {
@@ -731,7 +782,7 @@ ModuleResponse flashSafetyControllerBin(const QString& binPath, const QString& d
 
     if (result.exitCode == 0) {
         const EverestErrorPresentResult errorResult =
-            EverestServiceControl::monitorEverestErrorPresent(g_rpcApiClient, 1);
+            EverestServiceControl::monitorEverestErrorPresent(g_rpcApiClient, evseIndices);
         if (errorResult.success) {
             response.parameters = QJsonObject{
                 {QLatin1String(kError), QStringLiteral("settings put EVerest into an error, check logs and "
@@ -838,6 +889,10 @@ ModuleResponse handleWriteRequest(const ModuleRequest& request) {
         response.parameters = {{QLatin1String(kError), QLatin1String(kErrorDeviceNotConfigured)}};
         return response;
     }
+    if (!deviceIt->evseMappingResolved || deviceIt->evseIndices.isEmpty()) {
+        response.parameters = {{QLatin1String(kError), QLatin1String(kErrorEvseMappingUnavailable)}};
+        return response;
+    }
 
     const YamlLoadResult yamlLoadResult = loadYamlFile(deviceIt->yamlPath);
     if (!yamlLoadResult.success) {
@@ -879,8 +934,9 @@ ModuleResponse handleWriteRequest(const ModuleRequest& request) {
     }
 
     bool flashSucceeded = false;
-    response = flashSafetyControllerBin(binPathResult.path, deviceName, deviceIt->resetGpioLineName,
-                                        deviceIt->bootModeGpioLineName, response, flashSucceeded);
+    response =
+        flashSafetyControllerBin(binPathResult.path, deviceName, deviceIt->resetGpioLineName,
+                                 deviceIt->bootModeGpioLineName, deviceIt->evseIndices, response, flashSucceeded);
     if (flashSucceeded && !writeSafetyControllerYamlFile(deviceIt->yamlPath, updatedParameters)) {
         const QJsonObject flashResponseParameters = response.parameters;
         response.parameters = {

@@ -43,11 +43,23 @@ int rpcApiReadyTimeoutMs() {
 
 namespace EverestServiceControl {
 EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient* rpcApiClient, int evseIndex) {
+    return checkEverestStateAllowed(rpcApiClient, QList<int>{evseIndex});
+}
+
+EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient* rpcApiClient, const QList<int>& evseIndices) {
     if (!rpcApiClient) {
         return EverestStateAllowedResult{
             .success = false,
             .state = QString(),
             .error = QStringLiteral("rpc_api_client_unavailable"),
+        };
+    }
+
+    if (evseIndices.isEmpty()) {
+        return EverestStateAllowedResult{
+            .success = false,
+            .state = QString(),
+            .error = QStringLiteral("safety_controller_evse_mapping_unavailable"),
         };
     }
 
@@ -60,41 +72,75 @@ EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient* rpcApiClient, i
         };
     }
 
-    const RpcApiEvseStateResult evseStateResult = rpcApiClient->getEvseState(evseIndex);
-    if (!evseStateResult.success) {
-        return EverestStateAllowedResult{
-            .success = false,
-            .state = QString(),
-            .error = evseStateResult.error,
-        };
-    }
-
     QStringList allowedStates = whitelistValue.split(QLatin1Char(','), kSkipEmptyParts);
     for (QString& allowedState : allowedStates) {
         allowedState = allowedState.trimmed();
     }
 
-    if (!allowedStates.contains(evseStateResult.state)) {
+    return checkEverestStateAllowed(rpcApiClient, evseIndices, allowedStates);
+}
+
+EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient* rpcApiClient, const QList<int>& evseIndices,
+                                                   const QStringList& allowedStates) {
+    if (!rpcApiClient) {
         return EverestStateAllowedResult{
             .success = false,
-            .state = evseStateResult.state,
-            .error = QLatin1String(kErrorEverestStateNotAllowed),
+            .state = QString(),
+            .error = QStringLiteral("rpc_api_client_unavailable"),
         };
+    }
+
+    if (evseIndices.isEmpty()) {
+        return EverestStateAllowedResult{
+            .success = false,
+            .state = QString(),
+            .error = QStringLiteral("safety_controller_evse_mapping_unavailable"),
+        };
+    }
+
+    for (const int evseIndex : evseIndices) {
+        const RpcApiEvseStateResult evseStateResult = rpcApiClient->getEvseState(evseIndex);
+        if (!evseStateResult.success) {
+            return EverestStateAllowedResult{
+                .success = false,
+                .state = QString(),
+                .error = evseStateResult.error,
+            };
+        }
+        if (!allowedStates.contains(evseStateResult.state)) {
+            return EverestStateAllowedResult{
+                .success = false,
+                .state = evseStateResult.state,
+                .error = QLatin1String(kErrorEverestStateNotAllowed),
+            };
+        }
     }
 
     return EverestStateAllowedResult{
         .success = true,
-        .state = evseStateResult.state,
+        .state = QString(),
         .error = QString(),
     };
 }
 
 EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient* rpcApiClient, int evseIndex) {
+    return monitorEverestErrorPresent(rpcApiClient, QList<int>{evseIndex});
+}
+
+EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient* rpcApiClient, const QList<int>& evseIndices) {
     if (!rpcApiClient) {
         return EverestErrorPresentResult{
             .success = false,
             .errorPresent = false,
             .error = QStringLiteral("rpc_api_client_unavailable"),
+        };
+    }
+
+    if (evseIndices.isEmpty()) {
+        return EverestErrorPresentResult{
+            .success = false,
+            .errorPresent = false,
+            .error = QStringLiteral("safety_controller_evse_mapping_unavailable"),
         };
     }
 
@@ -111,19 +157,19 @@ EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient* rpcApiClient,
     timeoutTimer.setSingleShot(true);
 
     QObject::connect(&pollTimer, &QTimer::timeout, &waitLoop, [&]() {
-        const RpcApiEvseErrorPresentResult errorPresentResult = rpcApiClient->getEvseErrorPresent(evseIndex);
-        if (!errorPresentResult.success) {
-            rpcError = errorPresentResult.error;
-            waitLoop.quit();
-            return;
+        for (const int evseIndex : evseIndices) {
+            const RpcApiEvseErrorPresentResult errorPresentResult = rpcApiClient->getEvseErrorPresent(evseIndex);
+            if (!errorPresentResult.success) {
+                rpcError = errorPresentResult.error;
+                waitLoop.quit();
+                return;
+            }
+            if (errorPresentResult.errorPresent) {
+                errorPresentDetected = true;
+                waitLoop.quit();
+                return;
+            }
         }
-
-        if (!errorPresentResult.errorPresent) {
-            return;
-        }
-
-        errorPresentDetected = true;
-        waitLoop.quit();
     });
     QObject::connect(&timeoutTimer, &QTimer::timeout, &waitLoop, [&]() {
         waitTimedOut = true;

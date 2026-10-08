@@ -31,18 +31,49 @@ QJsonObject bspModule(const QString& driver, const QString& serialPort = QString
     return {{QStringLiteral("module"), driver}, {QStringLiteral("config_module"), config}};
 }
 
-QJsonObject evseModule(const QStringList& bspInstances) {
+QJsonObject evseModule(const QStringList& bspInstances, int evseIndex = 0) {
     QJsonArray connections;
     for (const QString& instance : bspInstances) {
         connections.append(QJsonObject{{QStringLiteral("module_id"), instance}});
     }
-    return {{QStringLiteral("module"), QStringLiteral("EvseManager")},
-            {QStringLiteral("connections"), QJsonObject{{QStringLiteral("bsp"), connections}}}};
+    QJsonObject module{{QStringLiteral("module"), QStringLiteral("EvseManager")},
+                       {QStringLiteral("connections"), QJsonObject{{QStringLiteral("bsp"), connections}}}};
+    if (evseIndex > 0) {
+        module.insert(QStringLiteral("mapping"),
+                      QJsonObject{{QStringLiteral("module"), QJsonObject{{QStringLiteral("evse"), evseIndex}}}});
+    }
+    return module;
 }
 
 QJsonObject activeConfig(const QJsonObject& modules) {
     return {{QStringLiteral("active_modules"), modules}};
 }
+
+class FakeRpcApiClient final : public RpcApiClient {
+public:
+    QHash<int, QString> states;
+    QHash<int, bool> errorsPresent;
+    QList<int> stateQueries;
+    QList<int> errorQueries;
+    int failingStateIndex = -1;
+    int failingErrorIndex = -1;
+
+    RpcApiEvseStateResult getEvseState(int evseIndex) override {
+        stateQueries.append(evseIndex);
+        if (evseIndex == failingStateIndex || !states.contains(evseIndex)) {
+            return {.success = false, .state = QString(), .error = QStringLiteral("rpc_status_unavailable")};
+        }
+        return {.success = true, .state = states.value(evseIndex), .error = QString()};
+    }
+
+    RpcApiEvseErrorPresentResult getEvseErrorPresent(int evseIndex) override {
+        errorQueries.append(evseIndex);
+        if (evseIndex == failingErrorIndex || !errorsPresent.contains(evseIndex)) {
+            return {.success = false, .errorPresent = false, .error = QStringLiteral("rpc_status_unavailable")};
+        }
+        return {.success = true, .errorPresent = errorsPresent.value(evseIndex), .error = QString()};
+    }
+};
 } // namespace
 
 class SafetyControllerTest final : public QObject {
@@ -51,8 +82,8 @@ class SafetyControllerTest final : public QObject {
 private slots:
     void resolvesConfiguredDevicesAndDeduplicatesByDeviceName() {
         const QJsonObject config = activeConfig({
-            {QStringLiteral("evse_a"), evseModule({QStringLiteral("board_a"), QStringLiteral("board_shared")})},
-            {QStringLiteral("evse_b"), evseModule({QStringLiteral("board_b")})},
+            {QStringLiteral("evse_a"), evseModule({QStringLiteral("board_a"), QStringLiteral("board_shared")}, 1)},
+            {QStringLiteral("evse_b"), evseModule({QStringLiteral("board_b"), QStringLiteral("board_shared")}, 2)},
             {QStringLiteral("board_a"), bspModule(QStringLiteral("BoardDriverA"), QStringLiteral("/dev/ttyUSB0"),
                                                   QStringLiteral("nSAFETY_RESET_INT"))},
             {QStringLiteral("board_b"), bspModule(QStringLiteral("BoardDriverB"), QStringLiteral("ttyUSB1"),
@@ -72,7 +103,12 @@ private slots:
         QCOMPARE(result.devices.at(0).bspInstance, QStringLiteral("board_a"));
         QCOMPARE(result.devices.at(0).driverModule, QStringLiteral("BoardDriverA"));
         QCOMPARE(result.devices.at(0).yamlPath, QStringLiteral("/run/ra-utils/ttyUSB0.yaml"));
+        QCOMPARE(result.devices.at(0).evseManagerInstances,
+                 QStringList({QStringLiteral("evse_a"), QStringLiteral("evse_b")}));
+        QCOMPARE(result.devices.at(0).evseIndices, QList<int>({1, 2}));
+        QVERIFY(result.devices.at(0).evseMappingResolved);
         QCOMPARE(result.devices.at(1).name, QStringLiteral("ttyUSB1"));
+        QCOMPARE(result.devices.at(1).evseIndices, QList<int>({2}));
         QCOMPARE(result.devices.at(1).resetGpioLineName, QStringLiteral("nSAFETY2_RESET_INT"));
         QCOMPARE(result.devices.at(1).bootModeGpioLineName, QStringLiteral("SAFETY2_BOOTMODE_SET"));
         QVERIFY(result.errors.isEmpty());
@@ -96,6 +132,8 @@ private slots:
 
         QCOMPARE(result.devices.size(), 1);
         QCOMPARE(result.devices.first().name, QStringLiteral("ttyRA0"));
+        QCOMPARE(result.devices.first().evseIndices, QList<int>({1}));
+        QVERIFY(result.devices.first().evseMappingResolved);
         QCOMPARE(result.devices.first().resetGpioLineName, QStringLiteral("nSAFETY4_RESET_INT"));
         QCOMPARE(result.devices.first().bootModeGpioLineName, QStringLiteral("SAFETY4_BOOTMODE_SET"));
         QVERIFY(result.errors.isEmpty());
@@ -213,15 +251,127 @@ private slots:
         QVERIFY(result.errors.first().contains(QStringLiteral("unsupported reset_gpio_line_name")));
     }
 
+    void refusesControllerWhenAnyAssociatedEvseIsNotAllowed() {
+        FakeRpcApiClient rpc;
+        rpc.states.insert(1, QStringLiteral("Unplugged"));
+        rpc.states.insert(2, QStringLiteral("Charging"));
+
+        const EverestStateAllowedResult result =
+            EverestServiceControl::checkEverestStateAllowed(&rpc, QList<int>{1, 2}, {QStringLiteral("Unplugged")});
+
+        QVERIFY(!result.success);
+        QCOMPARE(result.error, QStringLiteral("everest_state_not_allowed"));
+        QCOMPARE(result.state, QStringLiteral("Charging"));
+        QCOMPARE(rpc.stateQueries, QList<int>({1, 2}));
+    }
+
+    void allowsControllerOnlyAfterEveryAssociatedEvseIsAllowed() {
+        FakeRpcApiClient rpc;
+        rpc.states.insert(1, QStringLiteral("Unplugged"));
+        rpc.states.insert(2, QStringLiteral("Unplugged"));
+
+        const EverestStateAllowedResult result =
+            EverestServiceControl::checkEverestStateAllowed(&rpc, QList<int>{1, 2}, {QStringLiteral("Unplugged")});
+
+        QVERIFY(result.success);
+        QCOMPARE(rpc.stateQueries, QList<int>({1, 2}));
+    }
+
+    void refusesControllerWhenAssociatedEvseStatusCannotBeRead() {
+        FakeRpcApiClient rpc;
+        rpc.states.insert(1, QStringLiteral("Unplugged"));
+        rpc.failingStateIndex = 2;
+
+        const EverestStateAllowedResult result =
+            EverestServiceControl::checkEverestStateAllowed(&rpc, QList<int>{1, 2}, {QStringLiteral("Unplugged")});
+
+        QVERIFY(!result.success);
+        QCOMPARE(result.error, QStringLiteral("rpc_status_unavailable"));
+        QCOMPARE(rpc.stateQueries, QList<int>({1, 2}));
+    }
+
+    void monitorsErrorsForEveryAssociatedEvse() {
+        FakeRpcApiClient rpc;
+        rpc.errorsPresent.insert(1, false);
+        rpc.errorsPresent.insert(2, true);
+
+        const EverestErrorPresentResult result =
+            EverestServiceControl::monitorEverestErrorPresent(&rpc, QList<int>{1, 2});
+
+        QVERIFY(result.success);
+        QVERIFY(result.errorPresent);
+        QCOMPARE(rpc.errorQueries, QList<int>({1, 2}));
+    }
+
+    void failsPostRestartMonitoringWhenAnyAssociatedEvseCannotBeQueried() {
+        FakeRpcApiClient rpc;
+        rpc.errorsPresent.insert(1, false);
+        rpc.failingErrorIndex = 2;
+
+        const EverestErrorPresentResult result =
+            EverestServiceControl::monitorEverestErrorPresent(&rpc, QList<int>{1, 2});
+
+        QVERIFY(!result.success);
+        QCOMPARE(result.error, QStringLiteral("rpc_status_unavailable"));
+        QCOMPARE(rpc.errorQueries, QList<int>({1, 2}));
+    }
+
+    void marksMultiEvseControllerWithoutMappingsReadOnly() {
+        const QJsonObject config = activeConfig({
+            {QStringLiteral("evse_a"), evseModule({QStringLiteral("board_a")})},
+            {QStringLiteral("evse_b"), evseModule({QStringLiteral("board_b")})},
+            {QStringLiteral("board_a"),
+             bspModule(QStringLiteral("BoardDriverA"), QStringLiteral("ttyUSB0"), QStringLiteral("nSAFETY_RESET_INT"))},
+            {QStringLiteral("board_b"), bspModule(QStringLiteral("BoardDriverB"), QStringLiteral("ttyUSB1"),
+                                                  QStringLiteral("nSAFETY2_RESET_INT"))},
+        });
+
+        const SafetyControllerDeviceResolution result =
+            resolveSafetyControllerDevices(config, QStringLiteral("/no-manifests"));
+
+        QCOMPARE(result.devices.size(), 2);
+        QVERIFY(!result.devices.at(0).evseMappingResolved);
+        QVERIFY(result.devices.at(0).evseIndices.isEmpty());
+        QVERIFY(result.errors.join(QLatin1Char(';')).contains(QStringLiteral("mapping.module.evse")));
+    }
+
+    void doesNotMarkControllerWritableWhenEvseMappingIsMissing() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString yamlPath = directory.filePath(QStringLiteral("ttyUSB0.yaml"));
+        QVERIFY(writeTextFile(yamlPath, "version: 1\npt1000s: []\n"));
+        const SafetyControllerDevice device{QStringLiteral("ttyUSB0"),
+                                            QStringLiteral("nSAFETY_RESET_INT"),
+                                            QStringLiteral("SAFETY_BOOTMODE_SET"),
+                                            QStringLiteral("board"),
+                                            QStringLiteral("BoardDriver"),
+                                            yamlPath,
+                                            {QStringLiteral("evse_a"), QStringLiteral("evse_b")},
+                                            {},
+                                            false};
+
+        const QJsonObject result = safetyControllerDeviceToJson(device, {}, true);
+
+        QVERIFY(result.value(QStringLiteral("available")).toBool());
+        QVERIFY(!result.value(QStringLiteral("writable")).toBool());
+        QVERIFY(result.value(QStringLiteral("message")).toString().contains(QStringLiteral("mapping")));
+    }
+
     void readsCachedYamlWithoutRpcAndReportsReadOnly() {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());
         const QString yamlPath = directory.filePath(QStringLiteral("ttyUSB0.yaml"));
         QVERIFY(writeTextFile(yamlPath, "version: 1\npt1000s:\n  - abort-temperature: 90 °C\n"
                                         "    resistance-offset: 0 Ω\ncontactors: []\nestops: [enabled]\n"));
-        const SafetyControllerDevice device{
-            QStringLiteral("ttyUSB0"), QStringLiteral("nSAFETY_RESET_INT"), QStringLiteral("SAFETY_BOOTMODE_SET"),
-            QStringLiteral("board"),   QStringLiteral("BoardDriver"),       yamlPath};
+        const SafetyControllerDevice device{QStringLiteral("ttyUSB0"),
+                                            QStringLiteral("nSAFETY_RESET_INT"),
+                                            QStringLiteral("SAFETY_BOOTMODE_SET"),
+                                            QStringLiteral("board"),
+                                            QStringLiteral("BoardDriver"),
+                                            yamlPath,
+                                            {QStringLiteral("evse")},
+                                            {1},
+                                            true};
         const QJsonObject request{
             {QStringLiteral("pt1000_0"), QJsonObject{{QStringLiteral("abort-temperature"), QString()},
                                                      {QStringLiteral("resistance-offset"), QString()},
