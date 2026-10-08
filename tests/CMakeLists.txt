@@ -8,6 +8,18 @@ add_test(NAME layered_config_test COMMAND layered_config_test)
 add_test(NAME config_overlay_install_test COMMAND "${CMAKE_COMMAND}"
     "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/ConfigOverlayInstallTest.cmake")
 
+add_executable(request_parsing_test
+    RequestParsingTest.cpp
+    ../backend/webserver/http/RequestParsing.cpp
+    ../backend/webserver/http/StaticResponse.cpp
+)
+target_include_directories(request_parsing_test PRIVATE ../backend/webserver/http)
+target_link_libraries(request_parsing_test PRIVATE
+    ${QT_PACKAGE_NAME}::Core
+    ${QT_PACKAGE_NAME}::Test
+)
+add_test(NAME request_parsing_test COMMAND request_parsing_test)
+
 add_executable(pcap_test
     PCAPTest.cpp
     ../backend/api/modules/PCAP.cpp
