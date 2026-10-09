@@ -8,11 +8,9 @@
 #include <QDBusMessage>
 #include <QDBusInterface>
 #include <QDBusVariant>
-#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QStringList>
-
-#include <chrono>
-#include <thread>
+#include <QTimer>
 
 SystemdService::SystemdService(QObject *parent)
     : QObject(parent)
@@ -135,18 +133,44 @@ bool SystemdService::isUnitActive(const QString &unitName)
 
 bool SystemdService::waitForUnitActive(const QString &unitName, bool active, int timeoutMs)
 {
-    QElapsedTimer timer;
-    timer.start();
-    do {
-        bool currentState = false;
-        if (readUnitActiveState(unitName, &currentState) && currentState == active) {
-            return true;
+    bool currentState = false;
+    if (readUnitActiveState(unitName, &currentState) && currentState == active) {
+        return true;
+    }
+
+    bool reachedRequestedState = false;
+    bool waitTimedOut = false;
+    QEventLoop waitLoop;
+    QTimer pollTimer;
+    QTimer timeoutTimer;
+
+    pollTimer.setInterval(100);
+    pollTimer.setSingleShot(false);
+    timeoutTimer.setInterval(timeoutMs);
+    timeoutTimer.setSingleShot(true);
+
+    QObject::connect(&pollTimer, &QTimer::timeout, &waitLoop, [&]() {
+        bool polledState = false;
+        if (!readUnitActiveState(unitName, &polledState) || polledState != active) {
+            return;
         }
-        if (timer.elapsed() < timeoutMs) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-    } while (timer.elapsed() < timeoutMs);
-    return false;
+
+        reachedRequestedState = true;
+        waitLoop.quit();
+    });
+    QObject::connect(&timeoutTimer, &QTimer::timeout, &waitLoop, [&]() {
+        waitTimedOut = true;
+        waitLoop.quit();
+    });
+
+    pollTimer.start();
+    timeoutTimer.start();
+    waitLoop.exec(QEventLoop::ExcludeUserInputEvents);
+
+    pollTimer.stop();
+    timeoutTimer.stop();
+
+    return !waitTimedOut && reachedRequestedState;
 }
 
 bool SystemdService::readUnitActiveState(const QString &unitName, bool *active)
