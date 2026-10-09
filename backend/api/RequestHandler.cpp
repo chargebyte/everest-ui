@@ -133,6 +133,7 @@ void RequestHandler::handleTextMessage(const QString &message) {
     case ModuleGroup::FirmwareUpdate:
     case ModuleGroup::SystemLogs:
     case ModuleGroup::Network:
+    case ModuleGroup::SSHConfiguration:
     case ModuleGroup::System:
     case ModuleGroup::Unknown:
         emit systemControlEnqueueRequested(routedRequest);
@@ -393,6 +394,9 @@ ModuleGroup RequestHandler::toModuleGroup(const QString &group) {
     }
     if (group == QLatin1String(kGroupNetwork)) {
         return ModuleGroup::Network;
+    }
+    if (group == QLatin1String(kGroupSSH)) {
+        return ModuleGroup::SSHConfiguration;
     }
     if (group == QLatin1String(kGroupSystem)) {
         return ModuleGroup::System;

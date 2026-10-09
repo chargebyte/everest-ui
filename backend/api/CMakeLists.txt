@@ -14,6 +14,7 @@ add_executable(api
     modules/FirmwareUpdateRuntime.cpp
     modules/SystemLogs.cpp
     modules/NetworkConfiguration.cpp
+    modules/SSHConfiguration.cpp
     libs/ConsoleConnector.cpp
     libs/BackendConfig.cpp
     libs/NetworkInterfaceUtils.cpp

@@ -85,6 +85,27 @@ target_link_libraries(network_configuration_test
 
 add_test(NAME network_configuration_test COMMAND network_configuration_test)
 
+add_executable(ssh_configuration_test
+    SSHConfigurationTest.cpp
+    ../backend/api/modules/SSHConfiguration.cpp
+    ../backend/api/libs/SystemdService.cpp
+)
+
+target_include_directories(ssh_configuration_test PRIVATE
+    "${CMAKE_BINARY_DIR}"
+    "${CMAKE_SOURCE_DIR}/backend/api"
+    "${CMAKE_SOURCE_DIR}/backend/api/modules"
+    "${CMAKE_SOURCE_DIR}/backend/api/libs"
+)
+
+target_link_libraries(ssh_configuration_test
+    ${QT_PACKAGE_NAME}::Core
+    ${QT_PACKAGE_NAME}::DBus
+    ${QT_PACKAGE_NAME}::Test
+)
+
+add_test(NAME ssh_configuration_test COMMAND ssh_configuration_test)
+
 add_executable(everest_config_test
     EverestConfigTest.cpp
     ../backend/api/RpcApiClient.cpp
