@@ -64,9 +64,9 @@ export function renderSshPage(container, { sendPayload, addLog }) {
   // Tracks the request that is waiting for a backend response, so repeated clicks
   // cannot send overlapping SSH operations.
   let pendingAction = '';
-  // When the user enables SSH with filled password fields, the password request
-  // is sent only after the backend confirms that SSH was enabled successfully.
-  let pendingEnableShouldSetPassword = false;
+  // When the user enables SSH with filled password fields, SSH is enabled only
+  // after the backend confirms that the password was set successfully.
+  let pendingEnableAfterPassword = false;
 
   function formatSendStatus(result) {
     if (result.ok) {
@@ -89,7 +89,7 @@ export function renderSshPage(container, { sendPayload, addLog }) {
   function clearBusy(action = pendingAction) {
     if (pendingAction === action) {
       pendingAction = '';
-      pendingEnableShouldSetPassword = false;
+      pendingEnableAfterPassword = false;
       updateControls();
     }
   }
@@ -207,6 +207,18 @@ export function renderSshPage(container, { sendPayload, addLog }) {
     return result.ok;
   }
 
+  function sendEnable() {
+    const result = sendAction('enable');
+    if (result.ok) {
+      setBusy('enable');
+      setWarning('Enabling SSH.');
+      return true;
+    }
+    pendingEnableAfterPassword = false;
+    updateControls();
+    return false;
+  }
+
   function clearPasswordFields() {
     passwordInput.value = '';
     passwordConfirmInput.value = '';
@@ -241,14 +253,17 @@ export function renderSshPage(container, { sendPayload, addLog }) {
       updateControls();
       return;
     }
-    pendingEnableShouldSetPassword = hasPasswordInput();
-    const result = sendAction('enable');
-    if (result.ok) {
-      setBusy('enable');
-      setWarning(pendingEnableShouldSetPassword
-        ? 'Enabling SSH. Password will be set afterwards.'
-        : 'Enabling SSH.');
+    if (hasPasswordInput()) {
+      pendingEnableAfterPassword = true;
+      if (!sendPassword()) {
+        pendingEnableAfterPassword = false;
+        updateControls();
+      } else {
+        setWarning('Setting SSH password. SSH will be enabled afterwards.');
+      }
+      return;
     }
+    sendEnable();
   });
 
   disableButton.addEventListener('click', () => {
@@ -287,13 +302,6 @@ export function renderSshPage(container, { sendPayload, addLog }) {
 
       if (message.type === 'ssh.enable.ack') {
         addLog('ssh.enable.ack received');
-        if (pendingEnableShouldSetPassword && hasPasswordInput()) {
-          // Keep the combined Enable + Set Password flow sequential: SSH must be
-          // enabled before the root password request is sent.
-          pendingAction = '';
-          sendPassword();
-          return;
-        }
         clearBusy('enable');
         setWarning('SSH enabled.');
         requestStatus();
@@ -311,6 +319,13 @@ export function renderSshPage(container, { sendPayload, addLog }) {
       if (message.type === 'ssh.set_password.ack') {
         addLog('ssh.set_password.ack received');
         clearPasswordFields();
+        if (pendingEnableAfterPassword) {
+          pendingAction = '';
+          if (!sendEnable()) {
+            setWarning('SSH password set, but enabling SSH could not be sent.');
+          }
+          return;
+        }
         clearBusy('set_password');
         setWarning('SSH password set.');
         requestStatus();
