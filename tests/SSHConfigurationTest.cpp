@@ -165,6 +165,23 @@ private slots:
             QVERIFY(!writerCalled);
         }
     }
+
+    void unknownActionReturnsUnsupportedActionError() {
+        const ModuleResponse response = SSHConfiguration::handleRequest(ModuleRequest{
+            .requestId = 7,
+            .group = ModuleGroup::SSHConfiguration,
+            .action = QStringLiteral("unknown_action"),
+            .parameters = {},
+        });
+
+        QVERIFY(!response.success);
+        QCOMPARE(response.requestId, qint64(7));
+        QCOMPARE(response.group, QLatin1String(kGroupSSH));
+        QCOMPARE(response.action, QStringLiteral("unknown_action"));
+        QCOMPARE(response.parameters.value(QLatin1String(kError)).toString(),
+                 QStringLiteral("unsupported_action"));
+        QVERIFY(response.final);
+    }
 };
 
 QTEST_MAIN(SSHConfigurationTest)
