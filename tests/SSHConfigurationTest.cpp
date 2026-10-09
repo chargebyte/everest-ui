@@ -87,6 +87,10 @@ private slots:
                     (active ? QStringLiteral("active") : QStringLiteral("inactive"));
             return true;
         };
+        operations.terminateSessions = [&calls]() {
+            calls << QStringLiteral("terminate_sessions");
+            return true;
+        };
         SSHConfiguration::setSystemdOperationsForTest(operations);
 
         const ModuleResponse response = SSHConfiguration::handleRequest(ModuleRequest{
@@ -99,7 +103,8 @@ private slots:
         QVERIFY(response.success);
         QCOMPARE(calls, QStringList({QStringLiteral("stop:sshd.socket"),
                                      QStringLiteral("wait:sshd.socket:inactive"),
-                                     QStringLiteral("disable:sshd.socket")}));
+                                     QStringLiteral("disable:sshd.socket"),
+                                     QStringLiteral("terminate_sessions")}));
     }
 
     void setPasswordValidatesAndWritesRootPassword() {

@@ -180,7 +180,10 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
             };
             return response;
         }
-        if (!terminateSshSessions()) {
+        const bool sessionsTerminated = g_systemdOperationsOverride.terminateSessions
+                                            ? g_systemdOperationsOverride.terminateSessions()
+                                            : terminateSshSessions();
+        if (!sessionsTerminated) {
             response.parameters = QJsonObject{
                 {QLatin1String(kError), QLatin1String(kErrorSystemdFailed)},
             };
