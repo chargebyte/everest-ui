@@ -10,6 +10,12 @@
 #include <QStringList>
 #include <QTest>
 
+namespace {
+void setAvailableSshUnits(SSHConfiguration::SystemdOperations &operations, const QStringList &units) {
+    operations.isUnitAvailable = [units](const QString &unit) { return units.contains(unit); };
+}
+} // namespace
+
 class SSHConfigurationTest final : public QObject {
     Q_OBJECT
 
@@ -20,6 +26,7 @@ private slots:
 
     void readMapsStatus() {
         SSHConfiguration::SystemdOperations operations;
+        setAvailableSshUnits(operations, {QStringLiteral("sshd.socket")});
         operations.isUnitActive = [](const QString &unit) {
             return unit == QStringLiteral("sshd.socket");
         };
@@ -40,9 +47,31 @@ private slots:
         QCOMPARE(response.parameters.value(QStringLiteral("socket_enabled")).toBool(), true);
     }
 
+    void readMapsServiceStatus() {
+        SSHConfiguration::SystemdOperations operations;
+        setAvailableSshUnits(operations, {QStringLiteral("sshd.service")});
+        operations.isUnitActive = [](const QString &unit) {
+            return unit == QStringLiteral("sshd.service");
+        };
+        operations.isUnitEnabled = [](const QString &) { return false; };
+        SSHConfiguration::setSystemdOperationsForTest(operations);
+
+        const ModuleResponse response = SSHConfiguration::handleRequest(ModuleRequest{
+            .requestId = 2,
+            .group = ModuleGroup::SSHConfiguration,
+            .action = QLatin1String(kActionRead),
+            .parameters = {},
+        });
+
+        QVERIFY(response.success);
+        QCOMPARE(response.parameters.value(QStringLiteral("socket_active")).toBool(), true);
+        QCOMPARE(response.parameters.value(QStringLiteral("socket_enabled")).toBool(), false);
+    }
+
     void enableStartsAndEnablesSocket() {
         QStringList calls;
         SSHConfiguration::SystemdOperations operations;
+        setAvailableSshUnits(operations, {QStringLiteral("sshd.socket"), QStringLiteral("sshd.service")});
         operations.startUnit = [&calls](const QString &unit) {
             calls << QStringLiteral("start:") + unit;
             return true;
@@ -75,9 +104,46 @@ private slots:
                                      QStringLiteral("wait:sshd.socket:active")}));
     }
 
+    void enableFallsBackToService() {
+        QStringList calls;
+        SSHConfiguration::SystemdOperations operations;
+        setAvailableSshUnits(operations, {QStringLiteral("sshd.service")});
+        operations.startUnit = [&calls](const QString &unit) {
+            calls << QStringLiteral("start:") + unit;
+            return true;
+        };
+        operations.waitForUnitActive = [&calls](const QString &unit, bool active, int) {
+            calls << QStringLiteral("wait:") + unit + QLatin1Char(':') +
+                    (active ? QStringLiteral("active") : QStringLiteral("inactive"));
+            return true;
+        };
+        operations.enableUnit = [&calls](const QString &unit) {
+            calls << QStringLiteral("enable:") + unit;
+            return true;
+        };
+        operations.reloadManager = [&calls]() {
+            calls << QStringLiteral("reload");
+            return true;
+        };
+        SSHConfiguration::setSystemdOperationsForTest(operations);
+
+        const ModuleResponse response = SSHConfiguration::handleRequest(ModuleRequest{
+            .requestId = 3,
+            .group = ModuleGroup::SSHConfiguration,
+            .action = QLatin1String(kActionEnable),
+            .parameters = {},
+        });
+
+        QVERIFY(response.success);
+        QCOMPARE(calls, QStringList({QStringLiteral("enable:sshd.service"), QStringLiteral("reload"),
+                                     QStringLiteral("start:sshd.service"),
+                                     QStringLiteral("wait:sshd.service:active")}));
+    }
+
     void disableStopsAndDisablesSocket() {
         QStringList calls;
         SSHConfiguration::SystemdOperations operations;
+        setAvailableSshUnits(operations, {QStringLiteral("sshd.socket")});
         operations.stopUnit = [&calls](const QString &unit) {
             calls << QStringLiteral("stop:") + unit;
             return true;
@@ -116,9 +182,77 @@ private slots:
                                      QStringLiteral("terminate_sessions")}));
     }
 
+    void disableStopsAndDisablesAllAvailableUnits() {
+        QStringList calls;
+        SSHConfiguration::SystemdOperations operations;
+        setAvailableSshUnits(operations, {QStringLiteral("sshd.socket"), QStringLiteral("sshd.service")});
+        operations.stopUnit = [&calls](const QString &unit) {
+            calls << QStringLiteral("stop:") + unit;
+            return true;
+        };
+        operations.disableUnit = [&calls](const QString &unit) {
+            calls << QStringLiteral("disable:") + unit;
+            return true;
+        };
+        operations.reloadManager = [&calls]() {
+            calls << QStringLiteral("reload");
+            return true;
+        };
+        operations.waitForUnitActive = [&calls](const QString &unit, bool active, int) {
+            calls << QStringLiteral("wait:") + unit + QLatin1Char(':') +
+                    (active ? QStringLiteral("active") : QStringLiteral("inactive"));
+            return true;
+        };
+        operations.terminateSessions = [&calls]() {
+            calls << QStringLiteral("terminate_sessions");
+            return true;
+        };
+        SSHConfiguration::setSystemdOperationsForTest(operations);
+
+        const ModuleResponse response = SSHConfiguration::handleRequest(ModuleRequest{
+            .requestId = 4,
+            .group = ModuleGroup::SSHConfiguration,
+            .action = QLatin1String(kActionDisable),
+            .parameters = {},
+        });
+
+        QVERIFY(response.success);
+        QCOMPARE(calls, QStringList({QStringLiteral("stop:sshd.socket"),
+                                     QStringLiteral("wait:sshd.socket:inactive"),
+                                     QStringLiteral("stop:sshd.service"),
+                                     QStringLiteral("wait:sshd.service:inactive"),
+                                     QStringLiteral("disable:sshd.socket"),
+                                     QStringLiteral("disable:sshd.service"), QStringLiteral("reload"),
+                                     QStringLiteral("terminate_sessions")}));
+    }
+
+    void disableFailsWhenNoSshUnitIsAvailable() {
+        bool sessionsTerminated = false;
+        SSHConfiguration::SystemdOperations operations;
+        setAvailableSshUnits(operations, {});
+        operations.terminateSessions = [&sessionsTerminated]() {
+            sessionsTerminated = true;
+            return true;
+        };
+        SSHConfiguration::setSystemdOperationsForTest(operations);
+
+        const ModuleResponse response = SSHConfiguration::handleRequest(ModuleRequest{
+            .requestId = 5,
+            .group = ModuleGroup::SSHConfiguration,
+            .action = QLatin1String(kActionDisable),
+            .parameters = {},
+        });
+
+        QVERIFY(!response.success);
+        QCOMPARE(response.parameters.value(QLatin1String(kError)).toString(),
+                 QStringLiteral("ssh_systemd_failed"));
+        QVERIFY(!sessionsTerminated);
+    }
+
     void enableFailureRollsBackBootEnablement() {
         QStringList calls;
         SSHConfiguration::SystemdOperations operations;
+        setAvailableSshUnits(operations, {QStringLiteral("sshd.socket")});
         operations.enableUnit = [&calls](const QString &unit) {
             calls << QStringLiteral("enable:") + unit;
             return true;
@@ -153,6 +287,7 @@ private slots:
     void enableWaitFailureStopsSocketAndRollsBackBootEnablement() {
         QStringList calls;
         SSHConfiguration::SystemdOperations operations;
+        setAvailableSshUnits(operations, {QStringLiteral("sshd.socket")});
         operations.enableUnit = [&calls](const QString &unit) {
             calls << QStringLiteral("enable:") + unit;
             return true;
@@ -198,6 +333,7 @@ private slots:
     void disableReloadFailureKeepsSshDisabled() {
         QStringList calls;
         SSHConfiguration::SystemdOperations operations;
+        setAvailableSshUnits(operations, {QStringLiteral("sshd.socket")});
         operations.stopUnit = [&calls](const QString &unit) {
             calls << QStringLiteral("stop:") + unit;
             return true;

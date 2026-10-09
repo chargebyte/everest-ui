@@ -231,6 +231,19 @@ bool SystemdService::readUnitActiveState(const QString &unitName, bool *active)
 
 bool SystemdService::isUnitEnabled(const QString &unitName)
 {
+    QString state;
+    return readUnitFileState(unitName, &state) &&
+           (state == QStringLiteral("enabled") || state == QStringLiteral("enabled-runtime"));
+}
+
+bool SystemdService::isUnitAvailable(const QString &unitName)
+{
+    QString state;
+    return readUnitFileState(unitName, &state);
+}
+
+bool SystemdService::readUnitFileState(const QString &unitName, QString *state)
+{
     if (!isSystemBusAvailable()) {
         return false;
     }
@@ -245,7 +258,6 @@ bool SystemdService::isUnitEnabled(const QString &unitName)
         return false;
     }
 
-    const QString state = query.arguments().at(0).toString();
-    return state == QStringLiteral("enabled") || state == QStringLiteral("static") ||
-           state == QStringLiteral("indirect") || state == QStringLiteral("generated");
+    *state = query.arguments().at(0).toString();
+    return true;
 }

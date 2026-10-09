@@ -9,12 +9,14 @@
 
 #include <QJsonObject>
 #include <QProcess>
+#include <QStringList>
 
 #include <stdexcept>
 #include <utility>
 
 namespace {
 constexpr char kSshSocketUnit[] = "sshd.socket";
+constexpr char kSshServiceUnit[] = "sshd.service";
 constexpr char kParameterSocketActive[] = "socket_active";
 constexpr char kParameterSocketEnabled[] = "socket_enabled";
 constexpr char kParameterPassword[] = "password";
@@ -52,17 +54,43 @@ ModuleResponse makeResponse(const ModuleRequest &request) {
     };
 }
 
+QStringList availableSshUnits(SystemdService &systemdService) {
+    const auto isUnitAvailable = g_systemdOperationsOverride.isUnitAvailable
+                                     ? g_systemdOperationsOverride.isUnitAvailable
+                                     : [&systemdService](const QString &unit) {
+                                           return systemdService.isUnitAvailable(unit);
+                                       };
+    QStringList units;
+    if (isUnitAvailable(QLatin1String(kSshSocketUnit))) {
+        units.append(QLatin1String(kSshSocketUnit));
+    }
+    if (isUnitAvailable(QLatin1String(kSshServiceUnit))) {
+        units.append(QLatin1String(kSshServiceUnit));
+    }
+    return units;
+}
+
 QJsonObject readStatusParameters() {
     SystemdService systemdService;
+    const auto isUnitActive = g_systemdOperationsOverride.isUnitActive
+                                  ? g_systemdOperationsOverride.isUnitActive
+                                  : [&systemdService](const QString &unit) {
+                                        return systemdService.isUnitActive(unit);
+                                    };
+    const auto isUnitEnabled = g_systemdOperationsOverride.isUnitEnabled
+                                   ? g_systemdOperationsOverride.isUnitEnabled
+                                   : [&systemdService](const QString &unit) {
+                                         return systemdService.isUnitEnabled(unit);
+                                     };
+    bool active = false;
+    bool enabled = false;
+    for (const QString &unit : availableSshUnits(systemdService)) {
+        active = active || isUnitActive(unit);
+        enabled = enabled || isUnitEnabled(unit);
+    }
     return QJsonObject{
-        {QLatin1String(kParameterSocketActive),
-         g_systemdOperationsOverride.isUnitActive
-             ? g_systemdOperationsOverride.isUnitActive(QLatin1String(kSshSocketUnit))
-             : systemdService.isUnitActive(QLatin1String(kSshSocketUnit))},
-        {QLatin1String(kParameterSocketEnabled),
-         g_systemdOperationsOverride.isUnitEnabled
-             ? g_systemdOperationsOverride.isUnitEnabled(QLatin1String(kSshSocketUnit))
-             : systemdService.isUnitEnabled(QLatin1String(kSshSocketUnit))},
+        {QLatin1String(kParameterSocketActive), active},
+        {QLatin1String(kParameterSocketEnabled), enabled},
     };
 }
 
@@ -133,6 +161,16 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
     case SSHConfigurationAction::Enable: {
         ModuleResponse response = makeResponse(request);
         SystemdService systemdService;
+        const QStringList sshUnits = availableSshUnits(systemdService);
+        if (sshUnits.isEmpty()) {
+            response.parameters = QJsonObject{
+                {QLatin1String(kError), QLatin1String(kErrorSystemdFailed)},
+            };
+            return response;
+        }
+        const QString unit = sshUnits.contains(QLatin1String(kSshSocketUnit))
+                                 ? QLatin1String(kSshSocketUnit)
+                                 : QLatin1String(kSshServiceUnit);
         const auto enableUnit = g_systemdOperationsOverride.enableUnit
                                     ? g_systemdOperationsOverride.enableUnit
                                     : [&systemdService](const QString &unit) {
@@ -162,10 +200,10 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                                              return systemdService.waitForUnitActive(unit, active, timeoutMs);
                                          };
         const auto rollbackEnablement = [&]() {
-            disableUnit(QLatin1String(kSshSocketUnit));
+            disableUnit(unit);
             reloadManager();
         };
-        if (!enableUnit(QLatin1String(kSshSocketUnit))) {
+        if (!enableUnit(unit)) {
             response.parameters = QJsonObject{
                 {QLatin1String(kError), QLatin1String(kErrorSystemdFailed)},
             };
@@ -178,10 +216,10 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
             };
             return response;
         }
-        const bool started = startUnit(QLatin1String(kSshSocketUnit));
-        if (!started || !waitForActive(QLatin1String(kSshSocketUnit), true, 5000)) {
+        const bool started = startUnit(unit);
+        if (!started || !waitForActive(unit, true, 5000)) {
             if (started) {
-                stopUnit(QLatin1String(kSshSocketUnit));
+                stopUnit(unit);
             }
             rollbackEnablement();
             response.parameters = QJsonObject{
@@ -195,6 +233,13 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
     case SSHConfigurationAction::Disable: {
         ModuleResponse response = makeResponse(request);
         SystemdService systemdService;
+        const QStringList sshUnits = availableSshUnits(systemdService);
+        if (sshUnits.isEmpty()) {
+            response.parameters = QJsonObject{
+                {QLatin1String(kError), QLatin1String(kErrorSystemdFailed)},
+            };
+            return response;
+        }
         const auto stopUnit = g_systemdOperationsOverride.stopUnit
                                   ? g_systemdOperationsOverride.stopUnit
                                   : [&systemdService](const QString &unit) {
@@ -213,15 +258,21 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                                          : [&systemdService](const QString &unit, bool active, int timeoutMs) {
                                                return systemdService.waitForUnitActive(unit, active, timeoutMs);
                                            };
-        if (!stopUnit(QLatin1String(kSshSocketUnit)) ||
-            !waitForInactive(QLatin1String(kSshSocketUnit), false, 5000) ||
-            !disableUnit(QLatin1String(kSshSocketUnit))) {
-            response.parameters = QJsonObject{
-                {QLatin1String(kError), QLatin1String(kErrorSystemdFailed)},
-            };
-            return response;
+        bool systemdSucceeded = true;
+        for (const QString &unit : sshUnits) {
+            if (!stopUnit(unit) || !waitForInactive(unit, false, 5000)) {
+                systemdSucceeded = false;
+            }
         }
-        if (!reloadManager()) {
+        for (const QString &unit : sshUnits) {
+            if (!disableUnit(unit)) {
+                systemdSucceeded = false;
+            }
+        }
+        if (!sshUnits.isEmpty() && !reloadManager()) {
+            systemdSucceeded = false;
+        }
+        if (!systemdSucceeded) {
             response.parameters = QJsonObject{
                 {QLatin1String(kError), QLatin1String(kErrorSystemdFailed)},
             };

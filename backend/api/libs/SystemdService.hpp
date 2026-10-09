@@ -22,6 +22,7 @@ public:
     bool reloadManager();
     bool isUnitActive(const QString &unitName);
     bool waitForUnitActive(const QString &unitName, bool active, int timeoutMs);
+    bool isUnitAvailable(const QString &unitName);
     bool isUnitEnabled(const QString &unitName);
 
 private:
@@ -31,6 +32,7 @@ private:
     bool callUnitJob(const QString &method, const QString &unitName);
     bool callEnableDisableUnitFiles(const QString &method, const QString &unitName);
     bool readUnitActiveState(const QString &unitName, bool *active);
+    bool readUnitFileState(const QString &unitName, QString *state);
 
     QDBusInterface *m_systemdManagerInterface;
 };
