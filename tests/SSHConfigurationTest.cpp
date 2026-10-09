@@ -130,6 +130,36 @@ private slots:
         QCOMPARE(response.parameters.value(QLatin1String(kError)).toString(),
                  QLatin1String(kErrorInvalidParams));
     }
+
+    void setPasswordRejectsChpasswdRecordSeparators() {
+        bool writerCalled = false;
+        SSHConfiguration::setPasswordWriterForTest([&writerCalled](const QString &) {
+            writerCalled = true;
+            return true;
+        });
+
+        const QStringList invalidPasswords{
+            QStringLiteral("secret\n123"),
+            QStringLiteral("secret\r123"),
+            QStringLiteral("secret") + QChar::Null + QStringLiteral("123"),
+        };
+
+        for (const QString &password : invalidPasswords) {
+            writerCalled = false;
+
+            const ModuleResponse response = SSHConfiguration::handleRequest(ModuleRequest{
+                .requestId = 6,
+                .group = ModuleGroup::SSHConfiguration,
+                .action = QLatin1String(kActionSetPassword),
+                .parameters = QJsonObject{{QStringLiteral("password"), password}},
+            });
+
+            QVERIFY(!response.success);
+            QCOMPARE(response.parameters.value(QLatin1String(kError)).toString(),
+                     QLatin1String(kErrorInvalidParams));
+            QVERIFY(!writerCalled);
+        }
+    }
 };
 
 QTEST_MAIN(SSHConfigurationTest)

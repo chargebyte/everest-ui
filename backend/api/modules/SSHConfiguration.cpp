@@ -66,7 +66,9 @@ QJsonObject readStatusParameters() {
 }
 
 bool isPasswordValid(const QString &password) {
-    return password.size() > 0 && password.size() <= 256;
+    return password.size() > 0 && password.size() <= 256 &&
+           !password.contains(QLatin1Char('\n')) && !password.contains(QLatin1Char('\r')) &&
+           !password.contains(QChar::Null);
 }
 
 bool setRootPassword(const QString &password) {
