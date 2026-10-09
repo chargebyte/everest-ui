@@ -20,6 +20,7 @@ constexpr char kParameterSocketEnabled[] = "socket_enabled";
 constexpr char kParameterPassword[] = "password";
 constexpr char kErrorSystemdFailed[] = "ssh_systemd_failed";
 constexpr char kErrorPasswordFailed[] = "ssh_password_failed";
+constexpr char kErrorUnsupportedAction[] = "unsupported_action";
 
 SSHConfiguration::SystemdOperations g_systemdOperationsOverride;
 SSHConfiguration::PasswordWriter g_passwordWriterOverride;
@@ -215,7 +216,11 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
         return response;
     }
     case SSHConfigurationAction::Unknown:
-        throw std::runtime_error("SSHConfiguration::handleRequest got unsupported action");
+        ModuleResponse response = makeResponse(request);
+        response.parameters = QJsonObject{
+            {QLatin1String(kError), QLatin1String(kErrorUnsupportedAction)},
+        };
+        return response;
     }
 
     throw std::runtime_error("SSHConfiguration::handleRequest reached unreachable code");
