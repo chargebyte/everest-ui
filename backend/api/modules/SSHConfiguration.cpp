@@ -93,7 +93,7 @@ bool setRootPassword(const QString &password) {
 bool terminateSshSessions() {
     QProcess process;
     process.start(QStringLiteral("pkill"), {QStringLiteral("-TERM"), QStringLiteral("-f"),
-                                            QStringLiteral("^sshd: ")});
+                                            QStringLiteral("^sshd(-session)?: ")});
     if (!process.waitForStarted(3000)) {
         return false;
     }
