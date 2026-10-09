@@ -74,6 +74,16 @@ bool SystemdService::disableUnit(const QString &unitName)
     return callEnableDisableUnitFiles(QStringLiteral("DisableUnitFiles"), unitName);
 }
 
+bool SystemdService::reloadManager()
+{
+    if (!isSystemBusAvailable() || !isManagerInterfaceAvailable()) {
+        return false;
+    }
+
+    return m_systemdManagerInterface->call(QStringLiteral("Reload")).type() ==
+           QDBusMessage::ReplyMessage;
+}
+
 bool SystemdService::callUnitJob(const QString &method, const QString &unitName)
 {
     if (!isSystemBusAvailable()) {

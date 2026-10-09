@@ -143,12 +143,47 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                                    : [&systemdService](const QString &unit) {
                                          return systemdService.startUnit(unit);
                                      };
-        if (!enableUnit(QLatin1String(kSshSocketUnit)) ||
-            !startUnit(QLatin1String(kSshSocketUnit)) ||
-            !(g_systemdOperationsOverride.waitForUnitActive
-                  ? g_systemdOperationsOverride.waitForUnitActive(
-                        QLatin1String(kSshSocketUnit), true, 5000)
-                  : systemdService.waitForUnitActive(QLatin1String(kSshSocketUnit), true, 5000))) {
+        const auto stopUnit = g_systemdOperationsOverride.stopUnit
+                                  ? g_systemdOperationsOverride.stopUnit
+                                  : [&systemdService](const QString &unit) {
+                                        return systemdService.stopUnit(unit);
+                                    };
+        const auto disableUnit = g_systemdOperationsOverride.disableUnit
+                                     ? g_systemdOperationsOverride.disableUnit
+                                     : [&systemdService](const QString &unit) {
+                                           return systemdService.disableUnit(unit);
+                                       };
+        const auto reloadManager = g_systemdOperationsOverride.reloadManager
+                                       ? g_systemdOperationsOverride.reloadManager
+                                       : [&systemdService]() { return systemdService.reloadManager(); };
+        const auto waitForActive = g_systemdOperationsOverride.waitForUnitActive
+                                       ? g_systemdOperationsOverride.waitForUnitActive
+                                       : [&systemdService](const QString &unit, bool active, int timeoutMs) {
+                                             return systemdService.waitForUnitActive(unit, active, timeoutMs);
+                                         };
+        const auto rollbackEnablement = [&]() {
+            disableUnit(QLatin1String(kSshSocketUnit));
+            reloadManager();
+        };
+        if (!enableUnit(QLatin1String(kSshSocketUnit))) {
+            response.parameters = QJsonObject{
+                {QLatin1String(kError), QLatin1String(kErrorSystemdFailed)},
+            };
+            return response;
+        }
+        if (!reloadManager()) {
+            rollbackEnablement();
+            response.parameters = QJsonObject{
+                {QLatin1String(kError), QLatin1String(kErrorSystemdFailed)},
+            };
+            return response;
+        }
+        const bool started = startUnit(QLatin1String(kSshSocketUnit));
+        if (!started || !waitForActive(QLatin1String(kSshSocketUnit), true, 5000)) {
+            if (started) {
+                stopUnit(QLatin1String(kSshSocketUnit));
+            }
+            rollbackEnablement();
             response.parameters = QJsonObject{
                 {QLatin1String(kError), QLatin1String(kErrorSystemdFailed)},
             };
@@ -170,12 +205,23 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                                      : [&systemdService](const QString &unit) {
                                            return systemdService.disableUnit(unit);
                                        };
+        const auto reloadManager = g_systemdOperationsOverride.reloadManager
+                                       ? g_systemdOperationsOverride.reloadManager
+                                       : [&systemdService]() { return systemdService.reloadManager(); };
+        const auto waitForInactive = g_systemdOperationsOverride.waitForUnitActive
+                                         ? g_systemdOperationsOverride.waitForUnitActive
+                                         : [&systemdService](const QString &unit, bool active, int timeoutMs) {
+                                               return systemdService.waitForUnitActive(unit, active, timeoutMs);
+                                           };
         if (!stopUnit(QLatin1String(kSshSocketUnit)) ||
-            !(g_systemdOperationsOverride.waitForUnitActive
-                  ? g_systemdOperationsOverride.waitForUnitActive(
-                        QLatin1String(kSshSocketUnit), false, 5000)
-                  : systemdService.waitForUnitActive(QLatin1String(kSshSocketUnit), false, 5000)) ||
+            !waitForInactive(QLatin1String(kSshSocketUnit), false, 5000) ||
             !disableUnit(QLatin1String(kSshSocketUnit))) {
+            response.parameters = QJsonObject{
+                {QLatin1String(kError), QLatin1String(kErrorSystemdFailed)},
+            };
+            return response;
+        }
+        if (!reloadManager()) {
             response.parameters = QJsonObject{
                 {QLatin1String(kError), QLatin1String(kErrorSystemdFailed)},
             };

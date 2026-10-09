@@ -23,6 +23,7 @@ struct SystemdOperations {
     std::function<bool(const QString &)> stopUnit;
     std::function<bool(const QString &)> enableUnit;
     std::function<bool(const QString &)> disableUnit;
+    std::function<bool()> reloadManager;
     std::function<bool(const QString &)> isUnitActive;
     std::function<bool(const QString &, bool, int)> waitForUnitActive;
     std::function<bool(const QString &)> isUnitEnabled;
