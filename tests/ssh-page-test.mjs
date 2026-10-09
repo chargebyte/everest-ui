@@ -135,13 +135,14 @@ function renderPage({ renderSshPage, state, sendPayload }) {
   return { container, page, logs };
 }
 
-function readStatusLoaded(page) {
+function readStatusLoaded(page, parameters = {}) {
   page.onConnectionChange(true);
   page.onMessage({
     type: 'ssh.read.result',
     parameters: {
       socket_active: false,
-      socket_enabled: false
+      socket_enabled: false,
+      ...parameters
     }
   });
 }
@@ -178,6 +179,9 @@ async function main() {
     });
 
     readStatusLoaded(page);
+    assert.equal(container.querySelector('#ssh-status').textContent, 'Off');
+    assert.equal(container.querySelector('#ssh-enable').hidden, false);
+    assert.equal(container.querySelector('#ssh-disable').hidden, true);
     fillPassword(container, 'secret123');
 
     container.querySelector('#ssh-enable').click();
@@ -188,6 +192,27 @@ async function main() {
 
     page.onMessage({ type: 'ssh.enable.ack' });
     assert.deepEqual(actionNames(requests), ['read', 'set_password', 'enable', 'read']);
+  }
+
+  {
+    const requests = [];
+    const { container, page } = renderPage({
+      renderSshPage,
+      state,
+      sendPayload(request) {
+        requests.push(request);
+        return { ok: true };
+      }
+    });
+
+    readStatusLoaded(page, { socket_active: true, socket_enabled: true });
+
+    assert.equal(container.querySelector('#ssh-status').textContent, 'On');
+    assert.equal(container.querySelector('#ssh-enable').hidden, true);
+    assert.equal(container.querySelector('#ssh-disable').hidden, false);
+
+    container.querySelector('#ssh-disable').click();
+    assert.deepEqual(actionNames(requests), ['read', 'disable']);
   }
 
   {
