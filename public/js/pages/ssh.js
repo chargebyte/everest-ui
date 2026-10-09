@@ -17,14 +17,12 @@ export function renderSshPage(container, { sendPayload, addLog }) {
     <section class="section">
       <h2>Status</h2>
       <div class="form-grid ssh-status-grid">
-        <span class="label">SSH socket</span>
-        <span id="ssh-socket-status" class="network-status">Loading...</span>
-        <span class="label">Boot enabled</span>
-        <span id="ssh-enabled-status" class="network-status">Loading...</span>
+        <span class="label">SSH</span>
+        <span id="ssh-status" class="network-status">Loading...</span>
       </div>
       <div class="network-actions">
-        <button class="btn" id="ssh-enable" type="button">Enable SSH</button>
-        <button class="btn btn-secondary network-reset" id="ssh-disable" type="button">Disable SSH</button>
+        <button class="btn ssh-action-button" id="ssh-enable" type="button">Enable SSH</button>
+        <button class="btn btn-secondary network-reset ssh-action-button" id="ssh-disable" type="button">Disable SSH</button>
       </div>
     </section>
     <section class="section">
@@ -49,8 +47,7 @@ export function renderSshPage(container, { sendPayload, addLog }) {
   `;
   container.appendChild(page);
 
-  const socketStatus = page.querySelector('#ssh-socket-status');
-  const enabledStatus = page.querySelector('#ssh-enabled-status');
+  const statusElement = page.querySelector('#ssh-status');
   const enableButton = page.querySelector('#ssh-enable');
   const disableButton = page.querySelector('#ssh-disable');
   const passwordInput = page.querySelector('#ssh-password');
@@ -150,13 +147,14 @@ export function renderSshPage(container, { sendPayload, addLog }) {
     // Password changes are only exposed after the backend reports that SSH is
     // either currently active or enabled for boot.
     sshAvailable = socketActive || socketEnabled;
-    socketStatus.textContent = socketActive ? 'Active' : 'Inactive';
-    enabledStatus.textContent = socketEnabled ? 'Enabled' : 'Disabled';
+    statusElement.textContent = sshAvailable ? 'On' : 'Off';
     updateControls();
   }
 
   function updateControls() {
     const busy = pendingAction !== '';
+    enableButton.hidden = statusLoaded && sshAvailable;
+    disableButton.hidden = !statusLoaded || !sshAvailable;
     enableButton.disabled = !connected || busy;
     disableButton.disabled = !connected || busy;
     setPasswordButton.disabled = !connected || busy || !statusLoaded || !sshAvailable ||

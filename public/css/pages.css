@@ -705,6 +705,12 @@
   background: #dde3f1;
 }
 
+.ssh-action-button {
+  min-width: 180px;
+  padding: 10px 14px;
+  font-size: 16px;
+}
+
 .btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
