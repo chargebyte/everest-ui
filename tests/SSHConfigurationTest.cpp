@@ -56,6 +56,10 @@ private slots:
             calls << QStringLiteral("enable:") + unit;
             return true;
         };
+        operations.reloadManager = [&calls]() {
+            calls << QStringLiteral("reload");
+            return true;
+        };
         SSHConfiguration::setSystemdOperationsForTest(operations);
 
         const ModuleResponse response = SSHConfiguration::handleRequest(ModuleRequest{
@@ -66,7 +70,7 @@ private slots:
         });
 
         QVERIFY(response.success);
-        QCOMPARE(calls, QStringList({QStringLiteral("enable:sshd.socket"),
+        QCOMPARE(calls, QStringList({QStringLiteral("enable:sshd.socket"), QStringLiteral("reload"),
                                      QStringLiteral("start:sshd.socket"),
                                      QStringLiteral("wait:sshd.socket:active")}));
     }
@@ -80,6 +84,10 @@ private slots:
         };
         operations.disableUnit = [&calls](const QString &unit) {
             calls << QStringLiteral("disable:") + unit;
+            return true;
+        };
+        operations.reloadManager = [&calls]() {
+            calls << QStringLiteral("reload");
             return true;
         };
         operations.waitForUnitActive = [&calls](const QString &unit, bool active, int) {
@@ -104,7 +112,123 @@ private slots:
         QCOMPARE(calls, QStringList({QStringLiteral("stop:sshd.socket"),
                                      QStringLiteral("wait:sshd.socket:inactive"),
                                      QStringLiteral("disable:sshd.socket"),
+                                     QStringLiteral("reload"),
                                      QStringLiteral("terminate_sessions")}));
+    }
+
+    void enableFailureRollsBackBootEnablement() {
+        QStringList calls;
+        SSHConfiguration::SystemdOperations operations;
+        operations.enableUnit = [&calls](const QString &unit) {
+            calls << QStringLiteral("enable:") + unit;
+            return true;
+        };
+        operations.disableUnit = [&calls](const QString &unit) {
+            calls << QStringLiteral("disable:") + unit;
+            return true;
+        };
+        operations.reloadManager = [&calls]() {
+            calls << QStringLiteral("reload");
+            return true;
+        };
+        operations.startUnit = [&calls](const QString &unit) {
+            calls << QStringLiteral("start:") + unit;
+            return false;
+        };
+        SSHConfiguration::setSystemdOperationsForTest(operations);
+
+        const ModuleResponse response = SSHConfiguration::handleRequest(ModuleRequest{
+            .requestId = 4,
+            .group = ModuleGroup::SSHConfiguration,
+            .action = QLatin1String(kActionEnable),
+            .parameters = {},
+        });
+
+        QVERIFY(!response.success);
+        QCOMPARE(calls, QStringList({QStringLiteral("enable:sshd.socket"), QStringLiteral("reload"),
+                                     QStringLiteral("start:sshd.socket"),
+                                     QStringLiteral("disable:sshd.socket"), QStringLiteral("reload")}));
+    }
+
+    void enableWaitFailureStopsSocketAndRollsBackBootEnablement() {
+        QStringList calls;
+        SSHConfiguration::SystemdOperations operations;
+        operations.enableUnit = [&calls](const QString &unit) {
+            calls << QStringLiteral("enable:") + unit;
+            return true;
+        };
+        operations.disableUnit = [&calls](const QString &unit) {
+            calls << QStringLiteral("disable:") + unit;
+            return true;
+        };
+        operations.reloadManager = [&calls]() {
+            calls << QStringLiteral("reload");
+            return true;
+        };
+        operations.startUnit = [&calls](const QString &unit) {
+            calls << QStringLiteral("start:") + unit;
+            return true;
+        };
+        operations.stopUnit = [&calls](const QString &unit) {
+            calls << QStringLiteral("stop:") + unit;
+            return true;
+        };
+        operations.waitForUnitActive = [&calls](const QString &unit, bool active, int) {
+            calls << QStringLiteral("wait:") + unit + QLatin1Char(':') +
+                    (active ? QStringLiteral("active") : QStringLiteral("inactive"));
+            return false;
+        };
+        SSHConfiguration::setSystemdOperationsForTest(operations);
+
+        const ModuleResponse response = SSHConfiguration::handleRequest(ModuleRequest{
+            .requestId = 5,
+            .group = ModuleGroup::SSHConfiguration,
+            .action = QLatin1String(kActionEnable),
+            .parameters = {},
+        });
+
+        QVERIFY(!response.success);
+        QCOMPARE(calls, QStringList({QStringLiteral("enable:sshd.socket"), QStringLiteral("reload"),
+                                     QStringLiteral("start:sshd.socket"),
+                                     QStringLiteral("wait:sshd.socket:active"),
+                                     QStringLiteral("stop:sshd.socket"),
+                                     QStringLiteral("disable:sshd.socket"), QStringLiteral("reload")}));
+    }
+
+    void disableReloadFailureKeepsSshDisabled() {
+        QStringList calls;
+        SSHConfiguration::SystemdOperations operations;
+        operations.stopUnit = [&calls](const QString &unit) {
+            calls << QStringLiteral("stop:") + unit;
+            return true;
+        };
+        operations.waitForUnitActive = [&calls](const QString &unit, bool active, int) {
+            calls << QStringLiteral("wait:") + unit + QLatin1Char(':') +
+                    (active ? QStringLiteral("active") : QStringLiteral("inactive"));
+            return true;
+        };
+        operations.disableUnit = [&calls](const QString &unit) {
+            calls << QStringLiteral("disable:") + unit;
+            return true;
+        };
+        int reloadCalls = 0;
+        operations.reloadManager = [&calls, &reloadCalls]() {
+            calls << QStringLiteral("reload");
+            return ++reloadCalls != 1;
+        };
+        SSHConfiguration::setSystemdOperationsForTest(operations);
+
+        const ModuleResponse response = SSHConfiguration::handleRequest(ModuleRequest{
+            .requestId = 6,
+            .group = ModuleGroup::SSHConfiguration,
+            .action = QLatin1String(kActionDisable),
+            .parameters = {},
+        });
+
+        QVERIFY(!response.success);
+        QCOMPARE(calls, QStringList({QStringLiteral("stop:sshd.socket"),
+                                     QStringLiteral("wait:sshd.socket:inactive"),
+                                     QStringLiteral("disable:sshd.socket"), QStringLiteral("reload")}));
     }
 
     void setPasswordValidatesAndWritesRootPassword() {
