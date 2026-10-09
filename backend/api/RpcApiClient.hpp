@@ -12,6 +12,7 @@
 #include <QTimer>
 #include <QUrl>
 #include <QWebSocket>
+#include <QtGlobal>
 
 struct RpcApiModuleConfigResult {
     bool success = false;
@@ -62,6 +63,8 @@ public:
     explicit RpcApiClient(QObject *parent = nullptr);
     void start();
     bool isReady() const;
+    quint64 handshakeGeneration() const;
+    quint64 disconnectionGeneration() const;
     QString appTitle() const;
     virtual RpcApiEvseStateResult getEvseState(int evseIndex);
     virtual RpcApiEvseErrorPresentResult getEvseErrorPresent(int evseIndex);
@@ -99,6 +102,8 @@ private:
     bool m_rpcApiConfigured = false;
     bool m_handshakeComplete = false;
     bool m_connectInProgress = false;
+    quint64 m_handshakeGeneration = 0;
+    quint64 m_disconnectionGeneration = 0;
 };
 
 #endif // RPC_API_CLIENT_HPP

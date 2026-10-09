@@ -19,6 +19,9 @@ export function renderSafetyPage(container, {
     buttonLabel: 'Save Configuration'
   });
   const pendingWrites = new Map();
+  const matrices = [];
+  let verificationInProgress = false;
+  let readRetryTimer = null;
 
   container.innerHTML = '';
   const pageElement = document.createElement('div');
@@ -34,12 +37,17 @@ export function renderSafetyPage(container, {
   pageElement.append(loadingElement, noticeElement, panesElement);
   container.appendChild(pageElement);
 
-  function requestSettings() {
+  function requestSettings(message = 'Loading safety controller settings...') {
+    if (readRetryTimer !== null) {
+      clearTimeout(readRetryTimer);
+      readRetryTimer = null;
+    }
     loadingElement.hidden = false;
     setSafetyLoadingPending(loadingElement, true);
-    setSafetyLoadingMessage(loadingElement, 'Loading safety controller settings...');
+    setSafetyLoadingMessage(loadingElement, message);
     noticeElement.hidden = true;
     panesElement.replaceChildren();
+    matrices.length = 0;
     const request = buildRequest(
       pageConfig.actions.read_settings.group,
       pageConfig.actions.read_settings.action,
@@ -47,6 +55,22 @@ export function renderSafetyPage(container, {
     );
     sendSafetyRequest(sendPayload, addLog, request,
       pageConfig.actions.read_settings.group, pageConfig.actions.read_settings.action);
+  }
+
+  function setAllMatricesDisabled(disabled) {
+    matrices.forEach(({ matrix, writable }) => {
+      matrix.setDisabled(disabled || !writable);
+    });
+  }
+
+  function scheduleReadRetry(message) {
+    if (readRetryTimer !== null) {
+      return;
+    }
+    readRetryTimer = setTimeout(() => {
+      readRetryTimer = null;
+      requestSettings(message);
+    }, 2000);
   }
 
   function createControllerPane(controller, index) {
@@ -84,6 +108,7 @@ export function renderSafetyPage(container, {
       parameters: settings
     }));
     matrix.setDisabled(!controller.writable);
+    matrices.push({ matrix, writable: controller.writable });
     pane.appendChild(matrix.element);
 
     if (controller.message) {
@@ -102,14 +127,17 @@ export function renderSafetyPage(container, {
         matrix.getValues(matrix.requestResponseObject)
       );
       request.parameters.device_name = controller.device_name;
-      pendingWrites.set(request.requestId, { matrix, status, writable: controller.writable });
+      if (pendingWrites.size > 0) {
+        return;
+      }
+      pendingWrites.set(String(request.requestId), { matrix, status, writable: controller.writable });
       status.hidden = true;
-      matrix.setDisabled(true);
+      setAllMatricesDisabled(true);
       const sent = sendSafetyRequest(sendPayload, addLog, request,
         pageConfig.actions.write_settings.group, pageConfig.actions.write_settings.action);
       if (!sent) {
-        pendingWrites.delete(request.requestId);
-        matrix.setDisabled(!controller.writable);
+        pendingWrites.delete(String(request.requestId));
+        setAllMatricesDisabled(false);
         status.textContent = 'The request could not be sent.';
         status.classList.add('is-unavailable');
         status.hidden = false;
@@ -126,6 +154,8 @@ export function renderSafetyPage(container, {
         loadingElement.hidden = true;
         setSafetyLoadingPending(loadingElement, false);
         const parameters = message.parameters || {};
+        pendingWrites.clear();
+        verificationInProgress = false;
         const controllers = parameters.controllers || [];
         if (parameters.resolution_error) {
           noticeElement.textContent = parameters.resolution_error;
@@ -142,18 +172,25 @@ export function renderSafetyPage(container, {
       }
 
       if (message.type === 'safety.write_settings.ack') {
-        addLog('safety.write_settings.ack received');
+        const pending = pendingWrites.get(String(message.requestId));
+        if (pending && message.final === false) {
+          pending.status.textContent = 'Applying Safety Controller settings...';
+          pending.status.classList.remove('is-unavailable');
+          pending.status.hidden = false;
+        } else {
+          addLog('safety.write_settings.ack received');
+        }
         return;
       }
 
       if (message.type === 'safety.write_settings.result' ||
           message.type === 'safety.write_settings.error') {
-        const pending = pendingWrites.get(message.requestId);
+        const pending = pendingWrites.get(String(message.requestId));
         if (!pending) {
           return;
         }
-        pendingWrites.delete(message.requestId);
-        pending.matrix.setDisabled(!pending.writable);
+        pendingWrites.delete(String(message.requestId));
+        setAllMatricesDisabled(false);
         pending.status.textContent = message.type === 'safety.write_settings.result'
           ? 'Safety Controller settings flashed successfully.'
           : message.parameters?.message || getSafetyWriteErrorMessage(message.parameters);
@@ -164,6 +201,14 @@ export function renderSafetyPage(container, {
       if (message.type === 'safety.read_settings.error') {
         const error = message.parameters.error;
         addLog(`safety.read_settings.error: ${error}`);
+        if (error === 'safety_controller_busy') {
+          const messageText = 'A Safety Controller write is in progress; waiting to reload settings...';
+          loadingElement.hidden = false;
+          setSafetyLoadingMessage(loadingElement, messageText);
+          setSafetyLoadingPending(loadingElement, true);
+          scheduleReadRetry(messageText);
+          return;
+        }
         loadingElement.hidden = true;
         setSafetyLoadingMessage(loadingElement, `Unable to load Safety Controller settings: ${error}`);
         setSafetyLoadingPending(loadingElement, false);
@@ -174,7 +219,24 @@ export function renderSafetyPage(container, {
         requestSettings();
       }
     },
+    onRequestTimeout({ requestId, moduleAction }) {
+      if (moduleAction === 'safety:read_settings' && verificationInProgress) {
+        addLog(`safety.read_settings verification timed out: ${requestId}`);
+        requestSettings('The write is still being processed; verifying the controller settings...');
+        return;
+      }
+      if (moduleAction !== 'safety:write_settings' || !pendingWrites.has(String(requestId))) {
+        return;
+      }
+      addLog(`safety.write_settings timed out: ${requestId}`);
+      verificationInProgress = true;
+      requestSettings('The write is still being processed; verifying the controller settings...');
+    },
     destroy() {
+      if (readRetryTimer !== null) {
+        clearTimeout(readRetryTimer);
+        readRetryTimer = null;
+      }
       pendingWrites.clear();
     }
   };
@@ -212,6 +274,9 @@ function sendSafetyRequest(sendPayload, addLog, request, group, action) {
 
 function getSafetyWriteErrorMessage(parameters = {}) {
   const error = parameters.error || 'unknown error';
+  if (error === 'safety_controller_busy') {
+    return 'Unable to apply Safety Controller settings: another system operation is in progress.';
+  }
   if (error !== 'safety_controller_flash_failed') {
     return `Unable to apply Safety Controller settings: ${error}`;
   }

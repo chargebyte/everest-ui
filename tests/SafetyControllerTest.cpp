@@ -55,6 +55,7 @@ public:
     QHash<int, bool> errorsPresent;
     QList<int> stateQueries;
     QList<int> errorQueries;
+    QHash<int, int> transientErrorFailures;
     int failingStateIndex = -1;
     int failingErrorIndex = -1;
 
@@ -68,6 +69,10 @@ public:
 
     RpcApiEvseErrorPresentResult getEvseErrorPresent(int evseIndex) override {
         errorQueries.append(evseIndex);
+        if (transientErrorFailures.value(evseIndex) > 0) {
+            transientErrorFailures[evseIndex] -= 1;
+            return {.success = false, .errorPresent = false, .error = QStringLiteral("rpc_api_not_connected")};
+        }
         if (evseIndex == failingErrorIndex || !errorsPresent.contains(evseIndex)) {
             return {.success = false, .errorPresent = false, .error = QStringLiteral("rpc_status_unavailable")};
         }
@@ -301,6 +306,19 @@ private slots:
         QVERIFY(result.success);
         QVERIFY(result.errorPresent);
         QCOMPARE(rpc.errorQueries, QList<int>({1, 2}));
+    }
+
+    void retriesTransientRpcDisconnectDuringErrorMonitoring() {
+        FakeRpcApiClient rpc;
+        rpc.transientErrorFailures.insert(1, 1);
+        rpc.errorsPresent.insert(1, true);
+
+        const EverestErrorPresentResult result =
+            EverestServiceControl::monitorEverestErrorPresent(&rpc, QList<int>{1});
+
+        QVERIFY(result.success);
+        QVERIFY(result.errorPresent);
+        QCOMPARE(rpc.errorQueries, QList<int>({1, 1}));
     }
 
     void failsPostRestartMonitoringWhenAnyAssociatedEvseCannotBeQueried() {

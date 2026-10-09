@@ -27,9 +27,36 @@ SystemControl::SystemControl(RpcApiClient *rpcApiClient, QObject *parent)
     OCPPConfig::setRpcApiClient(rpcApiClient);
     connect(&FirmwareUpdate::runtime(), &FirmwareUpdateRuntime::responseReady, this,
             &SystemControl::handleAsyncFirmwareResponse);
+    m_safetyWriteKeepAliveTimer.setInterval(10000);
+    connect(&m_safetyWriteKeepAliveTimer, &QTimer::timeout, this, &SystemControl::handleSafetyWriteKeepAlive);
 }
 
 void SystemControl::enqueueRequest(const ModuleRequest &request) {
+    if (request.group == ModuleGroup::SafetyController &&
+        request.action == QLatin1String(kActionReadSettings) && m_safetyWriteInProgress) {
+        emit responseReady(ResponseBuilder::buildResponse(ModuleResponse{
+            .requestId = request.requestId,
+            .group = QLatin1String(kGroupSafety),
+            .action = request.action,
+            .parameters = {{QLatin1String(kError), QStringLiteral("safety_controller_busy")}},
+            .success = false,
+            .final = true,
+        }));
+        return;
+    }
+    if (request.group == ModuleGroup::SafetyController &&
+        request.action == QLatin1String(kActionWriteSettings) &&
+        (m_safetyWriteInProgress || m_pendingRequest.has_value() || !m_queue.isEmpty())) {
+        emit responseReady(ResponseBuilder::buildResponse(ModuleResponse{
+            .requestId = request.requestId,
+            .group = QLatin1String(kGroupSafety),
+            .action = request.action,
+            .parameters = {{QLatin1String(kError), QStringLiteral("safety_controller_busy")}},
+            .success = false,
+            .final = true,
+        }));
+        return;
+    }
     m_queue.enqueue(request);
     processQueue();
 }
@@ -55,6 +82,18 @@ void SystemControl::startRequest(const ModuleRequest &request) {
         return;
     }
     case ModuleGroup::SafetyController: {
+        if (request.action == QLatin1String(kActionWriteSettings)) {
+            m_safetyWriteInProgress = true;
+            const ModuleResponse response = SafetyController::startWriteRequest(
+                request, this, [this](const ModuleResponse &finalResponse) {
+                    handleModuleResponse(finalResponse);
+                });
+            if (!response.final) {
+                m_safetyWriteKeepAliveTimer.start();
+            }
+            handleModuleResponse(response);
+            return;
+        }
         const ModuleResponse response = SafetyController::handleRequest(request);
         handleModuleResponse(response);
         return;
@@ -140,8 +179,32 @@ void SystemControl::handleModuleResponse(const ModuleResponse &response) {
     }
 
     emitResponse(response);
+    if (!response.final) {
+        return;
+    }
+    if (pendingRequest.group == ModuleGroup::SafetyController &&
+        pendingRequest.action == QLatin1String(kActionWriteSettings)) {
+        m_safetyWriteKeepAliveTimer.stop();
+        m_safetyWriteInProgress = false;
+    }
     m_pendingRequest.reset();
     processQueue();
+}
+
+void SystemControl::handleSafetyWriteKeepAlive() {
+    if (!m_pendingRequest.has_value() || m_pendingRequest->group != ModuleGroup::SafetyController ||
+        m_pendingRequest->action != QLatin1String(kActionWriteSettings)) {
+        m_safetyWriteKeepAliveTimer.stop();
+        return;
+    }
+    emitResponse(ModuleResponse{
+        .requestId = m_pendingRequest->requestId,
+        .group = QLatin1String(kGroupSafety),
+        .action = m_pendingRequest->action,
+        .parameters = {},
+        .success = true,
+        .final = false,
+    });
 }
 
 void SystemControl::handleAsyncFirmwareResponse(const ModuleResponse &response) {

@@ -162,6 +162,46 @@ private slots:
         QCOMPARE(response.value(QLatin1String(kKeyRequestId)).toDouble(), 12.0);
     }
 
+    void nonFinalSafetyAckKeepsRequestCorrelatedUntilFinalResult() {
+        QWebSocket client;
+        QSignalSpy requests(&m_handler, &RequestHandler::systemControlEnqueueRequested);
+        QSignalSpy messages(&client, &QWebSocket::textMessageReceived);
+        QVERIFY(requests.isValid());
+        QVERIFY(messages.isValid());
+        connectClient(client);
+
+        sendRequest(client, 51, QLatin1String(kGroupSafety), QLatin1String(kActionWriteSettings));
+        QVERIFY(waitForSignal(requests, 1000));
+        const ModuleRequest request = qvariant_cast<ModuleRequest>(requests.takeFirst().constFirst());
+        m_handler.enqueueResponse(ResponseBuilder::buildResponse(ModuleResponse{
+            .requestId = request.requestId,
+            .group = QLatin1String(kGroupSafety),
+            .action = QLatin1String(kActionWriteSettings),
+            .parameters = {},
+            .success = true,
+            .final = false,
+        }));
+        QVERIFY(waitForSignal(messages, 1000));
+        const QJsonObject interim = parseMessage(messages.first());
+        QCOMPARE(interim.value(QLatin1String(kKeyType)).toString(),
+                 QLatin1String("safety.write_settings.ack"));
+        QVERIFY(!interim.value(QLatin1String(kKeyFinal)).toBool());
+        acknowledge(messages);
+
+        m_handler.enqueueResponse(ResponseBuilder::buildResponse(ModuleResponse{
+            .requestId = request.requestId,
+            .group = QLatin1String(kGroupSafety),
+            .action = QLatin1String(kActionWriteSettings),
+            .parameters = QJsonObject{{QStringLiteral("device_name"), QStringLiteral("ttySC0")}},
+            .success = true,
+            .final = true,
+        }));
+        QVERIFY(waitForSignal(messages, 1000));
+        const QJsonObject finalResponse = parseMessage(messages.first());
+        QCOMPARE(finalResponse.value(QLatin1String(kKeyRequestId)).toDouble(), 51.0);
+        QVERIFY(finalResponse.value(QLatin1String(kKeyFinal)).toBool());
+    }
+
 private:
     void connectClient(QWebSocket &client) {
         QSignalSpy connected(&client, &QWebSocket::connected);

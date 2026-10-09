@@ -16,9 +16,11 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStringList>
+#include <QTimer>
 #include <QTextStream>
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -29,6 +31,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace SafetyController {
 QJsonObject readRequestedParametersFromYaml(const QJsonObject& requestParameters, const QJsonObject& yamlRoot);
@@ -722,6 +725,251 @@ QString raDataFlashCommand(const QString& deviceName, const QString& resetGpioLi
         .arg(deviceName, quoteCommandArgument(resetGpioLineName), quoteCommandArgument(bootModeGpioLineName), binPath);
 }
 
+class SafetyControllerWriteOperation final : public QObject {
+public:
+    SafetyControllerWriteOperation(const ModuleRequest& request, const SafetyControllerDevice& device,
+                                   const QString& yamlPath, const QString& binPath, QJsonObject updatedParameters,
+                                   QObject* owner, std::function<void(const ModuleResponse&)> completed)
+        : QObject(owner), m_response{.requestId = request.requestId,
+                                     .group = QLatin1String(kGroupSafety),
+                                     .action = request.action,
+                                     .parameters = {},
+                                     .success = false,
+                                     .final = true},
+          m_device(device), m_yamlPath(yamlPath), m_binPath(binPath),
+          m_updatedParameters(std::move(updatedParameters)), m_completed(std::move(completed)) {
+        m_process.setProcessChannelMode(QProcess::SeparateChannels);
+        connect(&m_process, &QProcess::started, this, [this]() {
+            m_started = true;
+            m_startTimer.stop();
+            if (m_processError == QStringLiteral("process_start_timeout")) {
+                m_process.kill();
+                return;
+            }
+            m_runTimer.start();
+        });
+        connect(&m_process, &QProcess::readyReadStandardOutput, this, [this]() {
+            m_stdout.append(m_process.readAllStandardOutput());
+        });
+        connect(&m_process, &QProcess::readyReadStandardError, this, [this]() {
+            m_stderr.append(m_process.readAllStandardError());
+        });
+        connect(&m_process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
+                [this](int exitCode, QProcess::ExitStatus exitStatus) {
+                    finishProcess(exitCode, exitStatus == QProcess::NormalExit);
+                });
+        connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+            if (error == QProcess::FailedToStart) {
+                m_processError = m_process.errorString();
+                finishProcess(-1, false);
+            }
+        });
+        m_startTimer.setSingleShot(true);
+        m_runTimer.setSingleShot(true);
+        connect(&m_startTimer, &QTimer::timeout, this, [this]() {
+            m_processError = QStringLiteral("process_start_timeout");
+            m_timedOut = true;
+            m_process.kill();
+            if (m_process.state() == QProcess::NotRunning) {
+                finishProcess(-1, false);
+            }
+        });
+        connect(&m_runTimer, &QTimer::timeout, this, [this]() {
+            m_timedOut = true;
+            m_process.kill();
+            if (m_process.state() == QProcess::NotRunning) {
+                finishProcess(-1, false);
+            }
+        });
+    }
+
+    ModuleResponse start() {
+        m_step = Step::CreateBinary;
+        startProcess(QStringLiteral("ra-pb-create"),
+                     {QLatin1String(kCmdFlagI), m_yamlPath, QLatin1String(kCmdFlagO), m_binPath});
+        return ModuleResponse{
+            .requestId = m_response.requestId,
+            .group = m_response.group,
+            .action = m_response.action,
+            .parameters = {},
+            .success = true,
+            .final = false,
+        };
+    }
+
+private:
+    enum class Step { CreateBinary, Flash };
+
+    void startProcess(const QString& program, const QStringList& arguments) {
+        m_stdout.clear();
+        m_stderr.clear();
+        m_processError.clear();
+        m_started = false;
+        m_timedOut = false;
+        m_finished = false;
+        m_process.start(program, arguments);
+        m_startTimer.start(2000);
+    }
+
+    void finishProcess(int exitCode, bool normalExit) {
+        if (m_finished) {
+            return;
+        }
+        m_finished = true;
+        m_startTimer.stop();
+        m_runTimer.stop();
+        m_stdout.append(m_process.readAllStandardOutput());
+        m_stderr.append(m_process.readAllStandardError());
+
+        ConsoleConnector::RunResult result{
+            .exitCode = exitCode,
+            .stdoutData = m_stdout,
+            .stderrData = m_stderr,
+            .started = m_started,
+            .timedOut = m_timedOut,
+            .normalExit = normalExit,
+            .processError = m_processError,
+        };
+        if (m_step == Step::CreateBinary) {
+            if (!result.started || result.timedOut || !result.normalExit || result.exitCode != 0) {
+                qWarning().noquote()
+                    << QStringLiteral("Safety Controller binary creation failed: started=%1; timed_out=%2; "
+                                      "normal_exit=%3; exit_code=%4; process_error='%5'; stdout='%6'; stderr='%7'")
+                           .arg(result.started)
+                           .arg(result.timedOut)
+                           .arg(result.normalExit)
+                           .arg(result.exitCode)
+                           .arg(result.processError, QString::fromUtf8(result.stdoutData).trimmed(),
+                                QString::fromUtf8(result.stderrData).trimmed());
+                m_response.parameters = {{QLatin1String(kError), QLatin1String(kErrorSafetyControllerPbCreateFailed)}};
+                complete();
+                return;
+            }
+            const EverestStateAllowedResult allowed =
+                EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, m_device.evseIndices);
+            if (!allowed.success) {
+                QString error = allowed.error;
+                if (allowed.error == QLatin1String(kErrorEverestStateNotAllowed)) {
+                    error = QStringLiteral("settings can't be applied because ra-update command cannot be run while "
+                                           "EVerest is in state \"%1\" and needs to be stopped first")
+                                .arg(allowed.state);
+                }
+                m_response.parameters = {{QLatin1String(kError), error}};
+                complete();
+                return;
+            }
+            const EverestServiceControlResult stopResult = EverestServiceControl::executeEverestStop();
+            if (!stopResult.success) {
+                m_response.parameters = {{QLatin1String(kError), stopResult.error}};
+                complete();
+                return;
+            }
+            m_step = Step::Flash;
+            startProcess(QStringLiteral("ra-update"),
+                         {QStringLiteral("-a"), QStringLiteral("data"), QStringLiteral("-d"),
+                          QStringLiteral("/dev/") + m_device.name, QStringLiteral("-r"),
+                          m_device.resetGpioLineName, QStringLiteral("-m"), m_device.bootModeGpioLineName,
+                          QStringLiteral("flash"), m_binPath});
+            return;
+        }
+
+        const bool flashSucceeded = result.started && !result.timedOut && result.normalExit && result.exitCode == 0;
+        if (!flashSucceeded) {
+            qWarning().noquote()
+                << QStringLiteral("Safety Controller flash failed: device='/dev/%1'; started=%2; timed_out=%3; "
+                                  "normal_exit=%4; exit_code=%5; process_error='%6'; stdout='%7'; stderr='%8'")
+                       .arg(m_device.name)
+                       .arg(result.started)
+                       .arg(result.timedOut)
+                       .arg(result.normalExit)
+                       .arg(result.exitCode)
+                       .arg(result.processError, QString::fromUtf8(result.stdoutData).trimmed(),
+                            QString::fromUtf8(result.stderrData).trimmed());
+        }
+
+        const EverestServiceControlResult restartResult = EverestServiceControl::executeEverestRestart(g_rpcApiClient);
+        if (flashSucceeded && !writeSafetyControllerYamlFile(m_device.yamlPath, m_updatedParameters)) {
+            m_response.parameters = {
+                {QLatin1String(kError), QLatin1String(kErrorYamlPublishAfterFlash)},
+                {QLatin1String(kKeyDeviceName), m_device.name},
+                {QStringLiteral("flash_succeeded"), true},
+                {QLatin1String(kKeyMessage), QStringLiteral("The controller was flashed, but its cached YAML could "
+                                                            "not be updated at %1.").arg(m_device.yamlPath)},
+            };
+            complete();
+            return;
+        }
+        if (!restartResult.success) {
+            m_response.parameters = {{QLatin1String(kError), restartResult.error}};
+            complete();
+            return;
+        }
+        if (flashSucceeded) {
+            const EverestErrorPresentResult errorResult =
+                EverestServiceControl::monitorEverestErrorPresent(g_rpcApiClient, m_device.evseIndices);
+            if (errorResult.success) {
+                m_response.parameters = {
+                    {QLatin1String(kError), QStringLiteral("settings put EVerest into an error, check logs and "
+                                                           "revert if necessary")},
+                };
+                complete();
+                return;
+            }
+            if (errorResult.error != QLatin1String(kInfoEverestErrorPresentNotDetected)) {
+                qWarning().noquote() << QStringLiteral("Safety Controller post-restart EVSE monitor failed: "
+                                                       "phase=error_present; error=%1")
+                                            .arg(errorResult.error);
+                m_response.parameters = {{QLatin1String(kError), errorResult.error}};
+                complete();
+                return;
+            }
+            m_response.parameters = {{QLatin1String(kKeyDeviceName), m_device.name}};
+            m_response.success = true;
+            complete();
+            return;
+        }
+
+        QString flashOutcome = QStringLiteral("unexpected_exit");
+        if (!result.started) {
+            flashOutcome = QStringLiteral("start_failed");
+        } else if (result.timedOut) {
+            flashOutcome = QStringLiteral("timeout");
+        } else if (result.normalExit) {
+            flashOutcome = QStringLiteral("nonzero_exit");
+        }
+        m_response.parameters = {
+            {QLatin1String(kError), QLatin1String(kErrorSafetyControllerFlashFailed)},
+            {QStringLiteral("flash_outcome"), flashOutcome},
+            {QStringLiteral("exit_code"), result.exitCode},
+        };
+        complete();
+    }
+
+    void complete() {
+        if (m_completed) {
+            m_completed(m_response);
+        }
+        deleteLater();
+    }
+
+    ModuleResponse m_response;
+    SafetyControllerDevice m_device;
+    QString m_yamlPath;
+    QString m_binPath;
+    QJsonObject m_updatedParameters;
+    std::function<void(const ModuleResponse&)> m_completed;
+    QProcess m_process;
+    QTimer m_startTimer;
+    QTimer m_runTimer;
+    QByteArray m_stdout;
+    QByteArray m_stderr;
+    QString m_processError;
+    Step m_step = Step::CreateBinary;
+    bool m_timedOut = false;
+    bool m_finished = false;
+    bool m_started = false;
+};
+
 ModuleResponse flashSafetyControllerBin(const QString& binPath, const QString& deviceName,
                                         const QString& resetGpioLineName, const QString& bootModeGpioLineName,
                                         const QList<int>& evseIndices, ModuleResponse response, bool& flashSucceeded) {
@@ -961,12 +1209,88 @@ ModuleResponse handleWriteRequest(const ModuleRequest& request) {
     return response;
 }
 
+ModuleResponse startWriteRequest(const ModuleRequest& request, QObject* owner,
+                                 std::function<void(const ModuleResponse&)> completed) {
+    ModuleResponse response{
+        .requestId = request.requestId,
+        .group = QLatin1String(kGroupSafety),
+        .action = request.action,
+        .parameters = {},
+        .success = false,
+        .final = true,
+    };
+    const QString deviceName = request.parameters.value(QLatin1String(kKeyDeviceName)).toString();
+    if (!isSafeDeviceName(deviceName)) {
+        response.parameters = {{QLatin1String(kError), QLatin1String(kErrorDeviceInvalid)}};
+        return response;
+    }
+    if (!g_rpcApiClient || !g_rpcApiClient->isReady()) {
+        response.parameters = {{QLatin1String(kError), QStringLiteral("rpc_api_not_connected")}};
+        return response;
+    }
+
+    const YamlLoadResult configResult = loadEffectiveEverestConfig();
+    if (!configResult.success) {
+        response.parameters = {{QLatin1String(kError), configResult.error}};
+        return response;
+    }
+    const SafetyControllerDeviceResolution resolution =
+        resolveSafetyControllerDevices(configResult.yamlRoot, QStringLiteral("/usr/libexec/everest/modules"));
+    const auto deviceIt =
+        std::find_if(resolution.devices.cbegin(), resolution.devices.cend(),
+                     [&deviceName](const SafetyControllerDevice& device) { return device.name == deviceName; });
+    if (deviceIt == resolution.devices.cend()) {
+        response.parameters = {{QLatin1String(kError), QLatin1String(kErrorDeviceNotConfigured)}};
+        return response;
+    }
+    if (!deviceIt->evseMappingResolved || deviceIt->evseIndices.isEmpty()) {
+        response.parameters = {{QLatin1String(kError), QLatin1String(kErrorEvseMappingUnavailable)}};
+        return response;
+    }
+    const YamlLoadResult yamlLoadResult = loadYamlFile(deviceIt->yamlPath);
+    if (!yamlLoadResult.success) {
+        response.parameters = {{QLatin1String(kError), yamlLoadResult.error}};
+        return response;
+    }
+    const SafetyControllerConfigPathResult binPathResult =
+        loadSafetyControllerSettingsPath(QLatin1String(kConfSafetyControllerSettingsBin));
+    if (!binPathResult.success) {
+        response.parameters = {{QLatin1String(kError), binPathResult.error}};
+        return response;
+    }
+    const SafetyControllerConfigPathResult yamlPathResult =
+        loadSafetyControllerSettingsPath(QLatin1String(kConfSafetyControllerSettingsYaml));
+    if (!yamlPathResult.success) {
+        response.parameters = {{QLatin1String(kError), yamlPathResult.error}};
+        return response;
+    }
+
+    QJsonObject settings = request.parameters;
+    settings.remove(QLatin1String(kKeyDeviceName));
+    QJsonObject updatedParameters = updateRequestParametersInYaml(settings, yamlLoadResult.yamlRoot);
+    if (!writeSafetyControllerYamlFile(yamlPathResult.path, updatedParameters)) {
+        response.parameters = {{QLatin1String(kError), QLatin1String(kErrorSafetyControllerYamlWriteFailed)}};
+        return response;
+    }
+
+    auto* operation = new SafetyControllerWriteOperation(request, *deviceIt, yamlPathResult.path, binPathResult.path,
+                                                         updatedParameters, owner, std::move(completed));
+    return operation->start();
+}
+
 ModuleResponse handleRequest(const ModuleRequest& request) {
     switch (toSafetyControllerAction(request.action)) {
     case SafetyControllerAction::ReadSettings:
         return handleReadRequest(request);
     case SafetyControllerAction::WriteSettings:
-        return handleWriteRequest(request);
+        return ModuleResponse{
+            .requestId = request.requestId,
+            .group = QLatin1String(kGroupSafety),
+            .action = request.action,
+            .parameters = {{QLatin1String(kError), QStringLiteral("safety_controller_write_requires_async_dispatch")}},
+            .success = false,
+            .final = true,
+        };
     case SafetyControllerAction::Unknown:
         throw std::runtime_error("SafetyController::handleRequest got unsupported action");
     }

@@ -37,6 +37,9 @@ void RpcApiClient::start() {
     m_everestConfigPath = readBackendConfigValue(QLatin1String(kConfEverestConfPath));
     m_rpcApiConfigured = false;
     m_configurationError.clear();
+    m_handshakeComplete = false;
+    m_handshakeGeneration = 0;
+    m_disconnectionGeneration = 0;
     m_everestConfigRoot = QJsonObject{};
     m_lastRpcResponse = QJsonObject{};
     m_hasLastRpcResponse = false;
@@ -70,6 +73,14 @@ bool RpcApiClient::isReady() const {
     return m_rpcApiConfigured &&
            m_webSocket.state() == QAbstractSocket::ConnectedState &&
            m_handshakeComplete;
+}
+
+quint64 RpcApiClient::handshakeGeneration() const {
+    return m_handshakeGeneration;
+}
+
+quint64 RpcApiClient::disconnectionGeneration() const {
+    return m_disconnectionGeneration;
 }
 
 QString RpcApiClient::appTitle() const {
@@ -240,6 +251,7 @@ void RpcApiClient::onConnected() {
 }
 
 void RpcApiClient::onDisconnected() {
+    ++m_disconnectionGeneration;
     m_handshakeComplete = false;
     m_connectInProgress = false;
     m_lastRpcResponse = QJsonObject{};
@@ -502,6 +514,7 @@ void RpcApiClient::onHelloResponse(const QJsonObject &response) {
             m_appTitle.clear();
         }
         m_handshakeComplete = true;
+        ++m_handshakeGeneration;
         return;
     }
 

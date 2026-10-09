@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "final": false,
+  "requestId": 42,
+  "type": "safety.write_settings.ack",
+  "parameters": {},
+  "responseId": "r-1"
+}

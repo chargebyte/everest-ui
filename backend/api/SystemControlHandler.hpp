@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QQueue>
 #include <QString>
+#include <QTimer>
 
 #include <optional>
 
@@ -29,6 +30,7 @@ signals:
 private:
     ModuleResponse handleSystemRequest(const ModuleRequest &request) const;
     void handleAsyncFirmwareResponse(const ModuleResponse &response);
+    void handleSafetyWriteKeepAlive();
     bool isFirmwareUpdateStartAccepted(const ModuleResponse &response) const;
     bool isMatchingAsyncFirmwareResponse(const ModuleResponse &response,
                                         const ModuleRequest &pendingRequest) const;
@@ -43,6 +45,8 @@ private:
     class RpcApiClient *m_rpcApiClient = nullptr;
     QQueue<ModuleRequest> m_queue;
     std::optional<ModuleRequest> m_pendingRequest;
+    QTimer m_safetyWriteKeepAliveTimer;
+    bool m_safetyWriteInProgress = false;
 };
 
 #endif // SYSTEM_CONTROL_HPP

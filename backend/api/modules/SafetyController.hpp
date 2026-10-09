@@ -11,6 +11,8 @@
 #include <QJsonObject>
 #include <QString>
 
+#include <functional>
+
 enum class SafetyControllerAction {
     ReadSettings,
     WriteSettings,
@@ -24,10 +26,13 @@ struct SafetyControllerConfigPathResult {
 };
 
 class RpcApiClient;
+class QObject;
 
 namespace SafetyController {
     void setRpcApiClient(RpcApiClient *rpcApiClient);
     ModuleResponse handleRequest(const ModuleRequest &request);
+    ModuleResponse startWriteRequest(const ModuleRequest &request, QObject *owner,
+                                     std::function<void(const ModuleResponse &)> completed);
 }
 
 #endif // SAFETY_CONTROLLER_HPP

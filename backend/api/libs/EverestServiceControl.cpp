@@ -10,6 +10,7 @@
 #include "SystemdService.hpp"
 
 #include <QEventLoop>
+#include <QElapsedTimer>
 #include <QTimer>
 #include <QtGlobal>
 
@@ -30,14 +31,42 @@ constexpr auto kSkipEmptyParts = Qt::SkipEmptyParts;
 constexpr auto kSkipEmptyParts = QString::SkipEmptyParts;
 #endif
 
-int rpcApiReadyTimeoutMs() {
+struct RpcApiReadyTimeout {
+    int milliseconds = 0;
+    QString source;
+};
+
+RpcApiReadyTimeout rpcApiReadyTimeout() {
     const QString configKey = QLatin1String(kRpcApiReadyTimeoutConfigKey);
-    const QStringList candidates = backendConfigValueCandidates(readBackendConfigValue(configKey),
-                                                                readBackendConfigValues(configKey + QLatin1Char('.')),
-                                                                readDeviceTreeCompatibleData());
-    const int timeoutSeconds = resolvePositiveIntegerConfigValue(candidates, kDefaultRpcApiReadyTimeoutSeconds,
-                                                                 kMaxRpcApiReadyTimeoutSeconds, configKey);
-    return timeoutSeconds * 1000;
+    const QString baseValue = readBackendConfigValue(configKey);
+    const QMap<QString, QString> platformValues = readBackendConfigValues(configKey + QLatin1Char('.'));
+    const QByteArray compatibleData = readDeviceTreeCompatibleData();
+    QList<QPair<QString, QString>> candidates;
+    for (const QByteArray& entry : compatibleData.split('\0')) {
+        if (entry.isEmpty()) {
+            continue;
+        }
+        const QString compatible = QString::fromUtf8(entry);
+        const auto value = platformValues.constFind(compatible);
+        if (value != platformValues.constEnd()) {
+            candidates.append({value.value(), configKey + QLatin1Char('.') + compatible});
+        }
+    }
+    if (!baseValue.isEmpty()) {
+        candidates.append({baseValue, configKey});
+    }
+    for (const auto& candidate : candidates) {
+        bool valid = false;
+        const int timeoutSeconds = candidate.first.toInt(&valid);
+        if (valid && timeoutSeconds > 0 && timeoutSeconds <= kMaxRpcApiReadyTimeoutSeconds) {
+            return {timeoutSeconds * 1000, candidate.second};
+        }
+        qWarning().noquote() << QStringLiteral("Ignoring invalid value '%1' for backend config key '%2'; "
+                               "expected a positive integer no greater than %3")
+                                    .arg(candidate.first, candidate.second)
+                                    .arg(kMaxRpcApiReadyTimeoutSeconds);
+    }
+    return {kDefaultRpcApiReadyTimeoutSeconds * 1000, QStringLiteral("built-in default")};
 }
 } // namespace
 
@@ -147,6 +176,7 @@ EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient* rpcApiClient,
     bool errorPresentDetected = false;
     bool waitTimedOut = false;
     QString rpcError;
+    QString transientRpcError;
     QEventLoop waitLoop;
     QTimer pollTimer;
     QTimer timeoutTimer;
@@ -160,10 +190,16 @@ EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient* rpcApiClient,
         for (const int evseIndex : evseIndices) {
             const RpcApiEvseErrorPresentResult errorPresentResult = rpcApiClient->getEvseErrorPresent(evseIndex);
             if (!errorPresentResult.success) {
+                if (errorPresentResult.error == QLatin1String("rpc_api_not_connected") ||
+                    errorPresentResult.error == QLatin1String("rpc_api_request_pending")) {
+                    transientRpcError = errorPresentResult.error;
+                    return;
+                }
                 rpcError = errorPresentResult.error;
                 waitLoop.quit();
                 return;
             }
+            transientRpcError.clear();
             if (errorPresentResult.errorPresent) {
                 errorPresentDetected = true;
                 waitLoop.quit();
@@ -191,6 +227,14 @@ EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient* rpcApiClient,
         };
     }
 
+    if (waitTimedOut && !transientRpcError.isEmpty()) {
+        return EverestErrorPresentResult{
+            .success = false,
+            .errorPresent = false,
+            .error = transientRpcError,
+        };
+    }
+
     if (errorPresentDetected) {
         return EverestErrorPresentResult{
             .success = true,
@@ -209,6 +253,10 @@ EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient* rpcApiClient,
 }
 
 EverestServiceControlResult executeEverestRestart(RpcApiClient* rpcApiClient) {
+    const quint64 previousHandshakeGeneration = rpcApiClient ? rpcApiClient->handshakeGeneration() : 0;
+    const quint64 previousDisconnectionGeneration = rpcApiClient ? rpcApiClient->disconnectionGeneration() : 0;
+    const bool requirePostRestartDisconnect = rpcApiClient && rpcApiClient->isReady();
+    const RpcApiReadyTimeout timeout = rpcApiReadyTimeout();
     SystemdService systemdService;
     if (!systemdService.restartUnit(QStringLiteral("everest.service"))) {
         return EverestServiceControlResult{
@@ -217,15 +265,26 @@ EverestServiceControlResult executeEverestRestart(RpcApiClient* rpcApiClient) {
         };
     }
 
-    const EverestServiceControlResult serviceWaitResult = waitForEverestServiceState(true);
-    if (!serviceWaitResult.success) {
-        return serviceWaitResult;
-    }
-
-    const EverestServiceControlResult rpcReadyResult = waitForRpcApiReady(rpcApiClient);
+    QElapsedTimer restartElapsedTimer;
+    restartElapsedTimer.start();
+    const EverestServiceControlResult rpcReadyResult =
+        waitForRpcApiReady(rpcApiClient, previousHandshakeGeneration, previousDisconnectionGeneration,
+                           requirePostRestartDisconnect, timeout.milliseconds);
     if (!rpcReadyResult.success) {
+        qWarning().noquote() << QStringLiteral("EVerest RPC readiness failed after restart: phase=hello_handshake; "
+                                               "timeout_ms=%1; timeout_source=%2; generation_before=%3; "
+                                               "generation_after=%4")
+                                    .arg(timeout.milliseconds)
+                                    .arg(timeout.source)
+                                    .arg(previousHandshakeGeneration)
+                                    .arg(rpcApiClient ? rpcApiClient->handshakeGeneration() : 0);
         return rpcReadyResult;
     }
+    qInfo().noquote() << QStringLiteral("EVerest RPC ready after restart: phase=hello_handshake; elapsed_ms=%1; "
+                                         "timeout_ms=%2; timeout_source=%3")
+                              .arg(restartElapsedTimer.elapsed())
+                              .arg(timeout.milliseconds)
+                              .arg(timeout.source);
 
     return EverestServiceControlResult{
         .success = true,
@@ -292,7 +351,9 @@ EverestServiceControlResult waitForEverestServiceState(bool shouldBeActive) {
     };
 }
 
-EverestServiceControlResult waitForRpcApiReady(RpcApiClient* rpcApiClient) {
+EverestServiceControlResult waitForRpcApiReady(RpcApiClient* rpcApiClient, quint64 previousHandshakeGeneration,
+                                               quint64 previousDisconnectionGeneration,
+                                               bool requirePostRestartDisconnect, int timeoutMs) {
     if (!rpcApiClient) {
         return EverestServiceControlResult{
             .success = false,
@@ -302,17 +363,22 @@ EverestServiceControlResult waitForRpcApiReady(RpcApiClient* rpcApiClient) {
 
     bool rpcApiReady = false;
     bool waitTimedOut = false;
+    QElapsedTimer elapsedTimer;
     QEventLoop waitLoop;
     QTimer pollTimer;
     QTimer timeoutTimer;
 
     pollTimer.setInterval(kEverestRestartPollIntervalMs);
     pollTimer.setSingleShot(false);
-    timeoutTimer.setInterval(rpcApiReadyTimeoutMs());
+    timeoutTimer.setInterval(timeoutMs);
     timeoutTimer.setSingleShot(true);
 
     QObject::connect(&pollTimer, &QTimer::timeout, &waitLoop, [&]() {
-        if (!rpcApiClient->isReady()) {
+        if (!rpcApiClient->isReady() || rpcApiClient->handshakeGeneration() <= previousHandshakeGeneration) {
+            return;
+        }
+        if (requirePostRestartDisconnect &&
+            rpcApiClient->disconnectionGeneration() <= previousDisconnectionGeneration) {
             return;
         }
 
@@ -325,6 +391,7 @@ EverestServiceControlResult waitForRpcApiReady(RpcApiClient* rpcApiClient) {
     });
 
     pollTimer.start();
+    elapsedTimer.start();
     timeoutTimer.start();
     waitLoop.exec();
 
@@ -332,6 +399,15 @@ EverestServiceControlResult waitForRpcApiReady(RpcApiClient* rpcApiClient) {
     timeoutTimer.stop();
 
     if (waitTimedOut || !rpcApiReady) {
+        qWarning().noquote() << QStringLiteral("Timed out waiting for a fresh EVerest RPC handshake: "
+                                               "elapsed_ms=%1; timeout_ms=%2; generation_before=%3; "
+                                               "generation_after=%4; disconnects_before=%5; disconnects_after=%6")
+                                    .arg(elapsedTimer.elapsed())
+                                    .arg(timeoutMs)
+                                    .arg(previousHandshakeGeneration)
+                                    .arg(rpcApiClient->handshakeGeneration())
+                                    .arg(previousDisconnectionGeneration)
+                                    .arg(rpcApiClient->disconnectionGeneration());
         return EverestServiceControlResult{
             .success = false,
             .error = QStringLiteral("rpc_api_not_connected"),

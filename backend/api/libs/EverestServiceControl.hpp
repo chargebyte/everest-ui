@@ -8,6 +8,7 @@
 #include <QList>
 #include <QString>
 #include <QStringList>
+#include <QtGlobal>
 
 class RpcApiClient;
 
@@ -38,7 +39,9 @@ EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient *rpcApiClient,
 EverestServiceControlResult executeEverestRestart(RpcApiClient *rpcApiClient);
 EverestServiceControlResult executeEverestStop();
 EverestServiceControlResult waitForEverestServiceState(bool shouldBeActive);
-EverestServiceControlResult waitForRpcApiReady(RpcApiClient *rpcApiClient);
+EverestServiceControlResult waitForRpcApiReady(RpcApiClient *rpcApiClient, quint64 previousHandshakeGeneration,
+                                               quint64 previousDisconnectionGeneration,
+                                               bool requirePostRestartDisconnect, int timeoutMs);
 }
 
 #endif // EVEREST_SERVICE_CONTROL_HPP
