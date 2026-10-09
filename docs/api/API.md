@@ -6,7 +6,7 @@ This document describes the API implemented by this source tree. It is an implem
 
 `webserver` listens on the configured HTTP address (default `0.0.0.0:80`) and upgrades `GET /ws` to WebSocket. The browser-facing URL is `ws://<same-host>:<port>/ws`, or `wss://<same-host>:<port>/ws` when the page is served over HTTPS. The path and defaults are in `backend/webserver/config/frontend.conf.in`.
 
-The webserver proxies the upgraded connection internally to `ws://127.0.0.1:9002` by default (`backend_ws` in the frontend config; backend listener port is `backend_port` in `backend/api/config/backend.conf`). A browser normally connects only to the webserver. Text and binary WebSocket messages are forwarded unchanged. Only one UI session is accepted.
+The webserver proxies the upgraded connection internally to `ws://127.0.0.1:9002` by default (`backend_ws` in the frontend config; backend listener port is `backend_port` in `backend/api/config/backend.conf`). The backend binds only to IPv4 loopback and is not reachable from the network. A browser must connect through the authenticated webserver. Text and binary WebSocket messages are forwarded unchanged. Only one UI session is accepted.
 
 ## Authentication
 

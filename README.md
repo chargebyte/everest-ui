@@ -137,7 +137,8 @@ rejected rather than partially rewritten. See [`docs/api/API.md`](docs/api/API.m
 
 Two relevant ports can be specified.
 
-The port for the UI websocket connection is configured in [`backend.conf`](./backend/api/config/backend.conf).
+`backend_port` in [`backend.conf`](./backend/api/config/backend.conf) is the internal API WebSocket port.
+The API binds only to IPv4 loopback (`127.0.0.1`), so external clients must use the authenticated webserver.
 
 In `frontend.conf`, it needs to be ensured that the same backend port is used in the entry `backend_ws`.
 
