@@ -1,5 +1,29 @@
 find_package(${QT_PACKAGE_NAME} REQUIRED COMPONENTS Test)
 
+add_executable(request_parsing_test
+    RequestParsingTest.cpp
+    ../backend/webserver/http/RequestParsing.cpp
+    ../backend/webserver/http/StaticResponse.cpp
+)
+target_include_directories(request_parsing_test PRIVATE ../backend/webserver/http)
+target_link_libraries(request_parsing_test PRIVATE
+    ${QT_PACKAGE_NAME}::Core
+    ${QT_PACKAGE_NAME}::Test
+)
+add_test(NAME request_parsing_test COMMAND request_parsing_test)
+
+add_executable(request_security_test
+    RequestSecurityTest.cpp
+    ../backend/webserver/http/RequestSecurity.cpp
+)
+target_include_directories(request_security_test PRIVATE ../backend/webserver/http)
+target_link_libraries(request_security_test PRIVATE
+    ${QT_PACKAGE_NAME}::Core
+    ${QT_PACKAGE_NAME}::Network
+    ${QT_PACKAGE_NAME}::Test
+)
+add_test(NAME request_security_test COMMAND request_security_test)
+
 add_executable(pcap_test
     PCAPTest.cpp
     ../backend/api/modules/PCAP.cpp
@@ -112,3 +136,27 @@ target_link_libraries(everest_config_test
 )
 
 add_test(NAME everest_config_test COMMAND everest_config_test)
+
+add_executable(password_reset_test
+    PasswordResetTest.cpp
+    ../backend/webserver/ws/WebSocketProxySession.cpp
+    ../backend/webserver/auth/AuthManager.cpp
+    ../backend/webserver/auth/PasswordReset.cpp
+    ../backend/webserver/config/ServerConfig.cpp
+    ../backend/webserver/http/RequestParsing.cpp
+    ../backend/webserver/http/RequestSecurity.cpp
+    ../backend/webserver/http/StaticServer.cpp
+    ../backend/webserver/http/StaticContent.cpp
+    ../backend/webserver/http/StaticResponse.cpp
+    ../backend/webserver/ui/AppTitleResolver.cpp
+    ../backend/webserver/ui/UiOccupancyTracker.cpp
+)
+target_include_directories(password_reset_test PRIVATE
+    ../backend/webserver/auth ../backend/webserver/config
+    ../backend/webserver/http ../backend/webserver/ui ../backend/webserver/ws
+)
+target_link_libraries(password_reset_test PRIVATE
+    ${QT_PACKAGE_NAME}::Core ${QT_PACKAGE_NAME}::Network
+    ${QT_PACKAGE_NAME}::WebSockets ${QT_PACKAGE_NAME}::Test
+)
+add_test(NAME password_reset_test COMMAND password_reset_test)

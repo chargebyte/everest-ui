@@ -21,6 +21,9 @@ public:
                           UiOccupancyTracker *uiOccupancyTracker,
                           QObject *parent = nullptr);
 
+public slots:
+    void invalidateCredentials();
+
 private:
     static constexpr int kMaxPendingMessages = 256;
     static constexpr qint64 kMaxPendingBytes = 2 * 1024 * 1024;

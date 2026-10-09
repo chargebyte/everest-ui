@@ -21,6 +21,7 @@ public:
 
     bool createUser(const QString &username, const QString &password, QString &errorMessage);
     bool authenticate(const QString &username, const QString &password) const;
+    bool resetUser(QString &errorMessage);
 
     QString createSession(const QString &username);
     bool validateSession(const QString &sessionId);

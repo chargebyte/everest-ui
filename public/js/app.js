@@ -2,6 +2,9 @@
 
 // Copyright 2026 chargebyte GmbH
 
+import { mountPasswordReset } from './ui/passwordReset.js';
+import { formatAuthError } from './ui/authErrors.js';
+
 import { createTransport } from './transport.js';
 import { renderLayout } from './ui/layout.js';
 import { appendLog, state } from './state.js';
@@ -23,6 +26,8 @@ import { renderNetworkPage } from './pages/network.js';
 import { MODULE_IDS } from './protocol/constants.js';
 import { buildRequest } from './protocol/requestBuilder.js';
 
+let disposePasswordReset = () => {};
+
 async function init() {
   const appRoot = createAppRoot();
   const status = await readAuthStatus();
@@ -32,7 +37,7 @@ async function init() {
     return;
   }
   if (!status.authenticated) {
-    renderAuthGate(appRoot, 'login', appTitle);
+    renderAuthGate(appRoot, 'login', appTitle, '', status.passwordReset);
     return;
   }
   if (status.uiBusy) {
@@ -43,6 +48,7 @@ async function init() {
 }
 
 async function startAuthenticatedApp(appRoot, appTitle) {
+  disposePasswordReset();
   document.title = appTitle;
   const appContext = await initializeApp(appRoot, appTitle);
   startAppRuntime(appContext);
@@ -97,7 +103,8 @@ function escapeHtml(value) {
   }[character]));
 }
 
-function renderAuthGate(appRoot, mode, appTitle = 'EVerest WebUI', message = '') {
+function renderAuthGate(appRoot, mode, appTitle = 'EVerest WebUI', message = '', resetStatus = null) {
+  disposePasswordReset();
   const title = mode === 'setup' ? `Create ${appTitle} user` : `${appTitle} Login`;
   const button = mode === 'setup' ? 'Create user' : 'Login';
   document.title = title;
@@ -119,6 +126,7 @@ function renderAuthGate(appRoot, mode, appTitle = 'EVerest WebUI', message = '')
             <label for="auth-password">Password</label>
             <input id="auth-password" name="password" type="password" autocomplete="${mode === 'setup' ? 'new-password' : 'current-password'}" required />
           </div>
+          ${mode === 'login' ? '<div id="password-reset"></div>' : ''}
           <p class="auth-error" id="auth-error"></p>
           <button class="auth-button" type="submit">${button}</button>
         </form>
@@ -126,6 +134,13 @@ function renderAuthGate(appRoot, mode, appTitle = 'EVerest WebUI', message = '')
     </div>
   `;
 
+  if (mode === 'login') {
+    disposePasswordReset = mountPasswordReset(appRoot.querySelector('#password-reset'), resetStatus, {
+      readStatus: readAuthStatus,
+      reset: () => sendAuthRequest('/auth/reset', { confirm: true }),
+      onSetup: () => renderAuthGate(appRoot, 'setup', appTitle)
+    });
+  }
   const errorNode = appRoot.querySelector('#auth-error');
   errorNode.textContent = message;
   appRoot.querySelector('#auth-form').addEventListener('submit', async (event) => {
@@ -153,6 +168,7 @@ function renderAuthGate(appRoot, mode, appTitle = 'EVerest WebUI', message = '')
 }
 
 function renderBusyGate(appRoot, appTitle = 'EVerest WebUI') {
+  disposePasswordReset();
   document.title = `${appTitle} Busy`;
   appRoot.innerHTML = `
     <div class="auth-shell">
@@ -179,20 +195,6 @@ function renderBusyGate(appRoot, appTitle = 'EVerest WebUI') {
   appRoot.querySelector('#busy-reload-button')?.addEventListener('click', () => {
     window.location.reload();
   });
-}
-
-function formatAuthError(error) {
-  const messages = {
-    invalid_credentials: 'Username or password is incorrect.',
-    missing_credentials: 'Enter a username and password.',
-    invalid_json: 'The login request could not be processed.',
-    setup_not_required: 'A WebUI user already exists.',
-    setup_required: 'Create the WebUI user before logging in.',
-    'Invalid username': 'Use only letters, numbers, dots, dashes, or underscores for the username.',
-    'Invalid password': 'Use a password with at least 8 characters.'
-  };
-
-  return messages[error] || error || 'Authentication failed.';
 }
 
 async function sendAuthRequest(path, payload) {
@@ -245,6 +247,11 @@ function createAppTransport(appContext) {
       state.network.interfacesRequestPending = false;
       handlePcapConnectionChange(false);
       appContext.state.page?.onConnectionChange?.(false);
+      if (event?.reason === 'credentials reset' || event?.reason === 'session expired') {
+        appContext.transport?.close();
+        init().catch(() => window.location.reload());
+        return;
+      }
       if (event?.reason === 'ui already in use') {
         renderBusyGate(createAppRoot(), appContext.appTitle);
       }
@@ -318,11 +325,16 @@ function startAppRuntime(appContext) {
 function bindLogout(appContext) {
   appContext.layout.logoutButton?.addEventListener('click', async () => {
     appContext.transport?.close();
-    await fetch('/auth/logout', {
-      method: 'POST',
-      credentials: 'same-origin'
-    });
-    renderAuthGate(createAppRoot(), 'login', appContext.appTitle);
+    try {
+      const response = await fetch('/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin'
+      });
+      if (!response.ok) throw new Error(`Logout failed: HTTP ${response.status}`);
+      await init();
+    } catch (_) {
+      window.location.reload();
+    }
   });
 }
 
