@@ -8,12 +8,14 @@
 #include <QList>
 #include <QString>
 #include <QStringList>
+#include <QtGlobal>
 
 class RpcApiClient;
 
 struct EverestServiceControlResult {
     bool success = false;
     QString error;
+    bool errorPresent = false;
 };
 
 struct EverestStateAllowedResult {
@@ -34,11 +36,15 @@ EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient *rpcApiClient, c
 EverestStateAllowedResult checkEverestStateAllowed(RpcApiClient *rpcApiClient, const QList<int> &evseIndices,
                                                    const QStringList &allowedStates);
 EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient *rpcApiClient, int evseIndex);
-EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient *rpcApiClient, const QList<int> &evseIndices);
-EverestServiceControlResult executeEverestRestart(RpcApiClient *rpcApiClient);
+EverestErrorPresentResult monitorEverestErrorPresent(RpcApiClient* rpcApiClient, const QList<int>& evseIndices,
+                                                     int timeoutMs = 10000, bool initialErrorPresent = false);
+EverestServiceControlResult executeEverestRestart(RpcApiClient* rpcApiClient, const QList<int>& evseIndices = {});
 EverestServiceControlResult executeEverestStop();
 EverestServiceControlResult waitForEverestServiceState(bool shouldBeActive);
-EverestServiceControlResult waitForRpcApiReady(RpcApiClient *rpcApiClient);
+EverestServiceControlResult waitForRpcApiReady(RpcApiClient* rpcApiClient, quint64 previousHandshakeGeneration,
+                                               quint64 previousDisconnectionGeneration,
+                                               bool requirePostRestartDisconnect, int timeoutMs,
+                                               const QList<int>& evseIndices = {});
 }
 
 #endif // EVEREST_SERVICE_CONTROL_HPP

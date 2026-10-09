@@ -4,6 +4,7 @@
 
 #include "../backend/api/modules/SafetyController.cpp"
 
+#include <QElapsedTimer>
 #include <QFile>
 #include <QTemporaryDir>
 #include <QTest>
@@ -55,8 +56,26 @@ public:
     QHash<int, bool> errorsPresent;
     QList<int> stateQueries;
     QList<int> errorQueries;
+    QHash<int, int> transientErrorFailures;
     int failingStateIndex = -1;
     int failingErrorIndex = -1;
+    bool ready = true;
+    quint64 generation = 2;
+    quint64 disconnects = 2;
+    QString transientError = QStringLiteral("rpc_api_not_connected");
+    QHash<int, int> statusDelayMs;
+    QHash<int, QString> permanentErrors;
+    QList<int> statusBudgets;
+
+    bool isReady() const override {
+        return ready;
+    }
+    quint64 handshakeGeneration() const override {
+        return generation;
+    }
+    quint64 disconnectionGeneration() const override {
+        return disconnects;
+    }
 
     RpcApiEvseStateResult getEvseState(int evseIndex) override {
         stateQueries.append(evseIndex);
@@ -66,13 +85,53 @@ public:
         return {.success = true, .state = states.value(evseIndex), .error = QString()};
     }
 
-    RpcApiEvseErrorPresentResult getEvseErrorPresent(int evseIndex) override {
+    RpcApiEvseErrorPresentResult getEvseErrorPresent(int evseIndex, int timeoutMs = 4000) override {
         errorQueries.append(evseIndex);
+        statusBudgets.append(timeoutMs);
+        const int delay = statusDelayMs.value(evseIndex);
+        if (delay > 0) {
+            QEventLoop loop;
+            QTimer::singleShot(qMin(delay, timeoutMs), &loop, &QEventLoop::quit);
+            loop.exec();
+            if (delay >= timeoutMs) {
+                return {.success = false, .errorPresent = false, .error = QStringLiteral("rpc_api_no_response")};
+            }
+        }
+        if (permanentErrors.contains(evseIndex)) {
+            return {.success = false, .errorPresent = false, .error = permanentErrors.value(evseIndex)};
+        }
+        if (transientErrorFailures.value(evseIndex) > 0) {
+            transientErrorFailures[evseIndex] -= 1;
+            return {.success = false, .errorPresent = false, .error = transientError};
+        }
         if (evseIndex == failingErrorIndex || !errorsPresent.contains(evseIndex)) {
             return {.success = false, .errorPresent = false, .error = QStringLiteral("rpc_status_unavailable")};
         }
         return {.success = true, .errorPresent = errorsPresent.value(evseIndex), .error = QString()};
     }
+};
+
+class ScopedProcessEnvironment final {
+public:
+    ScopedProcessEnvironment(const QString& path, RpcApiClient* rpc) :
+        m_hadPath(qEnvironmentVariableIsSet("PATH")), m_previousPath(qgetenv("PATH")), m_previousRpc(g_rpcApiClient) {
+        qputenv("PATH", path.toLocal8Bit());
+        setRpcApiClient(rpc);
+    }
+
+    ~ScopedProcessEnvironment() {
+        if (m_hadPath) {
+            qputenv("PATH", m_previousPath);
+        } else {
+            qunsetenv("PATH");
+        }
+        setRpcApiClient(m_previousRpc);
+    }
+
+private:
+    bool m_hadPath;
+    QByteArray m_previousPath;
+    RpcApiClient* m_previousRpc;
 };
 } // namespace
 
@@ -80,6 +139,124 @@ class SafetyControllerTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void delayedBinaryCreationReceivesExecutionBudget_data() {
+        QTest::addColumn<int>("exitCode");
+        QTest::addColumn<int>("startTimeoutMs");
+        QTest::newRow("success-advances-to-safety-check") << 0 << 2000;
+        QTest::newRow("startup-budget-stops-after-launch") << 0 << 100;
+        QTest::newRow("ordinary-process-failure") << 7 << 2000;
+    }
+
+    void delayedBinaryCreationReceivesExecutionBudget() {
+        QFETCH(int, exitCode);
+        QFETCH(int, startTimeoutMs);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString executable = directory.filePath(QStringLiteral("ra-pb-create"));
+        QVERIFY(writeTextFile(executable,
+                              QByteArray("#!/bin/sh\n/bin/sleep 0.15\nexit ") + QByteArray::number(exitCode) + '\n'));
+        QVERIFY(QFile::setPermissions(executable, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+        FakeRpcApiClient rpc;
+        ScopedProcessEnvironment environment(directory.path(), &rpc);
+        if (exitCode != 0) {
+            QTest::ignoreMessage(
+                QtWarningMsg, QRegularExpression(QStringLiteral("Safety Controller binary creation failed: .*"
+                                                                "started=1; timed_out=0; normal_exit=1; exit_code=7; .*"
+                                                                "timeout_ms=30000")));
+        }
+        int completions = 0;
+        ModuleResponse result;
+        QObject owner;
+        ConsoleConnector::ExecOptions options;
+        options.startTimeoutMs = startTimeoutMs;
+        auto* operation = new SafetyControllerWriteOperation(
+            {}, {}, directory.filePath(QStringLiteral("settings.yaml")),
+            directory.filePath(QStringLiteral("settings.bin")), {}, &owner,
+            [&](const ModuleResponse& response) {
+                result = response;
+                ++completions;
+            },
+            options);
+        QElapsedTimer elapsed;
+        elapsed.start();
+        const ModuleResponse initial = operation->start();
+        QVERIFY(!initial.final);
+        QTRY_COMPARE(completions, 1);
+        QVERIFY(elapsed.elapsed() >= 150);
+        QVERIFY(result.final);
+        QVERIFY(!result.success);
+        QCOMPARE(result.parameters.value(QStringLiteral("error")).toString(),
+                 exitCode == 0 ? QStringLiteral("safety_controller_evse_mapping_unavailable")
+                               : QStringLiteral("safety_controller_pb_create_failed"));
+        QVERIFY(rpc.stateQueries.isEmpty());
+        QTest::qWait(200);
+        QCOMPARE(completions, 1);
+    }
+
+    void executionTimeoutKillsProcessAndCompletesOnce() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString executable = directory.filePath(QStringLiteral("ra-pb-create"));
+        QVERIFY(writeTextFile(executable, "#!/bin/sh\nexec /bin/sleep 5\n"));
+        QVERIFY(QFile::setPermissions(executable, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+        ScopedProcessEnvironment environment(directory.path(), nullptr);
+        ConsoleConnector::ExecOptions options;
+        options.syncTimeoutMs = 150;
+        QTest::ignoreMessage(
+            QtWarningMsg, QRegularExpression(QStringLiteral("Safety Controller binary creation failed: .*"
+                                                            "started=1; timed_out=1; normal_exit=0; .*"
+                                                            "process_error='process_run_timeout'; .*timeout_ms=150")));
+        int completions = 0;
+        ModuleResponse result;
+        QObject owner;
+        auto* operation = new SafetyControllerWriteOperation(
+            {}, {}, directory.filePath(QStringLiteral("settings.yaml")),
+            directory.filePath(QStringLiteral("settings.bin")), {}, &owner,
+            [&](const ModuleResponse& response) {
+                result = response;
+                ++completions;
+            },
+            options);
+        QElapsedTimer elapsed;
+        elapsed.start();
+        operation->start();
+        QTRY_COMPARE(completions, 1);
+        QVERIFY(elapsed.elapsed() >= options.syncTimeoutMs);
+        QCOMPARE(result.parameters.value(QStringLiteral("error")).toString(),
+                 QStringLiteral("safety_controller_pb_create_failed"));
+        QTest::qWait(200);
+        QCOMPARE(completions, 1);
+    }
+
+    void missingExecutableCompletesWithoutStaleTimeout() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        ScopedProcessEnvironment environment(directory.path(), nullptr);
+        ConsoleConnector::ExecOptions options;
+        options.startTimeoutMs = 100;
+        options.syncTimeoutMs = 150;
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral("Safety Controller binary creation failed: .*"
+                                                               "started=0; timed_out=0; .*timeout_ms=100")));
+        int completions = 0;
+        ModuleResponse result;
+        QObject owner;
+        auto* operation = new SafetyControllerWriteOperation(
+            {}, {}, directory.filePath(QStringLiteral("settings.yaml")),
+            directory.filePath(QStringLiteral("settings.bin")), {}, &owner,
+            [&](const ModuleResponse& response) {
+                result = response;
+                ++completions;
+            },
+            options);
+        operation->start();
+        QTRY_COMPARE(completions, 1);
+        QCOMPARE(result.parameters.value(QStringLiteral("error")).toString(),
+                 QStringLiteral("safety_controller_pb_create_failed"));
+        QTest::qWait(250);
+        QCOMPARE(completions, 1);
+    }
+
     void resolvesConfiguredDevicesAndDeduplicatesByDeviceName() {
         const QJsonObject config = activeConfig({
             {QStringLiteral("evse_a"), evseModule({QStringLiteral("board_a"), QStringLiteral("board_shared")}, 1)},
@@ -301,6 +478,119 @@ private slots:
         QVERIFY(result.success);
         QVERIFY(result.errorPresent);
         QCOMPARE(rpc.errorQueries, QList<int>({1, 2}));
+    }
+
+    void readinessWaitsForHelloAndEveryEvse() {
+        FakeRpcApiClient rpc;
+        rpc.ready = false;
+        rpc.generation = 1;
+        rpc.disconnects = 1;
+        rpc.errorsPresent = {{1, false}, {2, false}};
+        QTimer::singleShot(30, &rpc, [&] {
+            rpc.ready = true;
+            rpc.generation = 2;
+            rpc.disconnects = 2;
+        });
+        const auto result = EverestServiceControl::waitForRpcApiReady(&rpc, 1, 1, true, 600, {1, 2});
+        QVERIFY(result.success);
+        QCOMPARE(rpc.errorQueries, QList<int>({1, 2}));
+        QVERIFY(!result.errorPresent);
+    }
+
+    void readinessRetriesNoResponseAndKeepsInitialErrors() {
+        FakeRpcApiClient rpc;
+        rpc.transientError = QStringLiteral("rpc_api_no_response");
+        rpc.transientErrorFailures.insert(2, 1);
+        rpc.errorsPresent = {{1, true}, {2, false}};
+        const auto result = EverestServiceControl::waitForRpcApiReady(&rpc, 1, 1, true, 700, {1, 2});
+        QVERIFY(result.success);
+        QVERIFY(result.errorPresent);
+        QCOMPARE(rpc.errorQueries, QList<int>({1, 2, 1, 2}));
+        rpc.errorQueries.clear();
+        const auto monitor = EverestServiceControl::monitorEverestErrorPresent(&rpc, {1, 2}, 100, result.errorPresent);
+        QVERIFY(monitor.success);
+        QVERIFY(monitor.errorPresent);
+        QVERIFY(rpc.errorQueries.isEmpty());
+    }
+
+    void readinessDoesNotAcceptStaleHelloOrMissingDisconnect() {
+        FakeRpcApiClient rpc;
+        rpc.errorsPresent.insert(1, false);
+        rpc.generation = 1;
+        QVERIFY(!EverestServiceControl::waitForRpcApiReady(&rpc, 1, 1, true, 40, {1}).success);
+        rpc.generation = 2;
+        rpc.disconnects = 1;
+        QVERIFY(!EverestServiceControl::waitForRpcApiReady(&rpc, 1, 1, true, 40, {1}).success);
+        QVERIFY(rpc.errorQueries.isEmpty());
+    }
+
+    void readinessSharesDeadlineAcrossHelloAndEvses() {
+        FakeRpcApiClient rpc;
+        rpc.ready = false;
+        rpc.errorsPresent = {{1, false}, {2, false}};
+        rpc.statusDelayMs = {{1, 70}, {2, 100}};
+        QTimer::singleShot(20, &rpc, [&] { rpc.ready = true; });
+        QElapsedTimer elapsed;
+        elapsed.start();
+        const auto result = EverestServiceControl::waitForRpcApiReady(&rpc, 1, 1, true, 300, {1, 2});
+        QVERIFY(!result.success);
+        QCOMPARE(result.error, QStringLiteral("rpc_api_no_response"));
+        QVERIFY(elapsed.elapsed() >= 300);
+        QVERIFY(elapsed.elapsed() < 650);
+        QCOMPARE(rpc.statusBudgets.size(), 2);
+        QVERIFY(rpc.statusBudgets.at(0) <= 110);
+        QVERIFY(rpc.statusBudgets.at(1) < rpc.statusBudgets.at(0));
+    }
+
+    void readinessFailsPermanentStatusErrorsWithoutRetrying() {
+        FakeRpcApiClient rpc;
+        rpc.permanentErrors.insert(2, QStringLiteral("rpc_api_error_present_missing"));
+        rpc.errorsPresent.insert(1, false);
+        const auto result = EverestServiceControl::waitForRpcApiReady(&rpc, 1, 1, true, 600, {1, 2});
+        QVERIFY(!result.success);
+        QCOMPARE(result.error, QStringLiteral("rpc_api_error_present_missing"));
+        QCOMPARE(rpc.errorQueries, QList<int>({1, 2}));
+    }
+
+    void helloOnlyReadinessDoesNotQueryEvses() {
+        FakeRpcApiClient rpc;
+        const auto result = EverestServiceControl::waitForRpcApiReady(&rpc, 1, 1, true, 100);
+        QVERIFY(result.success);
+        QVERIFY(rpc.errorQueries.isEmpty());
+    }
+
+    void monitoringRetriesNoResponseWithinObservationWindow() {
+        FakeRpcApiClient rpc;
+        rpc.transientError = QStringLiteral("rpc_api_no_response");
+        rpc.transientErrorFailures.insert(1, 1);
+        rpc.errorsPresent = {{1, false}, {2, false}};
+        const auto result = EverestServiceControl::monitorEverestErrorPresent(&rpc, {1, 2}, 450);
+        QCOMPARE(result.error, QString::fromLatin1(kInfoEverestErrorPresentNotDetected));
+        QVERIFY(rpc.errorQueries.count(1) >= 2);
+    }
+
+    void monitoringRetainsUnresolvedErrorsForOtherEvses() {
+        FakeRpcApiClient rpc;
+        rpc.transientError = QStringLiteral("rpc_api_no_response");
+        rpc.transientErrorFailures.insert(1, 100);
+        rpc.errorsPresent = {{1, false}, {2, false}};
+        const auto result = EverestServiceControl::monitorEverestErrorPresent(&rpc, {1, 2}, 80);
+        QVERIFY(!result.success);
+        QCOMPARE(result.error, QStringLiteral("rpc_api_no_response"));
+        QCOMPARE(rpc.errorQueries, QList<int>({1, 2}));
+    }
+
+    void retriesTransientRpcDisconnectDuringErrorMonitoring() {
+        FakeRpcApiClient rpc;
+        rpc.transientErrorFailures.insert(1, 1);
+        rpc.errorsPresent.insert(1, true);
+
+        const EverestErrorPresentResult result =
+            EverestServiceControl::monitorEverestErrorPresent(&rpc, QList<int>{1});
+
+        QVERIFY(result.success);
+        QVERIFY(result.errorPresent);
+        QCOMPARE(rpc.errorQueries, QList<int>({1, 1}));
     }
 
     void failsPostRestartMonitoringWhenAnyAssociatedEvseCannotBeQueried() {

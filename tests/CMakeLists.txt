@@ -180,6 +180,29 @@ target_link_libraries(safety_controller_test
 
 add_test(NAME safety_controller_test COMMAND safety_controller_test)
 
+add_executable(rpc_api_client_test
+    RpcApiClientTest.cpp
+    ../backend/api/RpcApiClient.cpp
+    ../backend/api/libs/BackendConfig.cpp
+    ../backend/api/libs/YamlUtils.cpp
+)
+
+target_include_directories(rpc_api_client_test PRIVATE
+    "${CMAKE_BINARY_DIR}"
+    "${CMAKE_SOURCE_DIR}/backend/api"
+    "${CMAKE_SOURCE_DIR}/backend/api/libs"
+)
+
+target_link_libraries(rpc_api_client_test
+    ${QT_PACKAGE_NAME}::Core
+    ${QT_PACKAGE_NAME}::Network
+    ${QT_PACKAGE_NAME}::WebSockets
+    ${QT_PACKAGE_NAME}::Test
+    yaml-cpp
+)
+
+add_test(NAME rpc_api_client_test COMMAND rpc_api_client_test)
+
 add_executable(console_connector_test
     ConsoleConnectorTest.cpp
     ../backend/api/libs/ConsoleConnector.cpp
@@ -191,3 +214,9 @@ target_link_libraries(console_connector_test
 )
 
 add_test(NAME console_connector_test COMMAND console_connector_test)
+
+foreach(rpc_test_target IN ITEMS rpc_api_client_test safety_controller_test everest_config_test)
+    target_compile_definitions(${rpc_test_target} PRIVATE
+        $<$<BOOL:${EVEREST_UI_RPC_DEBUG}>:EVEREST_UI_RPC_DEBUG>
+    )
+endforeach()

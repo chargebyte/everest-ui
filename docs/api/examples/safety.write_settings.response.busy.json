@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 43,
+  "type": "safety.write_settings.error",
+  "parameters": {
+    "error": "safety_controller_busy"
+  },
+  "responseId": "r-2"
+}

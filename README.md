@@ -83,8 +83,30 @@ The authentication database is created on first setup at:
 The EVerest paths are configured in [`backend.conf`](./backend/api/config/backend.conf).
 
 The `everest_rpc_api_ready_timeout_seconds` backend setting controls how long the UI backend waits for the EVerest
-JSON-RPC API to reconnect after restarting EVerest. It defaults to 15 seconds. Optional platform overrides use the
-exact `/proc/device-tree/compatible` value as a suffix; the first matching compatible entry takes precedence.
+JSON-RPC API to become ready after restarting EVerest. It defaults to 20 seconds. For Safety Controller writes,
+one shared budget covers a fresh Hello handshake and valid status responses from every associated EVSE,
+measured from the accepted restart. A separate 10-second error observation follows; errors already reported
+during readiness are retained. Temporary disconnects and missing status responses are retried within the
+remaining budget. Optional platform overrides use the exact `/proc/device-tree/compatible` value as a suffix;
+the first matching compatible entry takes precedence. Explicitly configured values remain authoritative:
+update an installed `everest_rpc_api_ready_timeout_seconds=15` to `20` to use the new default duration.
+
+Safety Controller operation summaries and warnings remain available in the backend journal. Verbose RPC
+connection, request, retry, readiness, and Safety Controller phase tracing is compiled out by default.
+Enable it explicitly with the CMake option below (independent of Debug/Release build type):
+
+```bash
+cmake -S . -B build -DEVEREST_UI_RPC_DEBUG=ON
+cmake --build build --parallel 4
+```
+
+Use `-DEVEREST_UI_RPC_DEBUG=OFF` and rebuild to disable tracing again. The option also applies to the
+RPC-related test targets. Verbose messages include EVSE/request IDs, remaining budget, and connection
+generations. To collect one complete Save cycle, run:
+
+```bash
+journalctl -b -u webui.service -u everest.service -o short-monotonic
+```
 
 PCAP captures are bounded by these backend settings:
 
