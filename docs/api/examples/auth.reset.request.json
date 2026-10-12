@@ -1,0 +1,11 @@
+{
+  "method": "POST",
+  "path": "/auth/reset",
+  "headers": {
+    "Content-Type": "application/json",
+    "Origin": "http://192.168.7.1"
+  },
+  "body": {
+    "confirm": true
+  }
+}

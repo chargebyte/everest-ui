@@ -6,6 +6,7 @@
 #include "AppTitleResolver.hpp"
 #include "AuthManager.hpp"
 #include "RequestParsing.hpp"
+#include "RequestSecurity.hpp"
 #include "StaticContent.hpp"
 #include "UiOccupancyTracker.hpp"
 
@@ -75,6 +76,8 @@ StaticServer::StaticServer(const ServerConfig &cfg,
                            UiOccupancyTracker *uiOccupancyTracker,
                            QObject *parent)
     : QTcpServer(parent),
+      m_passwordReset(cfg.passwordResetBootStatusPath, cfg.passwordResetWindowSeconds),
+      m_allowedHosts(RequestSecurity::allowedHosts(cfg.allowedHosts, cfg.allowOriginUrl.host())),
       m_authManager(authManager),
       m_appTitleResolver(appTitleResolver),
       m_uiOccupancyTracker(uiOccupancyTracker),
@@ -82,7 +85,7 @@ StaticServer::StaticServer(const ServerConfig &cfg,
       m_wsPath(cfg.normalizedWsPath.toUtf8()),
       m_maxRequestBytes(cfg.maxRequestBytes),
       m_enforceOrigin(cfg.enforceOrigin),
-      m_allowOriginUrl(cfg.allowOriginUrl) {}
+      m_allowOriginUrl(cfg.allowOriginUrl) { m_passwordReset.initialize(); }
 
 
 void StaticServer::incomingConnection(qintptr handle) {
@@ -136,6 +139,25 @@ void StaticServer::handleRequest(QTcpSocket *socket, QTimer *headerTimer) {
         return;
     }
 
+    const bool sensitiveAuthMutation = request.normalizedPath == "/auth/reset" ||
+                                       request.normalizedPath == "/auth/setup";
+    if (sensitiveAuthMutation) {
+        const int hostStatus = RequestSecurity::validateHost(request, m_allowedHosts);
+        if (hostStatus != 200) {
+            if (hostStatus == 421) {
+                sendResponseAndClose(
+                    socket,
+                    makeJsonResponse(421, QStringLiteral("Misdirected Request"),
+                                     QJsonObject{{QStringLiteral("error"),
+                                                  QStringLiteral("host_not_allowed")}}));
+            } else {
+                sendResponseAndClose(socket, makeTextResponse(
+                    hostStatus, QStringLiteral("Bad Request"), QByteArrayLiteral("Invalid Host")));
+            }
+            return;
+        }
+    }
+
     if (isAuthEndpoint(request.normalizedPath)) {
         socket->readAll();
         response = handleAuthRequest(request,
@@ -184,7 +206,8 @@ void StaticServer::handleRequest(QTcpSocket *socket, QTimer *headerTimer) {
 
 bool StaticServer::isAuthEndpoint(const QByteArray &path) const {
     return path == QByteArrayLiteral("/auth/status") || path == QByteArrayLiteral("/auth/setup") ||
-           path == QByteArrayLiteral("/auth/login") || path == QByteArrayLiteral("/auth/logout");
+           path == QByteArrayLiteral("/auth/login") || path == QByteArrayLiteral("/auth/logout") ||
+           path == QByteArrayLiteral("/auth/reset");
 }
 
 bool StaticServer::isPublicFrontendAsset(const ParsedRequest &request) const {
@@ -238,6 +261,7 @@ StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request,
                                             {QStringLiteral("authenticated"),
                                              authenticated},
                                             {QStringLiteral("uiBusy"), uiBusy},
+                                            {QStringLiteral("passwordReset"), m_passwordReset.status(m_authManager->hasUser())},
                                             {QStringLiteral("appTitle"),
                                              m_appTitleResolver
                                                  ? m_appTitleResolver->title()
@@ -247,6 +271,44 @@ StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request,
     if (request.method != "POST") {
         return makeTextResponse(405, QStringLiteral("Method Not Allowed"),
                                 QByteArrayLiteral("Method Not Allowed"));
+    }
+
+    if (request.normalizedPath == "/auth/reset" || request.normalizedPath == "/auth/setup") {
+        const int validation = RequestSecurity::validateAuthMutation(request);
+        if (validation != 200) {
+            if (validation == 500) {
+                return makeJsonResponse(
+                    500, QStringLiteral("Internal Server Error"),
+                    QJsonObject{{QStringLiteral("error"), QStringLiteral("internal_error")}});
+            }
+            if (validation == 415) {
+                return makeJsonResponse(
+                    415, QStringLiteral("Unsupported Media Type"),
+                    QJsonObject{{QStringLiteral("error"),
+                                 QStringLiteral("unsupported_media_type")}});
+            }
+            return makeJsonResponse(
+                validation, QStringLiteral("Forbidden"),
+                QJsonObject{{QStringLiteral("error"), QStringLiteral("origin_forbidden")}});
+        }
+    }
+
+    if (request.normalizedPath == "/auth/reset") {
+        bool valid = false;
+        const auto body = parseJsonObjectBody(request, valid);
+        if (!valid || body.value("confirm") != QJsonValue(true)) {
+            return makeJsonResponse(400, "Bad Request", QJsonObject{{"error", "reset_confirmation_required"}});
+        }
+        QString error;
+        const int code = m_passwordReset.reset(*m_authManager, error);
+        if (code != 200) {
+            return makeJsonResponse(code, code == 503 ? "Service Unavailable" :
+                code == 403 ? "Forbidden" : "Internal Server Error", QJsonObject{{"error", error}});
+        }
+        emit credentialsReset();
+        auto response = makeJsonResponse(200, "OK", QJsonObject{{"success", true}});
+        response.headers.append({"Set-Cookie", clearSessionCookieHeader()});
+        return response;
     }
 
     if (request.normalizedPath == "/auth/logout") {

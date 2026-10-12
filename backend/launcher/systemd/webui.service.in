@@ -5,6 +5,9 @@ After=network.target everest.service
 
 [Service]
 Type=simple
+RuntimeDirectory=everest-ui
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
 ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/webui
 Restart=on-failure
 RestartSec=2s

@@ -10,3 +10,9 @@ max_request_bytes=8192
 log_level=info
 # Set to browser Origin value (for example: http://127.0.0.1:8080) to enforce origin checks.
 allow_origin=
+
+# Password reset: seconds from the first webserver start per boot; 0 disables reset.
+password_reset_window_seconds=60
+password_reset_boot_status_path=/sys/bus/nvmem/devices/44440000.bbnsm:nvmem0/nvmem
+# Additional trusted hostnames/IP literals, comma-separated, without schemes or ports.
+allowed_hosts=

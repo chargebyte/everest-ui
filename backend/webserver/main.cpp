@@ -78,9 +78,22 @@ int main(int argc, char *argv[]) {
                      });
 
     QObject::connect(&wsServer, &QWebSocketServer::newConnection, &wsServer,
-                     [&wsServer, &cfg, &uiOccupancyTracker]() {
+                     [&wsServer, &cfg, &uiOccupancyTracker, &server, &authManager]() {
                          QWebSocket *client = wsServer.nextPendingConnection();
                          if (!client) {
+                             return;
+                         }
+                         // Revalidate after upgrade: a reset may have invalidated the cookie
+                         // while the WebSocket handshake was in flight.
+                         QString session;
+                         for (const auto &cookie : client->request().rawHeader("Cookie").split(';')) {
+                             const auto value = cookie.trimmed();
+                             const QByteArray prefix = QByteArray(AuthManager::kSessionCookieName) + '=';
+                             if (value.startsWith(prefix)) session = QString::fromUtf8(value.mid(prefix.size()));
+                         }
+                         if (!authManager.hasUser() || !authManager.validateSession(session)) {
+                             client->close(QWebSocketProtocol::CloseCodePolicyViolated, "session expired");
+                             QObject::connect(client, &QWebSocket::disconnected, client, &QObject::deleteLater);
                              return;
                          }
                          if (cfg.debugLog) {
@@ -90,8 +103,10 @@ int main(int argc, char *argv[]) {
                          // WebSocket-upgrade flow, Step 3 + Step 4:
                          // For this upgraded browser socket, create a proxy session that
                          // connects to backend WS and then bridges traffic both ways.
-                         new WebSocketProxySession(client, cfg.backendUrl,
+                         auto *proxy = new WebSocketProxySession(client, cfg.backendUrl,
                                                    &uiOccupancyTracker, client);
+                         QObject::connect(&server, &StaticServer::credentialsReset,
+                                          proxy, &WebSocketProxySession::invalidateCredentials);
                      });
 
     if (!server.listen(cfg.bindAddress, cfg.port)) {
