@@ -41,7 +41,9 @@ jobs:
       - uses: actions/checkout@v7
       - id: make
         name: Build with cmake and make
-        run: cmake -B build-test -DEVEREST_UI_BUILD_TESTS=ON && make -C build-test -j$(nproc)
+        run: |
+          cmake -B build-test -DEVEREST_UI_BUILD_TESTS=ON -DCMAKE_CXX_FLAGS="-Werror"
+          cmake --build build-test --parallel $(nproc)
       - id: ctest
         name: Run C++ tests
         run: ctest --test-dir build-test --output-on-failure
