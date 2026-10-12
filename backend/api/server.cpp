@@ -92,12 +92,12 @@ MinimalWebSocketServer::~MinimalWebSocketServer() {
 }
 
 bool MinimalWebSocketServer::start(quint16 port) {
-    if (!m_server->listen(QHostAddress::Any, port)) {
+    if (!m_server->listen(QHostAddress::LocalHost, port)) {
         qWarning() << "Failed to start server on port" << port;
         return false;
     }
 
-    qInfo() << "Server listening on 0.0.0.0, port" << port;
+    qInfo() << "Server listening on 127.0.0.1, port" << port;
 
     // make sure whenever a new connection to the server is registered the function to handle this
     // new connection is called
