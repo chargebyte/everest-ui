@@ -9,7 +9,7 @@
       {
         "name": "eth0",
         "index": 2,
-        "kind": "ethernet",
+        "kind": "ether",
         "operational_state": "routable",
         "setup_state": "configured",
         "driver": "e1000e",
