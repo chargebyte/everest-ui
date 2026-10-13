@@ -88,6 +88,7 @@ add_test(NAME network_configuration_test COMMAND network_configuration_test)
 add_executable(ssh_configuration_test
     SSHConfigurationTest.cpp
     ../backend/api/modules/SSHConfiguration.cpp
+    ../backend/api/libs/BackendConfig.cpp
     ../backend/api/libs/SystemdService.cpp
 )
 

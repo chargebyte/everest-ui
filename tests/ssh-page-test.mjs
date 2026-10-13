@@ -140,8 +140,8 @@ function readStatusLoaded(page, parameters = {}) {
   page.onMessage({
     type: 'ssh.read.result',
     parameters: {
-      socket_active: false,
-      socket_enabled: false,
+      active: null,
+      enabled: false,
       ...parameters
     }
   });
@@ -205,7 +205,7 @@ async function main() {
       }
     });
 
-    readStatusLoaded(page, { socket_active: true, socket_enabled: true });
+    readStatusLoaded(page, { active: true, enabled: true });
 
     assert.equal(container.querySelector('#ssh-status').textContent, 'On');
     assert.equal(container.querySelector('#ssh-enable').hidden, true);
@@ -213,6 +213,36 @@ async function main() {
 
     container.querySelector('#ssh-disable').click();
     assert.deepEqual(actionNames(requests), ['read', 'disable']);
+  }
+
+  for (const { active, enabled, expected } of [
+    { active: null, enabled: true, expected: 'On' },
+    { active: null, enabled: false, expected: 'Off' },
+    { active: false, enabled: true, expected: 'On' },
+    { active: true, enabled: false, expected: 'On' },
+    { active: false, enabled: false, expected: 'Off' }
+  ]) {
+    const requests = [];
+    const { container, page } = renderPage({
+      renderSshPage,
+      state,
+      sendPayload(request) {
+        requests.push(request);
+        return { ok: true };
+      }
+    });
+    readStatusLoaded(page, { active, enabled });
+    assert.equal(container.querySelector('#ssh-status').textContent, expected);
+    fillPassword(container, 'example-password');
+    assert.equal(container.querySelector('#ssh-set-password').disabled, expected === 'Off');
+    if (expected === 'On') {
+      container.querySelector('#ssh-disable').click();
+      assert.equal(container.querySelector('#ssh-warning').textContent, 'Disabling SSH.');
+      page.onMessage({ type: 'ssh.disable.ack' });
+      assert.deepEqual(actionNames(requests), ['read', 'disable', 'read']);
+      page.onMessage({ type: 'ssh.read.result', parameters: { active: null, enabled: false } });
+      assert.equal(container.querySelector('#ssh-status').textContent, 'Off');
+    }
   }
 
   {

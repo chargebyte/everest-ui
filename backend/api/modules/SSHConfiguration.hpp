@@ -7,6 +7,9 @@
 
 #include "RequestResponseTypes.hpp"
 
+#include <QByteArray>
+#include <QStringList>
+
 #include <functional>
 
 enum class SSHConfigurationAction {
@@ -31,12 +34,27 @@ struct SystemdOperations {
     std::function<bool()> terminateSessions;
 };
 
-using PasswordWriter = std::function<bool(const QString &)>;
+using PasswordWriter = std::function<bool(const QString&)>;
 
-ModuleResponse handleRequest(const ModuleRequest &request);
+struct AutostartResult {
+    bool started = false;
+    bool timedOut = false;
+    bool normalExit = false;
+    int exitCode = -1;
+    QByteArray stdoutData;
+    QByteArray stderrData;
+    QString processError;
+};
+
+using AutostartRunner = std::function<AutostartResult(const QString&, const QStringList&)>;
+using ControlMethodReader = std::function<QString()>;
+
+ModuleResponse handleRequest(const ModuleRequest& request);
 void setSystemdOperationsForTest(SystemdOperations operations);
 void setPasswordWriterForTest(PasswordWriter writer);
+void setAutostartRunnerForTest(AutostartRunner runner);
+void setControlMethodReaderForTest(ControlMethodReader reader);
 void resetTestOverrides();
-}
+} // namespace SSHConfiguration
 
 #endif // SSH_CONFIGURATION_HPP

@@ -140,13 +140,13 @@ export function renderSshPage(container, { sendPayload, addLog }) {
   }
 
   function updateStatus(parameters = {}) {
-    const socketActive = parameters.socket_active === true;
-    const socketEnabled = parameters.socket_enabled === true;
+    const active = parameters.active === true;
+    const enabled = parameters.enabled === true;
 
     statusLoaded = true;
     // Password changes are only exposed after the backend reports that SSH is
     // either currently active or enabled for boot.
-    sshAvailable = socketActive || socketEnabled;
+    sshAvailable = active || enabled;
     statusElement.textContent = sshAvailable ? 'On' : 'Off';
     updateControls();
   }
@@ -271,7 +271,7 @@ export function renderSshPage(container, { sendPayload, addLog }) {
     const result = sendAction('disable');
     if (result.ok) {
       setBusy('disable');
-      setWarning('Disabling SSH and stopping active sessions.');
+      setWarning('Disabling SSH.');
     }
   });
 

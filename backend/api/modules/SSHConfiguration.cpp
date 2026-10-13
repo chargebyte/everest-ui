@@ -4,9 +4,11 @@
 
 #include "SSHConfiguration.hpp"
 
+#include "BackendConfig.hpp"
 #include "ProtocolSchema.hpp"
 #include "SystemdService.hpp"
 
+#include <QDebug>
 #include <QJsonObject>
 #include <QProcess>
 #include <QStringList>
@@ -17,8 +19,17 @@
 namespace {
 constexpr char kSshSocketUnit[] = "sshd.socket";
 constexpr char kSshServiceUnit[] = "sshd.service";
-constexpr char kParameterSocketActive[] = "socket_active";
-constexpr char kParameterSocketEnabled[] = "socket_enabled";
+constexpr char kParameterActive[] = "active";
+constexpr char kParameterEnabled[] = "enabled";
+constexpr char kAutostartPath[] = "/usr/sbin/ssh-autostart";
+constexpr char kControlMethodKey[] = "ssh_control_method";
+constexpr char kAutostartMethod[] = "ssh-autostart";
+constexpr char kSystemdMethod[] = "systemd";
+constexpr char kErrorAutostartFailed[] = "ssh_autostart_failed";
+constexpr char kErrorControlMethodInvalid[] = "ssh_control_method_invalid";
+constexpr int kStartTimeoutMs = 3000;
+constexpr int kRunTimeoutMs = 30000;
+constexpr int kKillTimeoutMs = 1000;
 constexpr char kParameterPassword[] = "password";
 constexpr char kErrorSystemdFailed[] = "ssh_systemd_failed";
 constexpr char kErrorPasswordFailed[] = "ssh_password_failed";
@@ -26,6 +37,8 @@ constexpr char kErrorUnsupportedAction[] = "unsupported_action";
 
 SSHConfiguration::SystemdOperations g_systemdOperationsOverride;
 SSHConfiguration::PasswordWriter g_passwordWriterOverride;
+SSHConfiguration::AutostartRunner g_autostartRunnerOverride;
+SSHConfiguration::ControlMethodReader g_controlMethodReaderOverride;
 
 SSHConfigurationAction toSSHConfigurationAction(const QString &action) {
     if (action == QLatin1String(kActionRead)) {
@@ -54,7 +67,72 @@ ModuleResponse makeResponse(const ModuleRequest &request) {
     };
 }
 
-QStringList availableSshUnits(SystemdService &systemdService) {
+SSHConfiguration::AutostartResult runAutostart(const QString& program, const QStringList& arguments) {
+    QProcess process;
+    SSHConfiguration::AutostartResult result;
+    process.start(program, arguments);
+    result.started = process.waitForStarted(kStartTimeoutMs);
+    if (!result.started) {
+        result.timedOut = process.error() == QProcess::Timedout;
+        result.processError = process.errorString();
+        if (process.state() != QProcess::NotRunning) {
+            process.kill();
+            process.waitForFinished(kKillTimeoutMs);
+        }
+    } else if (!process.waitForFinished(kRunTimeoutMs)) {
+        result.timedOut = true;
+        result.processError = process.errorString();
+        process.kill();
+        process.waitForFinished(kKillTimeoutMs);
+    } else if (process.exitStatus() != QProcess::NormalExit) {
+        result.processError = process.errorString();
+    }
+    result.normalExit = result.started && !result.timedOut && process.exitStatus() == QProcess::NormalExit;
+    result.exitCode = result.started ? process.exitCode() : -1;
+    result.stdoutData = process.readAllStandardOutput();
+    result.stderrData = process.readAllStandardError();
+    return result;
+}
+
+ModuleResponse handleAutostartRequest(const ModuleRequest& request, SSHConfigurationAction action) {
+    ModuleResponse response = makeResponse(request);
+    const QString argument = action == SSHConfigurationAction::Read     ? QStringLiteral("--status")
+                             : action == SSHConfigurationAction::Enable ? QStringLiteral("--enable")
+                                                                        : QStringLiteral("--disable");
+    const auto result = g_autostartRunnerOverride ? g_autostartRunnerOverride(QLatin1String(kAutostartPath), {argument})
+                                                  : runAutostart(QLatin1String(kAutostartPath), {argument});
+    const bool completed = result.started && !result.timedOut && result.normalExit;
+    if (action == SSHConfigurationAction::Read) {
+        const QByteArray status = result.stdoutData.trimmed();
+        if (completed &&
+            ((result.exitCode == 0 && status == "enabled") || (result.exitCode == 1 && status == "disabled"))) {
+            response.parameters = {{QLatin1String(kParameterEnabled), result.exitCode == 0},
+                                   {QLatin1String(kParameterActive), QJsonValue::Null}};
+            response.success = true;
+            return response;
+        }
+    } else if (completed && result.exitCode == 0) {
+        response.success = true;
+        return response;
+    }
+    qWarning().noquote() << QStringLiteral(
+                                "SSH autostart failed: command='%1 %2'; started=%3; timed_out=%4; normal_exit=%5; "
+                                "exit_code=%6; process_error='%7'; stdout='%8'; stderr='%9'; "
+                                "start_timeout_ms=%10; execution_timeout_ms=%11")
+                                .arg(QLatin1String(kAutostartPath), argument)
+                                .arg(result.started)
+                                .arg(result.timedOut)
+                                .arg(result.normalExit)
+                                .arg(result.exitCode)
+                                .arg(result.processError, QString::fromUtf8(result.stdoutData).trimmed(),
+                                     QString::fromUtf8(result.stderrData).trimmed())
+                                .arg(kStartTimeoutMs)
+                                .arg(kRunTimeoutMs);
+    response.parameters = {{QLatin1String(kError), QLatin1String(kErrorAutostartFailed)}};
+    return response;
+}
+
+QStringList availableSshUnits(SystemdService& systemdService) {
     const auto isUnitAvailable = g_systemdOperationsOverride.isUnitAvailable
                                      ? g_systemdOperationsOverride.isUnitAvailable
                                      : [&systemdService](const QString &unit) {
@@ -70,7 +148,7 @@ QStringList availableSshUnits(SystemdService &systemdService) {
     return units;
 }
 
-QJsonObject readStatusParameters() {
+QJsonObject readSystemdStatusParameters() {
     SystemdService systemdService;
     const auto isUnitActive = g_systemdOperationsOverride.isUnitActive
                                   ? g_systemdOperationsOverride.isUnitActive
@@ -89,8 +167,8 @@ QJsonObject readStatusParameters() {
         enabled = enabled || isUnitEnabled(unit);
     }
     return QJsonObject{
-        {QLatin1String(kParameterSocketActive), active},
-        {QLatin1String(kParameterSocketEnabled), enabled},
+        {QLatin1String(kParameterActive), active},
+        {QLatin1String(kParameterEnabled), enabled},
     };
 }
 
@@ -145,16 +223,45 @@ void setPasswordWriterForTest(PasswordWriter writer) {
     g_passwordWriterOverride = std::move(writer);
 }
 
+void setAutostartRunnerForTest(AutostartRunner runner) {
+    g_autostartRunnerOverride = std::move(runner);
+}
+
+void setControlMethodReaderForTest(ControlMethodReader reader) {
+    g_controlMethodReaderOverride = std::move(reader);
+}
+
 void resetTestOverrides() {
     g_systemdOperationsOverride = {};
     g_passwordWriterOverride = {};
+    g_autostartRunnerOverride = {};
+    g_controlMethodReaderOverride = {};
 }
 
-ModuleResponse handleRequest(const ModuleRequest &request) {
-    switch (toSSHConfigurationAction(request.action)) {
+ModuleResponse handleRequest(const ModuleRequest& request) {
+    const SSHConfigurationAction action = toSSHConfigurationAction(request.action);
+    if (action == SSHConfigurationAction::Read || action == SSHConfigurationAction::Enable ||
+        action == SSHConfigurationAction::Disable) {
+        QString method = (g_controlMethodReaderOverride ? g_controlMethodReaderOverride()
+                                                        : readBackendConfigValue(QLatin1String(kControlMethodKey)))
+                             .trimmed();
+        if (method.isEmpty()) {
+            method = QLatin1String(kAutostartMethod);
+        }
+        if (method == QLatin1String(kAutostartMethod)) {
+            return handleAutostartRequest(request, action);
+        }
+        if (method != QLatin1String(kSystemdMethod)) {
+            qWarning().noquote() << QStringLiteral("Invalid ssh_control_method: '%1'").arg(method);
+            ModuleResponse response = makeResponse(request);
+            response.parameters = {{QLatin1String(kError), QLatin1String(kErrorControlMethodInvalid)}};
+            return response;
+        }
+    }
+    switch (action) {
     case SSHConfigurationAction::Read: {
         ModuleResponse response = makeResponse(request);
-        response.parameters = readStatusParameters();
+        response.parameters = readSystemdStatusParameters();
         response.success = true;
         return response;
     }
