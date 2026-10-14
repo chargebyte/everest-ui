@@ -110,6 +110,43 @@ The optional `available_features` entry in `backend.conf` is a comma-separated l
 If it is omitted, all features are enabled. The Network Configuration page is enabled when `network` is
 listed; for example, `available_features=network`. Other feature names are reserved for future use.
 
+## SSH Configuration
+
+The SSH Configuration page enables or disables SSH and changes the Linux **root account password**.
+This password is separate from the Web UI login password. When enabling SSH with filled password fields,
+the page changes the password first and enables SSH only after that operation succeeds. SSH can also be
+enabled without changing the password.
+
+Select the SSH control method in `/etc/everest-ui/backend.conf`:
+
+```ini
+ssh_control_method=ssh-autostart
+```
+
+`ssh-autostart` is the default, including when the setting is missing or empty. It requires
+`/usr/sbin/ssh-autostart`, which the backend calls with `--status`, `--enable`, or `--disable`.
+The helper determines what happens to listening sockets and existing SSH sessions. The UI does not run
+additional service-stop or session-termination commands in this mode, so a successful disable operation
+does not independently confirm that existing SSH connections were closed.
+
+Set `ssh_control_method=systemd` to use the alternative systemd method. Enable prefers `sshd.socket`,
+falling back to `sshd.service` if the socket unit is unavailable. Disable stops and disables the available
+SSH units and explicitly terminates SSH session processes through `pkill`. There is no automatic fallback
+between control methods when an operation fails.
+
+The API reports `enabled` (enablement) and `active` (current runtime activity). In helper mode, `active` is
+`null` because the helper reports only enablement. In systemd mode, these are separate booleans: SSH can be
+active without being enabled for automatic startup, or enabled while currently stopped. The page shows On
+when either value is true; this is not a connection test.
+
+Password changes use `chpasswd`, supplying the password through stdin rather than command-line arguments,
+and work independently of the configured SSH control method. The target must provide `chpasswd`; systemd
+mode also requires system-bus access and `pkill`. The backend must have permission to execute the selected
+helper or manage the SSH units and to change the root password, normally by running as root.
+
+See the [SSH API reference](docs/api/API.md#ssh-configuration) for command deadlines, password validation,
+errors, and [JSON request/response examples](docs/api/API.md#example-templates).
+
 ## Network Configuration
 
 The Network Configuration page reads the selected systemd-networkd file reported by `networkctl status` and
