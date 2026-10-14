@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "safety.write_settings.error",
+  "parameters": {
+    "error": "Safety Controller settings were applied successfully. EVerest reported an error state after restarting. Check the EVerest error logs.",
+    "message": "Safety Controller settings were applied successfully. EVerest reported an error state after restarting. Check the EVerest error logs."
+  },
+  "responseId": "r-2"
+}

@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "ssh.enable.error",
+  "parameters": {
+    "error": "ssh_autostart_failed"
+  },
+  "responseId": "r-2"
+}

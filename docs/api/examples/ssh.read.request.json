@@ -1,0 +1,6 @@
+{
+  "requestId": 42,
+  "group": "ssh",
+  "action": "read",
+  "parameters": {}
+}

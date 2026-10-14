@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "network.read_settings.result",
+  "parameters": {
+    "interface": "can0",
+    "network_file": "/lib/systemd/network/30-can0.network",
+    "editable": true,
+    "user_override": false,
+    "reset_staged": false,
+    "warning": [],
+    "can_bitrate": 500000,
+    "can_bitrate_source": "networkd",
+    "can_bitrate_override": false
+  },
+  "responseId": "r-1"
+}
