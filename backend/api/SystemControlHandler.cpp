@@ -9,6 +9,7 @@
 #include "modules/OCPPConfig.hpp"
 #include "modules/SafetyController.hpp"
 #include "modules/NetworkConfiguration.hpp"
+#include "modules/SSHConfiguration.hpp"
 #include "RpcApiClient.hpp"
 #include "SystemControlHandler.hpp"
 #include "ProtocolSchema.hpp"
@@ -79,6 +80,11 @@ void SystemControl::startRequest(const ModuleRequest &request) {
     }
     case ModuleGroup::Network: {
         const ModuleResponse response = NetworkConfiguration::handleRequest(request);
+        handleModuleResponse(response);
+        return;
+    }
+    case ModuleGroup::SSHConfiguration: {
+        const ModuleResponse response = SSHConfiguration::handleRequest(request);
         handleModuleResponse(response);
         return;
     }
@@ -185,6 +191,9 @@ ModuleGroup SystemControl::toModuleGroup(const QString &group) const {
     }
     if (group == QLatin1String(kGroupNetwork)) {
         return ModuleGroup::Network;
+    }
+    if (group == QLatin1String(kGroupSSH)) {
+        return ModuleGroup::SSHConfiguration;
     }
     if (group == QLatin1String(kGroupSystem)) {
         return ModuleGroup::System;

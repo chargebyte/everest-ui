@@ -6,6 +6,7 @@
   "parameters": {
     "interface": "eth0",
     "user_override": true,
+    "can_bitrate_override": false,
     "reset_staged": false
   },
   "responseId": "r-1"

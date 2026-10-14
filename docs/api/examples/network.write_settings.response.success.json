@@ -6,7 +6,8 @@
   "parameters": {
     "network_file": "/lib/systemd/network/10-eth0.network",
     "overlay_file": "/etc/systemd/network/10-eth0.network.d/50-everest-ui.conf",
-    "user_override": true
+    "user_override": true,
+    "can_bitrate_override": false
   },
   "responseId": "r-1"
 }

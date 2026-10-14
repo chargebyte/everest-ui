@@ -18,6 +18,7 @@ enum class ModuleGroup {
     FirmwareUpdate,
     SystemLogs,
     Network,
+    SSHConfiguration,
     System,
     Unknown
 };

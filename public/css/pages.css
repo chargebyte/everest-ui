@@ -455,6 +455,24 @@
   border-color: #c62828;
 }
 
+.ssh-password-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ssh-password-control {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ssh-password-reveal {
+  width: 40px;
+  min-width: 40px;
+  max-width: 40px;
+  flex: 0 0 40px;
+}
+
 .input-with-unit {
   display: flex;
   align-items: center;
@@ -685,6 +703,12 @@
   font-size: 14px;
   color: var(--cb-text);
   background: #dde3f1;
+}
+
+.ssh-action-button {
+  min-width: 180px;
+  padding: 10px 14px;
+  font-size: 16px;
 }
 
 .btn:disabled {
