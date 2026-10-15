@@ -443,8 +443,7 @@
 }
 
 .password-reveal-icon {
-  font-size: 16px;
-  line-height: 1;
+  display: inline-flex;
 }
 
 .password-input-control.password-input-match {

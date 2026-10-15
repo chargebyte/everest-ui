@@ -140,6 +140,32 @@ body {
   font: inherit;
 }
 
+.auth-password-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-password-field input {
+  flex: 1;
+  min-width: 0;
+}
+
+.auth-password-reveal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 42px;
+  min-width: 42px;
+  height: 42px;
+  margin: 0;
+  padding: 0;
+  color: var(--cb-text);
+  background: var(--cb-surface);
+  border: 1px solid var(--cb-border);
+  border-radius: 7px;
+}
+
 .auth-error {
   min-height: 20px;
   margin: 0 0 18px;

@@ -2,6 +2,8 @@
 
 // Copyright 2026 chargebyte GmbH
 
+import { eyeIcon } from './eyeIcon.js';
+
 export function renderPasswordInput(options = {}) {
   const rootElement = document.createElement('div');
   rootElement.className = options.className || 'password-input-pair';
@@ -89,7 +91,7 @@ function createPasswordField(options = {}) {
 
   const iconElement = document.createElement('span');
   iconElement.className = 'password-reveal-icon';
-  iconElement.textContent = '◉';
+  iconElement.innerHTML = eyeIcon;
   revealButton.appendChild(iconElement);
 
   const showPassword = () => {
