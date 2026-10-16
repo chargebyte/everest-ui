@@ -4,11 +4,56 @@
   "requestId": 42,
   "type": "safety.read_settings.result",
   "parameters": {
-    "pt1000_0": {
-      "overtemperature-protection": true,
-      "abort-temperature": 80
-    }
+    "controllers": [
+      {
+        "device_name": "ttySC0",
+        "bsp_instance": "bsp",
+        "driver_module": "CbParsleyDriver",
+        "available": true,
+        "writable": true,
+        "message": "",
+        "settings": {
+          "pt1000_0": {
+            "overtemperature-protection": true,
+            "abort-temperature": "80",
+            "resistance-offset": "0"
+          },
+          "pt1000_1": {
+            "overtemperature-protection": false,
+            "abort-temperature": "",
+            "resistance-offset": ""
+          },
+          "contactors_0": {
+            "type": "without-feedback",
+            "close-time": "100",
+            "open-time": "200"
+          },
+          "contactors_1": {
+            "type": "with-feedback-normally-open",
+            "close-time": "100",
+            "open-time": "200"
+          },
+          "estops_0": {
+            "enabled": "active-low"
+          },
+          "estops_1": {
+            "enabled": "active-high"
+          },
+          "estops_2": {
+            "enabled": "disabled"
+          }
+        }
+      },
+      {
+        "device_name": "ttySC1",
+        "bsp_instance": "bsp_2",
+        "driver_module": "CbChargeSOMDriver",
+        "available": false,
+        "writable": false,
+        "message": "Safety Controller settings are unavailable at /run/ra-utils/ttySC1.yaml"
+      }
+    ],
+    "rpc_available": true
   },
   "responseId": "r-1"
 }
-

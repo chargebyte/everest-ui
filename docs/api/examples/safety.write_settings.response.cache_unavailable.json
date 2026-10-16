@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "safety.write_settings.error",
+  "parameters": {
+    "error": "safety_controller_flash_failed",
+    "device_name": "ttySC0",
+    "flash_outcome": "timeout",
+    "exit_code": 9,
+    "cache_state": "unavailable",
+    "recovery_error": "safety_controller_cache_readback_failed",
+    "restart_error": "rpc_api_not_connected"
+  },
+  "responseId": "r-2"
+}

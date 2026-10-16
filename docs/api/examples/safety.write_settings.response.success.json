@@ -2,8 +2,9 @@
   "ok": true,
   "final": true,
   "requestId": 42,
-  "type": "safety.write_settings.ack",
-  "parameters": {},
+  "type": "safety.write_settings.result",
+  "parameters": {
+    "device_name": "ttySC0"
+  },
   "responseId": "r-1"
 }
-

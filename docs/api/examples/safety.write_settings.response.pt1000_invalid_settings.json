@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "safety.write_settings.error",
+  "parameters": {
+    "error": "safety_controller_pt1000_invalid_settings",
+    "message": "Enter an abort temperature and resistance offset as valid numbers for every enabled PT1000 channel."
+  },
+  "responseId": "r-2"
+}

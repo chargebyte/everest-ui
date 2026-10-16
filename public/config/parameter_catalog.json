@@ -17,7 +17,8 @@
       "settings_matrix": [
         {
           "id": "pt1000",
-          "display_name": "PT1000 Resistors",
+          "display_name": "Overtemperature Protection",
+          "layout": "instances_as_rows",
           "instances": [
             { "id": "0", "display_name": "PT1000 1" },
             { "id": "1", "display_name": "PT1000 2" },
@@ -27,7 +28,7 @@
           "fields": [
             {
               "id": "overtemperature-protection",
-              "display_name": "Overtemperature Protection",
+              "display_name": "Enable",
               "description": "Enable or disable PT1000 channel protection.",
               "value_type": "boolean",
               "backend_path": "pt1000_{instance}.overtemperature-protection"
@@ -37,7 +38,8 @@
               "display_name": "Abort Temperature",
               "description": "Shutdown threshold for this PT1000 channel.",
               "value_type": "float",
-              "default_value": 0,
+              "enabled_by": "overtemperature-protection",
+              "required": true,
               "unit": "degC",
               "backend_path": "pt1000_{instance}.abort-temperature"
             },
@@ -46,7 +48,8 @@
               "display_name": "Resistance Offset",
               "description": "Calibration offset/resistance for this PT1000 channel.",
               "value_type": "float",
-              "default_value": 0,
+              "enabled_by": "overtemperature-protection",
+              "required": true,
               "unit": "ohm",
               "backend_path": "pt1000_{instance}.resistance-offset"
             }
@@ -63,20 +66,20 @@
             {
               "id": "type",
               "display_name": "Type",
-              "description": "fill in later",
+              "description": "Disable this contactor, omit feedback monitoring, or monitor normally-open or normally-closed feedback.",
               "value_type": "enum",
               "enum_values": [
                 "disabled",
                 "without-feedback",
-                "with-feedback-normally-closed",
-                "with-feedback-normally-open"
+                "with-feedback-normally-open",
+                "with-feedback-normally-closed"
               ],
               "backend_path": "contactors_{instance}.type"
             },
             {
               "id": "close-time",
               "display_name": "Close Time",
-              "description": "fill in later",
+              "description": "Time allowed for the contactor to close, in milliseconds.",
               "value_type": "integer",
               "unit": "ms",
               "backend_path": "contactors_{instance}.close-time"
@@ -84,7 +87,7 @@
             {
               "id": "open-time",
               "display_name": "Open Time",
-              "description": "fill in later",
+              "description": "Time allowed for the contactor to open, in milliseconds.",
               "value_type": "integer",
               "unit": "ms",
               "backend_path": "contactors_{instance}.open-time"
@@ -94,6 +97,7 @@
         {
           "id": "estops",
           "display_name": "Emergency Stops",
+          "layout": "instances_as_rows",
           "instances": [
             { "id": "0", "display_name": "E-Stop 1" },
             { "id": "1", "display_name": "E-Stop 2" },
@@ -103,11 +107,12 @@
             {
               "id": "enabled",
               "display_name": "Enabled",
-              "description": "fill in later",
+              "description": "Active-low triggers on a low input, active-high triggers on a high input, and disabled ignores this input.",
               "value_type": "enum",
               "enum_values": [
-                "disabled",
-                "active-low"
+                "active-low",
+                "active-high",
+                "disabled"
               ],
               "backend_path": "estops_{instance}.enabled"
             }

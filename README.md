@@ -82,6 +82,54 @@ The authentication database is created on first setup at:
 
 The EVerest paths are configured in [`backend.conf`](./backend/api/config/backend.conf).
 
+The `everest_rpc_api_ready_timeout_seconds` backend setting controls how long the UI backend waits for the EVerest
+JSON-RPC API to become ready after restarting EVerest. It defaults to 20 seconds. For Safety Controller writes,
+one shared budget covers a fresh Hello handshake and valid status responses from every associated EVSE,
+measured from the accepted restart. A separate 10-second error observation follows; errors already reported
+during readiness are retained. Temporary disconnects and missing status responses are retried within the
+remaining budget. Optional platform overrides use the exact `/proc/device-tree/compatible` value as a suffix;
+the first matching compatible entry takes precedence. Explicitly configured values remain authoritative:
+update an installed `everest_rpc_api_ready_timeout_seconds=15` to `20` to use the new default duration.
+
+Safety Controller settings are read from `/run/ra-utils/<device>.yaml`. Saves preserve the complete YAML
+document, including settings not exposed by the UI. The cache is the write baseline, not a live read:
+its producer must publish atomically for the correct controller and refresh it after external changes.
+External tools must not access that controller concurrently with a UI flash or recovery.
+
+PT1000 channels appear as rows under **Overtemperature Protection**. Disabling a channel greys out its
+temperature and resistance-offset inputs without clearing their values; Save still sends those values.
+They are retained only while the page is open, not across reloads: a disabled hardware channel has no
+recoverable temperature threshold, so a fresh read leaves unknown values empty. Both values must be entered
+as finite numbers before an enabled channel can be saved; explicitly entered zero is valid. Disabled channels
+may remain empty without blocking other settings. Emergency Stops have one dropdown
+per row, offering `active-low`, `active-high`, or `disabled`. Contactors retain `disabled` and all three
+feedback modes. The configured settings allowlist still determines which groups are shown.
+
+Before flashing, the backend quarantines the cache as `<device>.yaml.invalid`. A verified successful flash
+publishes the updated YAML before EVerest restarts. If a started flash fails, the backend attempts one bounded
+device-specific parameter dump and YAML conversion while EVerest is still stopped. Valid readback replaces
+the cache; failed readback leaves settings unavailable and editing disabled until a producer publishes a
+fresh cache. A definite failure to start restores the unchanged cache. Neither a backend restart nor a
+failed recovery restores uncertain cached values automatically. Recovery never retries the flash.
+The flash still reports failure even when readback succeeds; reload the page before further editing.
+
+Safety Controller operation summaries and warnings remain available in the backend journal. Verbose RPC
+connection, request, retry, readiness, and Safety Controller phase tracing is compiled out by default.
+Enable it explicitly with the CMake option below (independent of Debug/Release build type):
+
+```bash
+cmake -S . -B build -DEVEREST_UI_RPC_DEBUG=ON
+cmake --build build --parallel 4
+```
+
+Use `-DEVEREST_UI_RPC_DEBUG=OFF` and rebuild to disable tracing again. The option also applies to the
+RPC-related test targets. Verbose messages include EVSE/request IDs, remaining budget, and connection
+generations. To collect one complete Save cycle, run:
+
+```bash
+journalctl -b -u webui.service -u everest.service -o short-monotonic
+```
+
 PCAP captures are bounded by these backend settings:
 
 - `pcap_max_size_bytes`

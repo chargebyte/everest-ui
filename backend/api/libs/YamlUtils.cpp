@@ -4,10 +4,14 @@
 
 #include "YamlUtils.hpp"
 
+#include "BackendConfig.hpp"
+#include "ProtocolSchema.hpp"
+
 #include <QJsonArray>
 #include <QJsonValue>
 #include <QDebug>
 #include <QFileInfo>
+#include <QDir>
 #include <iostream>
 
 #include <yaml-cpp/exceptions.h>
@@ -69,7 +73,28 @@ QJsonValue yamlNodeToJsonValue(const YAML::Node &node) {
 
     return QJsonValue();
 }
+
+QJsonValue mergeJsonPatchInternal(const QJsonValue &target, const QJsonValue &patch) {
+    if (!patch.isObject()) {
+        return patch;
+    }
+
+    QJsonObject result = target.isObject() ? target.toObject() : QJsonObject{};
+    const QJsonObject patchObject = patch.toObject();
+    for (auto it = patchObject.constBegin(); it != patchObject.constEnd(); ++it) {
+        if (it.value().isNull()) {
+            result.remove(it.key());
+        } else {
+            result.insert(it.key(), mergeJsonPatchInternal(result.value(it.key()), it.value()));
+        }
+    }
+    return result;
+}
 } // namespace
+
+QJsonValue applyJsonMergePatch(const QJsonValue &target, const QJsonValue &patch) {
+    return mergeJsonPatchInternal(target, patch);
+}
 
 YamlLoadResult loadYamlFile(const QString &path) {
     QJsonValue jsonValue;
@@ -116,6 +141,36 @@ YamlLoadResult loadYamlFile(const QString &path) {
         .yamlRoot = jsonValue.toObject(),
         .error = QString(),
     };
+}
+
+YamlLoadResult loadEffectiveEverestConfig() {
+    const QString configPath = readBackendConfigValue(QLatin1String(kConfEverestConfPath));
+    if (configPath.isEmpty()) {
+        return {.success = false, .yamlRoot = {}, .error = QStringLiteral("everest_config_path_missing")};
+    }
+
+    YamlLoadResult baseResult = loadYamlFile(configPath);
+    if (!baseResult.success) {
+        return baseResult;
+    }
+
+    const QString canonicalConfigPath = QFileInfo(configPath).canonicalFilePath();
+    if (canonicalConfigPath.isEmpty()) {
+        return {.success = false, .yamlRoot = {}, .error = QStringLiteral("everest_config_path_invalid")};
+    }
+    const QFileInfo canonicalConfigInfo(canonicalConfigPath);
+    const QString overlayPath = canonicalConfigInfo.dir().filePath(
+        QStringLiteral("user-config/") + canonicalConfigInfo.fileName());
+    if (!QFileInfo::exists(overlayPath)) {
+        return baseResult;
+    }
+
+    const YamlLoadResult overlayResult = loadYamlFile(overlayPath);
+    if (!overlayResult.success) {
+        return overlayResult;
+    }
+    baseResult.yamlRoot = applyJsonMergePatch(baseResult.yamlRoot, overlayResult.yamlRoot).toObject();
+    return baseResult;
 }
 
 QString formatYamlScalar(const QJsonValue &value) {

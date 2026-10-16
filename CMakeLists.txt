@@ -9,6 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
 option(EVEREST_UI_BUILD_TESTS "Build EVerest UI tests" OFF)
+option(EVEREST_UI_RPC_DEBUG "Enable verbose RPC and Safety Controller phase logging" OFF)
 
 set(EVEREST_UI_INSTALL_CONFIG_DIR
     "/etc/everest-ui")

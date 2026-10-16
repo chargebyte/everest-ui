@@ -8,10 +8,14 @@
 #include "BackendConfig.hpp"
 #include "YamlUtils.hpp"
 
+#include <QDebug>
 #include <QEventLoop>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QScopedValueRollback>
 #include <QTimer>
+
+#include <algorithm>
 
 namespace {
 constexpr int kApiHelloRequestId = 1;
@@ -23,6 +27,7 @@ RpcApiClient::RpcApiClient(QObject *parent)
     : QObject(parent) {
     m_reconnectTimer.setSingleShot(true);
     m_pendingRequestTimer.setSingleShot(true);
+    m_pendingRequestTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_webSocket, &QWebSocket::connected, this, &RpcApiClient::onConnected);
     connect(&m_webSocket, &QWebSocket::disconnected, this, &RpcApiClient::onDisconnected);
     connect(&m_webSocket, &QWebSocket::binaryMessageReceived, this,
@@ -32,11 +37,24 @@ RpcApiClient::RpcApiClient(QObject *parent)
             &RpcApiClient::onPendingRequestTimeout);
 }
 
+RpcApiClient::~RpcApiClient() {
+    m_reconnectTimer.stop();
+    m_pendingRequestTimer.stop();
+    // Disconnect before aborting: socket teardown can emit signals while members are being destroyed.
+    QObject::disconnect(&m_webSocket, nullptr, this, nullptr);
+    QObject::disconnect(&m_reconnectTimer, nullptr, this, nullptr);
+    QObject::disconnect(&m_pendingRequestTimer, nullptr, this, nullptr);
+    m_webSocket.abort();
+}
+
 void RpcApiClient::start() {
     m_rpcApiHost = readBackendConfigValue(QStringLiteral("rpc_api_host"));
     m_everestConfigPath = readBackendConfigValue(QLatin1String(kConfEverestConfPath));
     m_rpcApiConfigured = false;
     m_configurationError.clear();
+    m_handshakeComplete = false;
+    m_handshakeGeneration = 0;
+    m_disconnectionGeneration = 0;
     m_everestConfigRoot = QJsonObject{};
     m_lastRpcResponse = QJsonObject{};
     m_hasLastRpcResponse = false;
@@ -72,11 +90,23 @@ bool RpcApiClient::isReady() const {
            m_handshakeComplete;
 }
 
+quint64 RpcApiClient::handshakeGeneration() const {
+    return m_handshakeGeneration;
+}
+
+quint64 RpcApiClient::disconnectionGeneration() const {
+    return m_disconnectionGeneration;
+}
+
 QString RpcApiClient::appTitle() const {
     return m_appTitle;
 }
 
-RpcApiEvseStatusResult RpcApiClient::getEvseStatus(int evseIndex) {
+RpcApiEvseStatusResult RpcApiClient::getEvseStatus(int evseIndex, int timeoutMs) {
+    if (m_statusReadInProgress) {
+        return {.success = false, .status = {}, .error = QStringLiteral("rpc_api_request_pending")};
+    }
+    QScopedValueRollback<bool> readingStatus(m_statusReadInProgress, true);
     if (!m_rpcApiConfigured) {
         return RpcApiEvseStatusResult{
             .success = false,
@@ -112,7 +142,12 @@ RpcApiEvseStatusResult RpcApiClient::getEvseStatus(int evseIndex) {
          }},
     };
 
-    const SendRpcRequestResult sendResult = sendRpcRequest(request);
+    if (timeoutMs <= 0) {
+        return {.success = false, .status = {}, .error = QStringLiteral("rpc_api_no_response")};
+    }
+    const QDeadlineTimer deadline(std::min(timeoutMs, 2 * kPendingRequestTimeoutMs), Qt::PreciseTimer);
+    const quint64 generation = m_handshakeGeneration;
+    const SendRpcRequestResult sendResult = sendRpcRequest(request, static_cast<int>(deadline.remainingTime()));
     if (!sendResult.success) {
         return RpcApiEvseStatusResult{
             .success = false,
@@ -122,22 +157,25 @@ RpcApiEvseStatusResult RpcApiClient::getEvseStatus(int evseIndex) {
     }
 
     QEventLoop waitLoop;
-    QTimer waitPollTimer;
-    waitPollTimer.setInterval(50);
-    waitPollTimer.setSingleShot(false);
-
-    connect(&m_webSocket, &QWebSocket::disconnected, &waitLoop, &QEventLoop::quit);
-    connect(&waitPollTimer, &QTimer::timeout, this, [this, &waitLoop, requestId = sendResult.requestId]() {
-        if (m_hasLastRpcResponse || !m_pendingRequests.contains(requestId)) {
+    connect(this, &RpcApiClient::requestFinished, &waitLoop, [&](int requestId) {
+        if (requestId == sendResult.requestId) {
             waitLoop.quit();
         }
     });
+    if (m_pendingRequests.contains(sendResult.requestId)) {
+        waitLoop.exec();
+    }
 
-    waitPollTimer.start();
-    waitLoop.exec();
-    waitPollTimer.stop();
-
-    if (!m_hasLastRpcResponse) {
+    if (!m_hasLastRpcResponse || deadline.hasExpired() || generation != m_handshakeGeneration || !isReady() ||
+        m_lastRpcResponse.value(QStringLiteral("id")).toInt() != sendResult.requestId) {
+        m_lastRpcResponse = {};
+        m_hasLastRpcResponse = false;
+        qWarning().noquote() << QStringLiteral("RPC status failed: phase=status_response; evse=%1; rpc_request_id=%2; "
+                                               "error=rpc_api_no_response; generation_before=%3; generation_after=%4")
+                                    .arg(evseIndex)
+                                    .arg(sendResult.requestId)
+                                    .arg(generation)
+                                    .arg(m_handshakeGeneration);
         return RpcApiEvseStatusResult{
             .success = false,
             .status = QJsonObject{},
@@ -207,8 +245,8 @@ RpcApiEvseStateResult RpcApiClient::getEvseState(int evseIndex) {
     };
 }
 
-RpcApiEvseErrorPresentResult RpcApiClient::getEvseErrorPresent(int evseIndex) {
-    const RpcApiEvseStatusResult statusResult = getEvseStatus(evseIndex);
+RpcApiEvseErrorPresentResult RpcApiClient::getEvseErrorPresent(int evseIndex, int timeoutMs) {
+    const RpcApiEvseStatusResult statusResult = getEvseStatus(evseIndex, timeoutMs);
     if (!statusResult.success) {
         return RpcApiEvseErrorPresentResult{
             .success = false,
@@ -236,16 +274,27 @@ RpcApiEvseErrorPresentResult RpcApiClient::getEvseErrorPresent(int evseIndex) {
 void RpcApiClient::onConnected() {
     m_connectInProgress = false;
     m_handshakeComplete = false;
+#ifdef EVEREST_UI_RPC_DEBUG
+    qInfo() << "RPC connected: phase=hello_handshake; url=" << m_rpcApiUrl;
+#endif
     sendApiHello();
 }
 
 void RpcApiClient::onDisconnected() {
+    ++m_disconnectionGeneration;
     m_handshakeComplete = false;
     m_connectInProgress = false;
     m_lastRpcResponse = QJsonObject{};
     m_hasLastRpcResponse = false;
     m_pendingRequestTimer.stop();
+    const QList<int> pendingIds = m_pendingRequests.keys();
     m_pendingRequests.clear();
+    for (const int requestId : pendingIds) {
+        emit requestFinished(requestId);
+    }
+#ifdef EVEREST_UI_RPC_DEBUG
+    qInfo() << "RPC disconnected: generation=" << m_handshakeGeneration << "disconnects=" << m_disconnectionGeneration;
+#endif
     m_reconnectTimer.start(kReconnectTimeoutMs);
 }
 
@@ -276,6 +325,10 @@ void RpcApiClient::onBinaryMessageReceived(const QByteArray &message) {
         return;
     }
 
+    if (m_pendingRequests.value(responseId).generation != m_handshakeGeneration) {
+        return;
+    }
+
     m_pendingRequestTimer.stop();
 
     const bool isSuccessResponse =
@@ -289,6 +342,7 @@ void RpcApiClient::onBinaryMessageReceived(const QByteArray &message) {
         m_lastRpcResponse = response;
         m_hasLastRpcResponse = true;
         m_pendingRequests.remove(responseId);
+        emit requestFinished(responseId);
         return;
     }
 
@@ -316,7 +370,10 @@ int RpcApiClient::nextRequestId() {
     return m_requestIdCounter;
 }
 
-SendRpcRequestResult RpcApiClient::sendRpcRequest(QJsonObject request) {
+SendRpcRequestResult RpcApiClient::sendRpcRequest(QJsonObject request, int timeoutMs) {
+    if (timeoutMs <= 0) {
+        return {.success = false, .requestId = 0, .error = QStringLiteral("rpc_api_no_response")};
+    }
     if (!m_handshakeComplete || m_webSocket.state() != QAbstractSocket::ConnectedState) {
         return SendRpcRequestResult{
             .success = false,
@@ -349,10 +406,21 @@ SendRpcRequestResult RpcApiClient::sendRpcRequest(QJsonObject request) {
     }
 
     m_pendingRequests.insert(requestId, PendingRpcRequest{
-                                           .request = request,
-                                           .attempts = 1,
-                                       });
-    m_pendingRequestTimer.start(kPendingRequestTimeoutMs);
+                                            .request = request,
+                                            .attempts = 1,
+                                            .deadline = QDeadlineTimer(timeoutMs, Qt::PreciseTimer),
+                                            .generation = m_handshakeGeneration,
+                                        });
+    m_pendingRequestTimer.start(std::min(kPendingRequestTimeoutMs, std::max(1, timeoutMs)));
+#ifdef EVEREST_UI_RPC_DEBUG
+    qInfo().noquote()
+        << QStringLiteral("RPC request: phase=status_response; rpc_request_id=%1; evse=%2; "
+                          "attempt=1; timeout_ms=%3; generation=%4")
+               .arg(requestId)
+               .arg(request.value(QStringLiteral("params")).toObject().value(QStringLiteral("evse_index")).toInt())
+               .arg(timeoutMs)
+               .arg(m_handshakeGeneration);
+#endif
     return SendRpcRequestResult{
         .success = true,
         .requestId = requestId,
@@ -362,7 +430,7 @@ SendRpcRequestResult RpcApiClient::sendRpcRequest(QJsonObject request) {
 
 bool RpcApiClient::resendPendingRequest(int requestId) {
     auto pendingRequestIt = m_pendingRequests.find(requestId);
-    if (pendingRequestIt == m_pendingRequests.end()) {
+    if (pendingRequestIt == m_pendingRequests.end() || pendingRequestIt->deadline.hasExpired() || !isReady()) {
         return false;
     }
 
@@ -374,7 +442,15 @@ bool RpcApiClient::resendPendingRequest(int requestId) {
     }
 
     pendingRequestIt->attempts += 1;
-    m_pendingRequestTimer.start(kPendingRequestTimeoutMs);
+    const int remainingMs = static_cast<int>(pendingRequestIt->deadline.remainingTime());
+    m_pendingRequestTimer.start(std::max(1, std::min(kPendingRequestTimeoutMs, remainingMs)));
+#ifdef EVEREST_UI_RPC_DEBUG
+    qInfo().noquote() << QStringLiteral("RPC retry: rpc_request_id=%1; attempt=%2; remaining_ms=%3; generation=%4")
+                             .arg(requestId)
+                             .arg(pendingRequestIt->attempts)
+                             .arg(remainingMs)
+                             .arg(m_handshakeGeneration);
+#endif
     return true;
 }
 
@@ -385,9 +461,16 @@ void RpcApiClient::onPendingRequestTimeout() {
 
     const int requestId = m_pendingRequests.begin().key();
     const PendingRpcRequest pendingRequest = m_pendingRequests.value(requestId);
-    if (pendingRequest.attempts >= 2 || !resendPendingRequest(requestId)) {
+    if (pendingRequest.deadline.hasExpired() || pendingRequest.attempts >= 2 || !resendPendingRequest(requestId)) {
+        qWarning().noquote() << QStringLiteral("RPC request exhausted: rpc_request_id=%1; attempt=%2; remaining_ms=%3; "
+                                               "generation=%4")
+                                    .arg(requestId)
+                                    .arg(pendingRequest.attempts)
+                                    .arg(pendingRequest.deadline.remainingTime())
+                                    .arg(m_handshakeGeneration);
         m_pendingRequests.remove(requestId);
-        m_webSocket.close();
+        m_webSocket.abort();
+        emit requestFinished(requestId);
     }
 }
 
@@ -502,6 +585,11 @@ void RpcApiClient::onHelloResponse(const QJsonObject &response) {
             m_appTitle.clear();
         }
         m_handshakeComplete = true;
+        ++m_handshakeGeneration;
+#ifdef EVEREST_UI_RPC_DEBUG
+        qInfo() << "RPC Hello completed: phase=hello_handshake; generation=" << m_handshakeGeneration
+                << "disconnects=" << m_disconnectionGeneration;
+#endif
         return;
     }
 

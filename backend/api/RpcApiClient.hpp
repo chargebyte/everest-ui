@@ -5,13 +5,15 @@
 #ifndef RPC_API_CLIENT_HPP
 #define RPC_API_CLIENT_HPP
 
-#include <QJsonObject>
+#include <QDeadlineTimer>
 #include <QHash>
+#include <QJsonObject>
 #include <QObject>
 #include <QString>
 #include <QTimer>
 #include <QUrl>
 #include <QWebSocket>
+#include <QtGlobal>
 
 struct RpcApiModuleConfigResult {
     bool success = false;
@@ -29,6 +31,8 @@ struct RpcApiUrlResult {
 struct PendingRpcRequest {
     QJsonObject request;
     int attempts = 1;
+    QDeadlineTimer deadline;
+    quint64 generation = 0;
 };
 
 struct SendRpcRequestResult {
@@ -59,12 +63,18 @@ class RpcApiClient : public QObject {
     Q_OBJECT
 
 public:
-    explicit RpcApiClient(QObject *parent = nullptr);
+    explicit RpcApiClient(QObject* parent = nullptr);
+    ~RpcApiClient() override;
     void start();
-    bool isReady() const;
+    virtual bool isReady() const;
+    virtual quint64 handshakeGeneration() const;
+    virtual quint64 disconnectionGeneration() const;
     QString appTitle() const;
-    RpcApiEvseStateResult getEvseState(int evseIndex);
-    RpcApiEvseErrorPresentResult getEvseErrorPresent(int evseIndex);
+    virtual RpcApiEvseStateResult getEvseState(int evseIndex);
+    virtual RpcApiEvseErrorPresentResult getEvseErrorPresent(int evseIndex, int timeoutMs = 4000);
+
+signals:
+    void requestFinished(int requestId);
 
 private slots:
     void onConnected();
@@ -74,10 +84,11 @@ private slots:
     void onPendingRequestTimeout();
 
 private:
+    friend class RpcApiClientTest;
     int nextRequestId();
-    SendRpcRequestResult sendRpcRequest(QJsonObject request);
+    SendRpcRequestResult sendRpcRequest(QJsonObject request, int timeoutMs);
     bool resendPendingRequest(int requestId);
-    RpcApiEvseStatusResult getEvseStatus(int evseIndex);
+    RpcApiEvseStatusResult getEvseStatus(int evseIndex, int timeoutMs = 4000);
     void onHelloResponse(const QJsonObject &response);
     void sendApiHello();
     RpcApiModuleConfigResult findRpcApiModuleConfig() const;
@@ -96,9 +107,12 @@ private:
     QHash<int, PendingRpcRequest> m_pendingRequests;
     int m_requestIdCounter = 1;
     bool m_hasLastRpcResponse = false;
+    bool m_statusReadInProgress = false;
     bool m_rpcApiConfigured = false;
     bool m_handshakeComplete = false;
     bool m_connectInProgress = false;
+    quint64 m_handshakeGeneration = 0;
+    quint64 m_disconnectionGeneration = 0;
 };
 
 #endif // RPC_API_CLIENT_HPP

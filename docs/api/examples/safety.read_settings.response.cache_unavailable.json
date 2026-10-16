@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "safety.read_settings.result",
+  "parameters": {
+    "controllers": [
+      {
+        "device_name": "ttySC0",
+        "bsp_instance": "bsp",
+        "driver_module": "CbParsleyDriver",
+        "available": false,
+        "writable": false,
+        "message": "Safety Controller settings are unavailable after an interrupted or unsuccessful write. A controller readback is required."
+      }
+    ],
+    "rpc_available": true
+  },
+  "responseId": "r-1"
+}

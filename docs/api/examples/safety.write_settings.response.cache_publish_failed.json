@@ -1,0 +1,14 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "safety.write_settings.error",
+  "parameters": {
+    "error": "safety_controller_yaml_publish_failed_after_flash",
+    "device_name": "ttySC0",
+    "flash_succeeded": true,
+    "cache_state": "unavailable",
+    "message": "The controller was flashed, but cached settings are unavailable. Check the backend logs."
+  },
+  "responseId": "r-2"
+}

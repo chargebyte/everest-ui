@@ -27,6 +27,10 @@ public:
         int exitCode = -1;
         QByteArray stdoutData;
         QByteArray stderrData;
+        bool started = false;
+        bool timedOut = false;
+        bool normalExit = false;
+        QString processError;
     };
 
     struct EvalResult {

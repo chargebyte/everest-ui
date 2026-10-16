@@ -1,0 +1,14 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "safety.write_settings.error",
+  "parameters": {
+    "error": "safety_controller_flash_failed",
+    "device_name": "ttySC0",
+    "flash_outcome": "start_failed",
+    "exit_code": -1,
+    "cache_state": "unchanged"
+  },
+  "responseId": "r-2"
+}

@@ -25,18 +25,49 @@ export function renderSettingsMatrixBlock(blockConfig, options) {
   element.appendChild(applyButtonElement);
 
   const requestResponseObject = createRequestResponseObject(blockConfig.sections);
+  let globallyDisabled = false;
+
+  function updateDisabledState() {
+    element.querySelectorAll('input, select, button').forEach((control) => {
+      control.disabled = globallyDisabled;
+    });
+    fieldMap.forEach((control) => {
+      const dependency = control.dataset.enabledBy;
+      control.disabled = globallyDisabled || Boolean(dependency && !fieldMap.get(dependency)?.checked);
+      control.closest('.matrix-cell')?.classList.toggle('is-disabled', control.disabled);
+    });
+  }
+
+  fieldMap.forEach((control) => {
+    if (control.type === 'checkbox') {
+      control.addEventListener('change', updateDisabledState);
+    }
+  });
+  updateDisabledState();
 
   return {
     element,
     requestResponseObject,
     bindSubmit(handler) {
-      applyButtonElement.addEventListener('click', handler);
+      applyButtonElement.addEventListener('click', (event) => {
+        if (globallyDisabled) {
+          return;
+        }
+        for (const control of fieldMap.values()) {
+          if (!control.disabled && !control.reportValidity()) {
+            control.focus();
+            return;
+          }
+        }
+        handler(event);
+      });
     },
     getValues(requestResponseObject) {
       return getSettingsMatrixValues(requestResponseObject, fieldMap);
     },
     setValues(requestResponseObject) {
       setSettingsMatrixValues(requestResponseObject, fieldMap);
+      updateDisabledState();
     },
     applyAvailableParameters(backendParameters) {
       applySettingsMatrixAvailability(
@@ -45,6 +76,10 @@ export function renderSettingsMatrixBlock(blockConfig, options) {
         requestResponseObject,
         fieldMap
       );
+    },
+    setDisabled(disabled) {
+      globallyDisabled = Boolean(disabled);
+      updateDisabledState();
     }
   };
 }
@@ -93,6 +128,10 @@ function renderSettingsMatrixSectionTitle(sectionElement, sectionTitle) {
 }
 
 function renderSettingsMatrixSection(sectionElement, section, fieldMap) {
+  if (section.layout === 'instances_as_rows') {
+    renderSettingsMatrixInstanceRows(sectionElement, section, fieldMap);
+    return;
+  }
   const matrixElement = document.createElement('div');
   matrixElement.className = 'matrix-grid';
   matrixElement.style.setProperty('--matrix-columns', String(section.instances?.length || 0));
@@ -101,6 +140,64 @@ function renderSettingsMatrixSection(sectionElement, section, fieldMap) {
   renderSettingsMatrixFieldRows(matrixElement, section, fieldMap);
 
   sectionElement.appendChild(matrixElement);
+}
+
+function renderSettingsMatrixInstanceRows(sectionElement, section, fieldMap) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'matrix-table-scroll';
+  const table = document.createElement('table');
+  table.className = 'matrix-table';
+  table.setAttribute('aria-label', section.title);
+  const inlineChannelLabel = section.fields[0]?.value_type === 'boolean';
+  if (section.fields.length > 1) {
+    const head = document.createElement('thead');
+    const row = document.createElement('tr');
+    if (!inlineChannelLabel) {
+      const label = document.createElement('th');
+      label.scope = 'col';
+      label.textContent = 'Channel';
+      row.appendChild(label);
+    }
+    section.fields.forEach((field) => {
+      const label = document.createElement('th');
+      label.scope = 'col';
+      label.appendChild(createSettingsMatrixRowLabel(field));
+      row.appendChild(label);
+    });
+    head.appendChild(row);
+    table.appendChild(head);
+  } else {
+    table.classList.add('matrix-table-single-field');
+  }
+  const body = document.createElement('tbody');
+  section.instances.forEach((instance) => {
+    const row = document.createElement('tr');
+    if (!inlineChannelLabel) {
+      const label = document.createElement('th');
+      label.scope = 'row';
+      label.textContent = instance.display_name;
+      row.appendChild(label);
+    }
+    section.fields.forEach((field, index) => {
+      const cell = document.createElement(index === 0 && inlineChannelLabel ? 'th' : 'td');
+      if (index === 0 && inlineChannelLabel) {
+        cell.scope = 'row';
+      }
+      const control = createSettingsMatrixInstanceField(section, instance, field, fieldMap);
+      if (index === 0 && inlineChannelLabel) {
+        const label = document.createElement('label');
+        label.htmlFor = buildSettingsMatrixParameterId(section.id, instance.id, field.id);
+        label.textContent = instance.display_name;
+        control.appendChild(label);
+      }
+      cell.appendChild(control);
+      row.appendChild(cell);
+    });
+    body.appendChild(row);
+  });
+  table.appendChild(body);
+  wrapper.appendChild(table);
+  sectionElement.appendChild(wrapper);
 }
 
 function renderSettingsMatrixSectionColumnHeaders(matrixElement, section) {
@@ -180,6 +277,15 @@ function createSettingsMatrixInstanceField(section, instance, field, fieldMap) {
     sectionId: section.id,
     instanceId: instance.id
   });
+  const input = fieldMap.get(buildSettingsMatrixParameterId(section.id, instance.id, field.id));
+  input.required = Boolean(field.required);
+  input.setAttribute('aria-label', `${instance.display_name}: ${field.display_name}`);
+  if (field.description) {
+    input.title = field.description;
+  }
+  if (field.enabled_by) {
+    input.dataset.enabledBy = buildSettingsMatrixParameterId(section.id, instance.id, field.enabled_by);
+  }
 
   const cellElement = document.createElement('div');
   cellElement.className = 'matrix-cell';
@@ -193,6 +299,10 @@ function createSettingsMatrixInstanceField(section, instance, field, fieldMap) {
 
 function createSettingsMatrixTextInput(field, fieldMap, context = {}) {
   const inputElement = document.createElement('input');
+  if (field.required && (field.value_type === 'float' || field.value_type === 'integer')) {
+    inputElement.type = 'number';
+    inputElement.step = field.value_type === 'float' ? 'any' : '1';
+  }
   inputElement.className = 'input';
   inputElement.id = buildSettingsMatrixParameterId(context.sectionId, context.instanceId, field.id);
   inputElement.dataset.backendPath = resolveSettingsMatrixBackendPath(field, context.instanceId);
@@ -307,7 +417,7 @@ function setSettingsMatrixValues(requestResponseObject, fieldMap) {
       return;
     }
 
-    fieldElement.value = fieldValue ?? '';
+    fieldElement.value = fieldValue ?? parameterEntry?.default_value ?? '';
   });
 }
 

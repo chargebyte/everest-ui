@@ -24,6 +24,10 @@ add_executable(api
     libs/YamlUtils.cpp
 )
 
+target_compile_definitions(api PRIVATE
+    $<$<BOOL:${EVEREST_UI_RPC_DEBUG}>:EVEREST_UI_RPC_DEBUG>
+)
+
 target_link_libraries(api
     ${QT_PACKAGE_NAME}::Core
     ${QT_PACKAGE_NAME}::Network
