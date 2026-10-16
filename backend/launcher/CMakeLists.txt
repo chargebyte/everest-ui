@@ -5,6 +5,7 @@ add_executable(webui
 include(GNUInstallDirs)
 
 target_link_libraries(webui PRIVATE
+    everest_ui_config
     ${QT_PACKAGE_NAME}::Core
     ${QT_PACKAGE_NAME}::Network
 )

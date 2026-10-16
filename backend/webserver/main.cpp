@@ -6,46 +6,24 @@
 #include "StaticServer.hpp"
 #include "AppTitleResolver.hpp"
 #include "AuthManager.hpp"
-#include "InstallPaths.hpp"
 #include "UiOccupancyTracker.hpp"
 #include "WebSocketProxySession.hpp"
 
 #include <QCoreApplication>
-#include <QDir>
-#include <QFileInfo>
 #include <QTcpSocket>
 #include <QTextStream>
 #include <QWebSocket>
 #include <QWebSocketProtocol>
 #include <QWebSocketServer>
 
-namespace {
-QString resolveFrontendConfigPath() {
-    const QString applicationDir = QCoreApplication::applicationDirPath();
-    const QStringList candidates = {
-        QStringLiteral(EVEREST_UI_INSTALL_FRONTEND_CONFIG),
-        QDir(applicationDir).absoluteFilePath(QStringLiteral("../config/frontend.conf")),
-        QDir(applicationDir).absoluteFilePath(QStringLiteral("../frontend.conf")),
-    };
-
-    for (const QString &candidate : candidates) {
-        if (QFileInfo::exists(candidate)) {
-            return QDir::cleanPath(candidate);
-        }
-    }
-
-    return candidates.constFirst();
-}
-}
-
 int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("webui"));
 
-    const QString configPath = resolveFrontendConfigPath();
+    const UiConfig::Paths configPaths = UiConfig::pathsFor(UiConfig::Kind::Frontend);
     ServerConfig cfg;
     QString configError;
-    if (!loadAndValidateServerConfig(configPath, cfg, configError)) {
+    if (!loadAndValidateServerConfig(configPaths, cfg, configError)) {
         QTextStream(stderr) << configError << "\n";
         return 1;
     }

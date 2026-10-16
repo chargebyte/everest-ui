@@ -1,0 +1,10 @@
+# Local overrides for EVerest UI backend configuration.
+# Distribution defaults: @EVEREST_UI_INSTALL_BACKEND_DEFAULTS@
+# Only keys written here override defaults. Updates must preserve this file.
+# Remove a local directive to inherit its distribution default again.
+# key= sets an explicitly empty value; !key removes an inherited key.
+# Empty values may trigger a setting's built-in fallback rather than disable it.
+# Examples (uncomment only the settings you want to override):
+# backend_port=9002
+# available_features=none
+# !network_device_whitelist.chargebyte,imx93-charge-control-y

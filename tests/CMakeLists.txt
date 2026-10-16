@@ -1,5 +1,13 @@
 find_package(${QT_PACKAGE_NAME} REQUIRED COMPONENTS Test)
 
+add_executable(layered_config_test LayeredConfigTest.cpp ../backend/webserver/config/ServerConfig.cpp)
+target_include_directories(layered_config_test PRIVATE "${CMAKE_SOURCE_DIR}/backend/webserver/config")
+target_link_libraries(layered_config_test PRIVATE everest_ui_config ${QT_PACKAGE_NAME}::Network ${QT_PACKAGE_NAME}::Test)
+add_test(NAME layered_config_test COMMAND layered_config_test)
+
+add_test(NAME config_overlay_install_test COMMAND "${CMAKE_COMMAND}"
+    "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/ConfigOverlayInstallTest.cmake")
+
 add_executable(pcap_test
     PCAPTest.cpp
     ../backend/api/modules/PCAP.cpp
@@ -219,4 +227,9 @@ foreach(rpc_test_target IN ITEMS rpc_api_client_test safety_controller_test ever
     target_compile_definitions(${rpc_test_target} PRIVATE
         $<$<BOOL:${EVEREST_UI_RPC_DEBUG}>:EVEREST_UI_RPC_DEBUG>
     )
+endforeach()
+
+foreach(config_test_target IN ITEMS pcap_test network_interface_utils_test backend_config_test
+        network_configuration_test ssh_configuration_test everest_config_test safety_controller_test rpc_api_client_test)
+    target_link_libraries(${config_test_target} everest_ui_config)
 endforeach()

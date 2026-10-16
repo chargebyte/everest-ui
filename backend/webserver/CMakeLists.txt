@@ -21,6 +21,7 @@ add_executable(webserver
 )
 
 target_link_libraries(webserver PRIVATE
+    everest_ui_config
     ${QT_PACKAGE_NAME}::Core
     ${QT_PACKAGE_NAME}::Network
     ${QT_PACKAGE_NAME}::WebSockets
@@ -47,7 +48,7 @@ install(TARGETS webserver
 )
 
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/frontend.conf"
-    DESTINATION "/etc/everest-ui"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/everest-ui/config"
 )
 
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/public/"

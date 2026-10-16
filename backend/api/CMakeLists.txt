@@ -29,6 +29,7 @@ target_compile_definitions(api PRIVATE
 )
 
 target_link_libraries(api
+    everest_ui_config
     ${QT_PACKAGE_NAME}::Core
     ${QT_PACKAGE_NAME}::Network
     ${QT_PACKAGE_NAME}::WebSockets
@@ -47,6 +48,7 @@ install(TARGETS api
     RUNTIME DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/everest-ui"
 )
 
+configure_file(config/backend.conf "${CMAKE_CURRENT_BINARY_DIR}/backend.conf" COPYONLY)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/config/backend.conf"
-    DESTINATION "/etc/everest-ui"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/everest-ui/config"
 )

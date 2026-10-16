@@ -1,0 +1,11 @@
+# Local overrides for EVerest UI webserver configuration.
+# Distribution defaults: @EVEREST_UI_INSTALL_FRONTEND_DEFAULTS@
+# Only keys written here override defaults. Updates must preserve this file.
+# Remove a local directive to inherit its distribution default again.
+# key= sets an explicitly empty value; !key removes an inherited key.
+# Required settings must still have valid values after merging.
+# Relative root/auth_file paths resolve relative to the file supplying them.
+# Examples (uncomment only the settings you want to override):
+# port=8080
+# app_title=My charging station
+# allow_origin=
