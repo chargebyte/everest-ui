@@ -139,6 +139,153 @@ class SafetyControllerTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void readsDisabledPt1000WithEmptyUnknownValuesAndKeepsSubmittedValues() {
+        const QJsonObject request{
+            {QStringLiteral("overtemperature-protection"), false},
+            {QStringLiteral("abort-temperature"), 86.5},
+            {QStringLiteral("resistance-offset"), -1.25},
+        };
+        const auto result = readPt1000ParametersFromYaml({}, QStringLiteral("disabled"));
+        QVERIFY(!result.value(QStringLiteral("overtemperature-protection")).toBool());
+        QVERIFY(result.contains(QStringLiteral("abort-temperature")));
+        QVERIFY(result.contains(QStringLiteral("resistance-offset")));
+        QCOMPARE(result.value(QStringLiteral("abort-temperature")).toString(), QString());
+        QCOMPARE(result.value(QStringLiteral("resistance-offset")).toString(), QString());
+        QCOMPARE(updatePt1000ParametersInYaml(request).toString(), QStringLiteral("disabled"));
+        QCOMPARE(request.value(QStringLiteral("abort-temperature")).toDouble(), 86.5);
+        QCOMPARE(request.value(QStringLiteral("resistance-offset")).toDouble(), -1.25);
+
+        QJsonObject enabled = request;
+        enabled.insert(QStringLiteral("overtemperature-protection"), true);
+        const QJsonObject yaml = updatePt1000ParametersInYaml(enabled).toObject();
+        const auto roundTrip = readPt1000ParametersFromYaml({}, yaml);
+        QVERIFY(roundTrip.value(QStringLiteral("overtemperature-protection")).toBool());
+        bool temperatureOk = false;
+        const double temperature =
+            roundTrip.value(QStringLiteral("abort-temperature")).toString().toDouble(&temperatureOk);
+        QVERIFY(temperatureOk);
+        QCOMPARE(temperature, 86.5);
+        bool offsetOk = false;
+        const double offset = roundTrip.value(QStringLiteral("resistance-offset")).toString().toDouble(&offsetOk);
+        QVERIFY(offsetOk);
+        QCOMPARE(offset, -1.25);
+
+        enabled.insert(QStringLiteral("abort-temperature"), 0);
+        enabled.insert(QStringLiteral("resistance-offset"), 0);
+        const auto zeroRoundTrip = readPt1000ParametersFromYaml({}, updatePt1000ParametersInYaml(enabled));
+        for (const QString& field : {QStringLiteral("abort-temperature"), QStringLiteral("resistance-offset")}) {
+            const QString text = zeroRoundTrip.value(field).toString();
+            QVERIFY(!text.isEmpty());
+            bool validNumber = false;
+            const double number = text.toDouble(&validNumber);
+            QVERIFY(validNumber);
+            QCOMPARE(number, 0.0);
+        }
+    }
+
+    void validatesEnabledPt1000NumericValues_data() {
+        QTest::addColumn<QJsonValue>("value");
+        QTest::addColumn<bool>("accepted");
+        QTest::newRow("missing") << QJsonValue(QJsonValue::Undefined) << false;
+        QTest::newRow("null") << QJsonValue(QJsonValue::Null) << false;
+        QTest::newRow("empty") << QJsonValue(QString()) << false;
+        QTest::newRow("whitespace") << QJsonValue(QStringLiteral("  ")) << false;
+        QTest::newRow("boolean") << QJsonValue(true) << false;
+        QTest::newRow("array") << QJsonValue(QJsonArray{}) << false;
+        QTest::newRow("object") << QJsonValue(QJsonObject{}) << false;
+        QTest::newRow("trailing-garbage") << QJsonValue(QStringLiteral("86.5abc")) << false;
+        QTest::newRow("nan") << QJsonValue(QStringLiteral("NaN")) << false;
+        QTest::newRow("infinity") << QJsonValue(QStringLiteral("Infinity")) << false;
+        QTest::newRow("negative-infinity") << QJsonValue(QStringLiteral("-inf")) << false;
+        QTest::newRow("overflow") << QJsonValue(QStringLiteral("1e309")) << false;
+        QTest::newRow("numeric-zero") << QJsonValue(0) << true;
+        QTest::newRow("string-zero") << QJsonValue(QStringLiteral("0")) << true;
+        QTest::newRow("numeric-value") << QJsonValue(86.5) << true;
+        QTest::newRow("negative-value") << QJsonValue(-1.25) << true;
+        QTest::newRow("string-value") << QJsonValue(QStringLiteral("86.500000")) << true;
+        QTest::newRow("exponent") << QJsonValue(QStringLiteral("8.65e1")) << true;
+    }
+
+    void validatesEnabledPt1000NumericValues() {
+        QFETCH(QJsonValue, value);
+        QFETCH(bool, accepted);
+        const QStringList available{QStringLiteral("pt1000")};
+        for (const QString& field : {QStringLiteral("abort-temperature"), QStringLiteral("resistance-offset")}) {
+            QJsonObject block{{QStringLiteral("overtemperature-protection"), true},
+                              {QStringLiteral("abort-temperature"), 0},
+                              {QStringLiteral("resistance-offset"), 0}};
+            if (value.isUndefined()) {
+                block.remove(field);
+            } else {
+                block.insert(field, value);
+            }
+            QJsonObject parameters{{QStringLiteral("pt1000_0"), block}};
+            QCOMPARE(validatePt1000Settings(parameters, available), accepted);
+            QVERIFY(validatePt1000Settings(parameters, {QStringLiteral("estops")}));
+            block.insert(QStringLiteral("overtemperature-protection"), false);
+            parameters.insert(QStringLiteral("pt1000_0"), block);
+            QVERIFY(validatePt1000Settings(parameters, available));
+            QCOMPARE(updatePt1000ParametersInYaml(block).toString(), QStringLiteral("disabled"));
+        }
+    }
+
+    void rejectsInvalidPt1000WriteBeforeStartingAnOperation() {
+        if (!isSafetyControllerSettingAvailable(loadAvailableSafetyControllerSettings(), QStringLiteral("pt1000"))) {
+            QSKIP("The installed backend configuration does not permit PT1000 editing");
+        }
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        FakeRpcApiClient rpc;
+        ScopedProcessEnvironment environment(directory.path(), &rpc);
+        ModuleRequest request{};
+        request.parameters = {
+            {QStringLiteral("device_name"), QStringLiteral("ttyUSB0")},
+            {QStringLiteral("pt1000_0"), QJsonObject{{QStringLiteral("overtemperature-protection"), true}}}};
+        QObject owner;
+        int completions = 0;
+        const auto response = startWriteRequest(request, &owner, [&](const ModuleResponse&) { ++completions; });
+        QVERIFY(response.final);
+        QVERIFY(!response.success);
+        QCOMPARE(response.parameters.value(QStringLiteral("error")).toString(),
+                 QStringLiteral("safety_controller_pt1000_invalid_settings"));
+        QCOMPARE(completions, 0);
+        QVERIFY(owner.children().isEmpty());
+        QVERIFY(rpc.stateQueries.isEmpty());
+        QVERIFY(QDir(directory.path()).entryList(QDir::AllEntries | QDir::NoDotAndDotDot).isEmpty());
+    }
+
+    void roundTripsAllEstopPolarities() {
+        for (const auto& value :
+             {QStringLiteral("active-low"), QStringLiteral("active-high"), QStringLiteral("disabled")}) {
+            const auto result = readEstopParametersFromYaml({}, value);
+            QCOMPARE(result.value(QStringLiteral("enabled")).toString(), value);
+            QCOMPARE(updateEstopParametersInYaml(result).toString(), value);
+        }
+    }
+
+    void roundTripsAllContactorTypes() {
+        for (const auto& type :
+             {QStringLiteral("disabled"), QStringLiteral("without-feedback"),
+              QStringLiteral("with-feedback-normally-open"), QStringLiteral("with-feedback-normally-closed")}) {
+            const QJsonObject request{{QStringLiteral("type"), type},
+                                      {QStringLiteral("close-time"), 100},
+                                      {QStringLiteral("open-time"), 200}};
+            const auto yaml = updateContactorParametersInYaml(request);
+            const auto result = readContactorParametersFromYaml({}, yaml);
+            QCOMPARE(result.value(QStringLiteral("type")).toString(), type);
+            if (type != QStringLiteral("disabled")) {
+                bool closeTimeOk = false;
+                const double closeTime = result.value(QStringLiteral("close-time")).toString().toDouble(&closeTimeOk);
+                QVERIFY(closeTimeOk);
+                QCOMPARE(closeTime, 100.0);
+                bool openTimeOk = false;
+                const double openTime = result.value(QStringLiteral("open-time")).toString().toDouble(&openTimeOk);
+                QVERIFY(openTimeOk);
+                QCOMPARE(openTime, 200.0);
+            }
+        }
+    }
+
     void preservesCompleteYamlWhenEditingAllowedEntries() {
         QTemporaryDir directory;
         const QString path = directory.filePath(QStringLiteral("controller.yaml"));

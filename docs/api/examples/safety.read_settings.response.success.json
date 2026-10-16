@@ -17,6 +17,30 @@
             "overtemperature-protection": true,
             "abort-temperature": "80",
             "resistance-offset": "0"
+          },
+          "pt1000_1": {
+            "overtemperature-protection": false,
+            "abort-temperature": "",
+            "resistance-offset": ""
+          },
+          "contactors_0": {
+            "type": "without-feedback",
+            "close-time": "100",
+            "open-time": "200"
+          },
+          "contactors_1": {
+            "type": "with-feedback-normally-open",
+            "close-time": "100",
+            "open-time": "200"
+          },
+          "estops_0": {
+            "enabled": "active-low"
+          },
+          "estops_1": {
+            "enabled": "active-high"
+          },
+          "estops_2": {
+            "enabled": "disabled"
           }
         }
       },

@@ -126,6 +126,7 @@ function normalizeSettingsMatrixSection(section) {
   return {
     id: section.id,
     title: section.display_name,
+    layout: section.layout,
     instances: normalizeSettingsMatrixInstances(section.instances),
     fields: normalizeSettingsMatrixFields(section.fields)
   };
@@ -154,6 +155,14 @@ function normalizeSettingsMatrixField(field) {
 
   if (Object.hasOwn(field, 'description')) {
     normalizedField.description = field.description;
+  }
+
+  if (Object.hasOwn(field, 'enabled_by')) {
+    normalizedField.enabled_by = field.enabled_by;
+  }
+
+  if (Object.hasOwn(field, 'required')) {
+    normalizedField.required = field.required;
   }
 
   if (Object.hasOwn(field, 'unit')) {

@@ -96,6 +96,15 @@ document, including settings not exposed by the UI. The cache is the write basel
 its producer must publish atomically for the correct controller and refresh it after external changes.
 External tools must not access that controller concurrently with a UI flash or recovery.
 
+PT1000 channels appear as rows under **Overtemperature Protection**. Disabling a channel greys out its
+temperature and resistance-offset inputs without clearing their values; Save still sends those values.
+They are retained only while the page is open, not across reloads: a disabled hardware channel has no
+recoverable temperature threshold, so a fresh read leaves unknown values empty. Both values must be entered
+as finite numbers before an enabled channel can be saved; explicitly entered zero is valid. Disabled channels
+may remain empty without blocking other settings. Emergency Stops have one dropdown
+per row, offering `active-low`, `active-high`, or `disabled`. Contactors retain `disabled` and all three
+feedback modes. The configured settings allowlist still determines which groups are shown.
+
 Before flashing, the backend quarantines the cache as `<device>.yaml.invalid`. A verified successful flash
 publishes the updated YAML before EVerest restarts. If a started flash fails, the backend attempts one bounded
 device-specific parameter dump and YAML conversion while EVerest is still stopped. Valid readback replaces

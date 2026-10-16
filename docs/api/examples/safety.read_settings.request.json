@@ -7,6 +7,30 @@
       "overtemperature-protection": null,
       "abort-temperature": null,
       "resistance-offset": null
+    },
+    "pt1000_1": {
+      "overtemperature-protection": null,
+      "abort-temperature": null,
+      "resistance-offset": null
+    },
+    "contactors_0": {
+      "type": null,
+      "close-time": null,
+      "open-time": null
+    },
+    "contactors_1": {
+      "type": null,
+      "close-time": null,
+      "open-time": null
+    },
+    "estops_0": {
+      "enabled": null
+    },
+    "estops_1": {
+      "enabled": null
+    },
+    "estops_2": {
+      "enabled": null
     }
   }
 }

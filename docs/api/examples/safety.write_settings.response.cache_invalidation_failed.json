@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "safety.write_settings.error",
+  "parameters": {
+    "error": "safety_controller_cache_invalidation_failed",
+    "cache_state": "unchanged"
+  },
+  "responseId": "r-2"
+}

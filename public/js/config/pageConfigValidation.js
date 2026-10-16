@@ -417,6 +417,10 @@ function validateSettingsMatrixSections(block) {
       throw new Error(`settings_matrix section '${section.id}' has invalid 'fields'`);
     }
 
+    if (Object.hasOwn(section, 'layout') && section.layout !== 'instances_as_rows') {
+      throw new Error(`settings_matrix section '${section.id}' has invalid 'layout'`);
+    }
+
     section.instances.forEach((instance, instanceIndex) => {
       if (!isPlainObject(instance)) {
         throw new Error(
@@ -454,7 +458,7 @@ function validateSettingsMatrixSections(block) {
       }
 
       const requiredFieldKeys = ['id', 'display_name', 'description', 'value_type', 'backend_path'];
-      const optionalFieldKeys = ['unit', 'enum_values', 'default_value'];
+      const optionalFieldKeys = ['unit', 'enum_values', 'default_value', 'enabled_by', 'required'];
       const allowedFieldKeys = new Set([...requiredFieldKeys, ...optionalFieldKeys]);
 
       requiredFieldKeys.forEach((requiredKey) => {
@@ -488,6 +492,16 @@ function validateSettingsMatrixSections(block) {
         throw new Error(
           `settings_matrix section '${section.id}' field '${field.id}' has invalid 'value_type'`
         );
+      }
+
+      if (Object.hasOwn(field, 'enabled_by') &&
+          (typeof field.enabled_by !== 'string' || field.enabled_by === field.id ||
+           !section.fields.some((candidate) => candidate.id === field.enabled_by && candidate.value_type === 'boolean'))) {
+        throw new Error(`settings_matrix section '${section.id}' field '${field.id}' has invalid 'enabled_by'`);
+      }
+
+      if (Object.hasOwn(field, 'required') && typeof field.required !== 'boolean') {
+        throw new Error(`settings_matrix section '${section.id}' field '${field.id}' has invalid 'required'`);
       }
 
       if (Object.hasOwn(field, 'unit') && !hasNonEmptyStringField(field, 'unit')) {

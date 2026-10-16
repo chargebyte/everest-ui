@@ -438,8 +438,8 @@ QJsonObject readPt1000ParametersFromYaml(const QJsonObject& requestBlock, const 
     QJsonObject filledBlock = requestBlock;
 
     if (yamlEntry.isString() && yamlEntry.toString() == QLatin1String(kSftyCtrlrParamDisabled)) {
-        filledBlock.insert(QLatin1String(kSftyCtrlrParamAbortTemp), QStringLiteral(""));
-        filledBlock.insert(QLatin1String(kSftyCtrlrParamResistanceOffset), QStringLiteral(""));
+        filledBlock.insert(QLatin1String(kSftyCtrlrParamAbortTemp), QString());
+        filledBlock.insert(QLatin1String(kSftyCtrlrParamResistanceOffset), QString());
         filledBlock.insert(QLatin1String(kSftyCtrlrParamOvertempProtection), false);
         return filledBlock;
     }
@@ -547,6 +547,36 @@ QJsonObject readRequestedParametersFromYaml(const QJsonObject& requestParameters
     }
 
     return filledParameters;
+}
+
+bool validatePt1000Settings(const QJsonObject& parameters,
+                            const QStringList& availableSettings = loadAvailableSafetyControllerSettings()) {
+    if (!isSafetyControllerSettingAvailable(availableSettings, QLatin1String(kSafetyControllerSettingPt1000))) {
+        return true;
+    }
+    for (auto it = parameters.begin(); it != parameters.end(); ++it) {
+        if (!it.key().startsWith(QLatin1String(kParametersPt1000))) {
+            continue;
+        }
+        bool validIndex = false;
+        const int index = it.key().mid(QLatin1String(kParametersPt1000).size()).toInt(&validIndex);
+        if (!validIndex || index < 0) {
+            continue;
+        }
+        const QJsonObject block = it.value().toObject();
+        if (!block.value(QLatin1String(kSftyCtrlrParamOvertempProtection)).toBool()) {
+            continue;
+        }
+        for (const char* field : {kSftyCtrlrParamAbortTemp, kSftyCtrlrParamResistanceOffset}) {
+            const QJsonValue value = block.value(QLatin1String(field));
+            bool validNumber = value.isDouble();
+            const double number = validNumber ? value.toDouble() : value.toString().trimmed().toDouble(&validNumber);
+            if (!validNumber || !std::isfinite(number)) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 QJsonValue updatePt1000ParametersInYaml(const QJsonObject& requestBlock) {
@@ -1243,6 +1273,14 @@ ModuleResponse startWriteRequest(const ModuleRequest& request, QObject* owner,
     const QString deviceName = request.parameters.value(QLatin1String(kKeyDeviceName)).toString();
     if (!isSafeDeviceName(deviceName)) {
         response.parameters = {{QLatin1String(kError), QLatin1String(kErrorDeviceInvalid)}};
+        return response;
+    }
+    if (!validatePt1000Settings(request.parameters)) {
+        response.parameters = {
+            {QLatin1String(kError), QStringLiteral("safety_controller_pt1000_invalid_settings")},
+            {QLatin1String(kKeyMessage), QStringLiteral("Enter an abort temperature and resistance offset as valid "
+                                                        "numbers for every enabled PT1000 channel.")},
+        };
         return response;
     }
     if (!g_rpcApiClient || !g_rpcApiClient->isReady()) {

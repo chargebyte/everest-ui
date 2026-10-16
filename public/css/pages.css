@@ -210,6 +210,50 @@
   margin: 0;
 }
 
+.matrix-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.matrix-table {
+  width: 100%;
+  min-width: 520px;
+  table-layout: fixed;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.matrix-table th,
+.matrix-table td {
+  padding: 8px 12px 8px 0;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--cb-border);
+}
+
+.matrix-table th {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.matrix-table .matrix-cell {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.matrix-table .matrix-cell label {
+  overflow-wrap: anywhere;
+}
+
+.matrix-table .input {
+  min-width: 0;
+}
+
+.matrix-table-single-field {
+  max-width: 480px;
+  min-width: 260px;
+}
+
 .label {
   color: var(--cb-text);
   font-size: 16px;
