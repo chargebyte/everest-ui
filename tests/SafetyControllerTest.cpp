@@ -139,6 +139,254 @@ class SafetyControllerTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void preservesCompleteYamlWhenEditingAllowedEntries() {
+        QTemporaryDir directory;
+        const QString path = directory.filePath(QStringLiteral("controller.yaml"));
+        const QByteArray original =
+            "version: 3\npt1000s:\n  - abort-temperature: 90 C\n    resistance-offset: 0 Ohm\n"
+            "    extension: {keep: '0012'}\ncontactors: [{type: normally-open, close-time: 100 ms, open-time: 200 "
+            "ms}]\n"
+            "estops: [enabled]\nimd: active-low\nrcm: {test: {polarity: active-high, delay: 50 ms}}\n"
+            "inlet: {type: with-feedback, extension: [one, two]}\nopaque: {serial: '000123', large: "
+            "'9007199254740993'}\n";
+        QVERIFY(writeTextFile(path, original));
+        const auto cached = loadYamlFile(path);
+        QVERIFY(cached.success);
+        const QJsonObject settings{
+            {QStringLiteral("pt1000_0"), QJsonObject{{QStringLiteral("overtemperature-protection"), true},
+                                                     {QStringLiteral("abort-temperature"), 95},
+                                                     {QStringLiteral("resistance-offset"), 2}}},
+            {QStringLiteral("pt1000_invalid"), QJsonObject{{QStringLiteral("overtemperature-protection"), false}}},
+            {QStringLiteral("contactors_0"), QJsonObject{{QStringLiteral("type"), QStringLiteral("disabled")}}},
+        };
+        const QByteArray changed = prepareSafetyControllerYaml(path, settings, cached.yamlRoot,
+                                                               {QStringLiteral("pt1000"), QStringLiteral("estops")});
+        QVERIFY(!changed.isEmpty());
+        const YAML::Node before = YAML::Load(original.constData());
+        const YAML::Node after = YAML::Load(changed.constData());
+        for (const char* key : {"version", "contactors", "estops", "imd", "rcm", "inlet", "opaque"}) {
+            QCOMPARE(QString::fromStdString(YAML::Dump(after[key])), QString::fromStdString(YAML::Dump(before[key])));
+        }
+        QCOMPARE(QString::fromStdString(after["pt1000s"][0]["extension"]["keep"].as<std::string>()),
+                 QStringLiteral("0012"));
+        QVERIFY(QString::fromStdString(after["pt1000s"][0]["abort-temperature"].as<std::string>())
+                    .startsWith(QStringLiteral("95")));
+    }
+
+    void invalidatedCacheIsNotReadAfterInterruptedOperation() {
+        QTemporaryDir directory;
+        SafetyControllerDevice device;
+        device.name = QStringLiteral("ttyUSB0");
+        device.yamlPath = directory.filePath(QStringLiteral("controller.yaml"));
+        QVERIFY(writeTextFile(device.yamlPath, "version: 3\npt1000s: []\ncontactors: []\nestops: []\n"));
+        QVERIFY(invalidateSafetyControllerCache(device.yamlPath));
+        QVERIFY(!QFile::exists(device.yamlPath));
+        QVERIFY(QFile::exists(device.yamlPath + QStringLiteral(".invalid")));
+        const auto result = safetyControllerDeviceToJson(device, {}, true);
+        QVERIFY(!result.value(QStringLiteral("available")).toBool());
+        QVERIFY(!result.value(QStringLiteral("writable")).toBool());
+        QVERIFY(result.value(QStringLiteral("message")).toString().contains(QStringLiteral("readback")));
+        // A later external producer can restore availability by publishing a fresh canonical file.
+        QVERIFY(writeTextFile(device.yamlPath, "version: 3\npt1000s: []\ncontactors: []\nestops: []\n"));
+        QVERIFY(safetyControllerDeviceToJson(device, {}, false).value(QStringLiteral("available")).toBool());
+    }
+
+    void flashCacheLifecycle_data() {
+        QTest::addColumn<QString>("flashMode");
+        QTest::addColumn<QString>("recoveryMode");
+        QTest::addColumn<QString>("cacheState");
+        QTest::addColumn<bool>("restartFails");
+        QTest::newRow("success") << QStringLiteral("success") << QStringLiteral("valid") << QStringLiteral("") << false;
+        QTest::newRow("invalidation-failed")
+            << QStringLiteral("invalidation-failed") << QStringLiteral("valid") << QStringLiteral("unchanged") << false;
+        QTest::newRow("failed-to-start") << QStringLiteral("missing") << QStringLiteral("valid")
+                                         << QStringLiteral("unchanged") << false;
+        QTest::newRow("nonzero-recovered")
+            << QStringLiteral("nonzero") << QStringLiteral("valid") << QStringLiteral("refreshed") << false;
+        QTest::newRow("timeout-recovered")
+            << QStringLiteral("timeout") << QStringLiteral("valid") << QStringLiteral("refreshed") << false;
+        QTest::newRow("crash-recovered") << QStringLiteral("crash") << QStringLiteral("valid")
+                                         << QStringLiteral("refreshed") << false;
+        QTest::newRow("dump-failed") << QStringLiteral("nonzero") << QStringLiteral("dump-failed")
+                                     << QStringLiteral("unavailable") << false;
+        QTest::newRow("dump-timeout") << QStringLiteral("nonzero") << QStringLiteral("dump-timeout")
+                                      << QStringLiteral("unavailable") << false;
+        QTest::newRow("decoder-crc-failure")
+            << QStringLiteral("nonzero") << QStringLiteral("crc-failed") << QStringLiteral("unavailable") << false;
+        QTest::newRow("malformed-dump") << QStringLiteral("nonzero") << QStringLiteral("malformed")
+                                        << QStringLiteral("unavailable") << false;
+        QTest::newRow("wrong-structure") << QStringLiteral("nonzero") << QStringLiteral("structure")
+                                         << QStringLiteral("unavailable") << false;
+        QTest::newRow("recovery-timeout")
+            << QStringLiteral("nonzero") << QStringLiteral("timeout") << QStringLiteral("unavailable") << false;
+        QTest::newRow("publication-failed")
+            << QStringLiteral("publish-failed") << QStringLiteral("valid") << QStringLiteral("unavailable") << false;
+        QTest::newRow("recovery-publication-failed")
+            << QStringLiteral("nonzero") << QStringLiteral("publish-failed") << QStringLiteral("unavailable") << false;
+        QTest::newRow("restart-failed-after-flash-failure")
+            << QStringLiteral("nonzero") << QStringLiteral("valid") << QStringLiteral("refreshed") << true;
+        QTest::newRow("restart-failed-after-success")
+            << QStringLiteral("success") << QStringLiteral("valid") << QStringLiteral("") << true;
+    }
+
+    void flashCacheLifecycle() {
+        QFETCH(QString, flashMode);
+        QFETCH(QString, recoveryMode);
+        QFETCH(QString, cacheState);
+        QFETCH(bool, restartFails);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        SafetyControllerDevice device;
+        device.name = QStringLiteral("ttyUSB9");
+        device.yamlPath = directory.filePath(QStringLiteral("controller.yaml"));
+        device.resetGpioLineName = QStringLiteral("nSAFETY2_RESET_INT");
+        device.bootModeGpioLineName = QStringLiteral("SAFETY2_BOOTMODE_SET");
+        device.evseIndices = {2};
+        const QByteArray original =
+            "version: 3\npt1000s: [disabled]\ncontactors: [disabled]\nestops: [enabled]\nimd: active-low\n";
+        const QByteArray modified =
+            "version: 3\npt1000s: [disabled]\ncontactors: [disabled]\nestops: [disabled]\nimd: active-low\n";
+        const QByteArray recovered =
+            "version: 3\npt1000s: [disabled]\ncontactors: [disabled]\nestops: [enabled]\nimd: active-high\n";
+        QVERIFY(writeTextFile(device.yamlPath, original));
+        if (flashMode == QStringLiteral("invalidation-failed")) {
+            QVERIFY(QDir().mkdir(device.yamlPath + QStringLiteral(".invalid")));
+        }
+        const QString otherCache = directory.filePath(QStringLiteral("other.yaml"));
+        QVERIFY(writeTextFile(otherCache, original));
+        const QString dumpPath = directory.filePath(QStringLiteral("dump.yaml"));
+        QVERIFY(writeTextFile(dumpPath, recoveryMode == QStringLiteral("malformed")   ? QByteArray("[broken")
+                                        : recoveryMode == QStringLiteral("structure") ? QByteArray("version: 3\n")
+                                                                                      : recovered));
+        const QString callsPath = directory.filePath(QStringLiteral("calls"));
+        const auto executable = [&](const QString& name, const QByteArray& body) {
+            const QString path = directory.filePath(name);
+            return writeTextFile(path, "#!/bin/sh\n" + body) &&
+                   QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        };
+        QVERIFY(executable(QStringLiteral("ra-pb-create"), "exit 0\n"));
+        const QByteArray cacheArg = quoteShellArgument(device.yamlPath).toUtf8();
+        if (flashMode != QStringLiteral("missing")) {
+            QByteArray script = "printf '%s\\n' \"$@\" >> " + quoteShellArgument(callsPath).toUtf8() + "\n";
+            script += "[ ! -e " + cacheArg + " ] || exit 99\ncase \"$9\" in\nflash)\n";
+            if (flashMode == QStringLiteral("timeout")) {
+                script += "exec /bin/sleep 5\n";
+            } else if (flashMode == QStringLiteral("crash")) {
+                script += "kill -KILL $$\n";
+            } else if (flashMode == QStringLiteral("publish-failed")) {
+                script += "/bin/mkdir " + cacheArg + "\nexit 0\n";
+            } else {
+                script += flashMode == QStringLiteral("success") ? "exit 0\n" : "exit 7\n";
+            }
+            script += ";;\ndump-pb)\n";
+            if (recoveryMode == QStringLiteral("dump-failed")) {
+                script += "exit 8\n";
+            } else if (recoveryMode == QStringLiteral("dump-timeout")) {
+                script += "exec /bin/sleep 5\n";
+            } else {
+                script += "printf binary > \"${10}\"\nexit 0\n";
+            }
+            script += ";;\n*) exit 98;;\nesac\n";
+            QVERIFY(executable(QStringLiteral("ra-update"), script));
+        }
+        QByteArray decoder;
+        if (recoveryMode == QStringLiteral("timeout")) {
+            decoder = "exec /bin/sleep 5\n";
+        } else {
+            decoder = "/bin/cat " + quoteShellArgument(dumpPath).toUtf8() + "\n";
+            if (recoveryMode == QStringLiteral("publish-failed")) {
+                decoder += "/bin/mkdir " + cacheArg + "\n";
+            }
+            decoder += recoveryMode == QStringLiteral("crc-failed") ? "exit 1\n" : "exit 0\n";
+        }
+        QVERIFY(executable(QStringLiteral("ra-pb-dump"), decoder));
+        ScopedProcessEnvironment environment(directory.path(), nullptr);
+        SafetyControllerServiceActions actions;
+        bool stopped = false;
+        int restarts = 0;
+        bool orderCorrect = true;
+        actions.check = [](const QList<int>&) { return EverestStateAllowedResult{true, {}, {}}; };
+        actions.stop = [&]() {
+            stopped = true;
+            return EverestServiceControlResult{true, {}};
+        };
+        actions.restart = [&](const QList<int>& indices) {
+            ++restarts;
+            orderCorrect = stopped && indices == QList<int>{2};
+            QFile cache(device.yamlPath);
+            if (cacheState == QStringLiteral("unavailable")) {
+                orderCorrect = orderCorrect && !QFileInfo(device.yamlPath).isFile();
+            } else {
+                orderCorrect = orderCorrect && cache.open(QIODevice::ReadOnly);
+                const QByteArray expected = cacheState == QStringLiteral("unchanged")   ? original
+                                            : cacheState == QStringLiteral("refreshed") ? recovered
+                                                                                        : modified;
+                orderCorrect = orderCorrect && cache.readAll() == expected;
+            }
+            return EverestServiceControlResult{!restartFails,
+                                               restartFails ? QStringLiteral("rpc_api_no_response") : QString()};
+        };
+        actions.monitor = [](const QList<int>&, bool) {
+            return EverestErrorPresentResult{
+                .success = false, .errorPresent = false, .error = QStringLiteral("everest_error_present_not_detected")};
+        };
+        ConsoleConnector::ExecOptions options;
+        options.syncTimeoutMs = 300;
+        QObject owner;
+        int completions = 0;
+        ModuleResponse result;
+        auto* operation = new SafetyControllerWriteOperation(
+            {}, device, directory.filePath(QStringLiteral("settings.yaml")),
+            directory.filePath(QStringLiteral("settings.bin")), modified, &owner,
+            [&](const ModuleResponse& response) {
+                result = response;
+                ++completions;
+            },
+            options, actions);
+        operation->start();
+        QTRY_COMPARE(completions, 1);
+        QCOMPARE(restarts, 1);
+        QVERIFY(orderCorrect);
+        QCOMPARE(result.parameters.value(QStringLiteral("cache_state")).toString(), cacheState);
+        if (flashMode == QStringLiteral("success")) {
+            QCOMPARE(result.success, !restartFails);
+        } else {
+            QVERIFY(!result.success);
+            QCOMPARE(result.parameters.value(QStringLiteral("error")).toString(),
+                     flashMode == QStringLiteral("publish-failed")
+                         ? QStringLiteral("safety_controller_yaml_publish_failed_after_flash")
+                     : flashMode == QStringLiteral("invalidation-failed")
+                         ? QStringLiteral("safety_controller_cache_invalidation_failed")
+                         : QStringLiteral("safety_controller_flash_failed"));
+            if (restartFails) {
+                QCOMPARE(result.parameters.value(QStringLiteral("restart_error")).toString(),
+                         QStringLiteral("rpc_api_no_response"));
+            }
+        }
+        QFile other(otherCache);
+        QVERIFY(other.open(QIODevice::ReadOnly));
+        QCOMPARE(other.readAll(), original);
+        QCOMPARE(QFile::exists(device.yamlPath + QStringLiteral(".invalid")),
+                 cacheState == QStringLiteral("unavailable") || flashMode == QStringLiteral("invalidation-failed"));
+        if (flashMode != QStringLiteral("missing") && flashMode != QStringLiteral("invalidation-failed")) {
+            QFile calls(callsPath);
+            QVERIFY(calls.open(QIODevice::ReadOnly));
+            const QByteArray arguments = calls.readAll();
+            QVERIFY(arguments.contains("-d\n/dev/ttyUSB9\n-r\nnSAFETY2_RESET_INT\n-m\nSAFETY2_BOOTMODE_SET\nflash\n"));
+            const bool recoveryAttempted =
+                flashMode != QStringLiteral("success") && flashMode != QStringLiteral("publish-failed");
+            QCOMPARE(arguments.contains("dump-pb\n"), recoveryAttempted);
+            if (recoveryAttempted) {
+                QVERIFY(arguments.contains(
+                    "-d\n/dev/ttyUSB9\n-r\nnSAFETY2_RESET_INT\n-m\nSAFETY2_BOOTMODE_SET\ndump-pb\n"));
+            }
+        } else {
+            QVERIFY(!QFile::exists(callsPath));
+        }
+        QTest::qWait(350);
+        QCOMPARE(completions, 1);
+    }
+
     void delayedBinaryCreationReceivesExecutionBudget_data() {
         QTest::addColumn<int>("exitCode");
         QTest::addColumn<int>("startTimeoutMs");

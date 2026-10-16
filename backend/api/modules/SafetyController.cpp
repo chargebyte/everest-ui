@@ -21,12 +21,10 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStringList>
-#include <QTextStream>
+#include <QTemporaryDir>
 #include <QTimer>
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-#include <QStringConverter>
-#endif
+#include <yaml-cpp/yaml.h>
 
 #include <algorithm>
 #include <cmath>
@@ -42,15 +40,11 @@ constexpr char kModuleEvseManager[] = "EvseManager";
 constexpr char kErrorSafetyControllerYamlWriteFailed[] = "safety_controller_yaml_write_failed";
 constexpr char kErrorSafetyControllerPbCreateFailed[] = "safety_controller_pb_create_failed";
 constexpr char kErrorSafetyControllerFlashFailed[] = "safety_controller_flash_failed";
-constexpr char kErrorStdErr[] = "stderr";
 constexpr char kParametersPt1000[] = "pt1000_";
 constexpr char kParametersContactors[] = "contactors_";
 constexpr char kParametersEstops[] = "estops_";
-constexpr char kCmdRaPbCreate[] = "ra-pb-create";
 constexpr char kCmdFlagI[] = "-i";
 constexpr char kCmdFlagO[] = "-o";
-constexpr char kCmdBinPath[] = "{bin_path}";
-constexpr char kCmdYamlPath[] = "{yaml_path}";
 constexpr char kSftyCtrlrParamDisabled[] = "disabled";
 constexpr char kSftyCtrlrParamAbortTemp[] = "abort-temperature";
 constexpr char kSftyCtrlrParamResistanceOffset[] = "resistance-offset";
@@ -391,8 +385,12 @@ QJsonObject safetyControllerDeviceToJson(const SafetyControllerDevice& device, c
 
     const YamlLoadResult yamlResult = loadYamlFile(device.yamlPath);
     if (!yamlResult.success) {
-        controller.insert(QLatin1String(kKeyMessage),
-                          QStringLiteral("Safety Controller settings are unavailable at %1").arg(device.yamlPath));
+        controller.insert(
+            QLatin1String(kKeyMessage),
+            QFile::exists(device.yamlPath + QStringLiteral(".invalid"))
+                ? QStringLiteral("Safety Controller settings are unavailable after an interrupted or "
+                                 "unsuccessful write. A controller readback is required.")
+                : QStringLiteral("Safety Controller settings are unavailable at %1").arg(device.yamlPath));
         return controller;
     }
 
@@ -585,9 +583,10 @@ QJsonValue updateEstopParametersInYaml(const QJsonObject& requestBlock) {
     return requestBlock.value(QLatin1String(kSftyCtrlrParamEnabled));
 }
 
-QJsonObject updateRequestParametersInYaml(const QJsonObject& requestParameters, const QJsonObject& yamlRoot) {
+QJsonObject
+updateRequestParametersInYaml(const QJsonObject& requestParameters, const QJsonObject& yamlRoot,
+                              const QStringList& availableSettings = loadAvailableSafetyControllerSettings()) {
     QJsonObject updatedYamlRoot = yamlRoot;
-    const QStringList availableSettings = loadAvailableSafetyControllerSettings();
     QJsonArray pt1000Entries = updatedYamlRoot.value(QLatin1String(kSftyCtrlrParamPt1000S)).toArray();
     QJsonArray contactorEntries = updatedYamlRoot.value(QLatin1String(kSftyCtrlrParamContactors)).toArray();
     QJsonArray estopEntries = updatedYamlRoot.value(QLatin1String(kSftyCtrlrParamEstops)).toArray();
@@ -601,8 +600,9 @@ QJsonObject updateRequestParametersInYaml(const QJsonObject& requestParameters, 
             }
 
             const QString indexString = parameterKey.mid(QLatin1String(kParametersPt1000).size());
-            const int index = indexString.toInt();
-            if (index >= 0 && index < pt1000Entries.size()) {
+            bool validIndex = false;
+            const int index = indexString.toInt(&validIndex);
+            if (validIndex && index >= 0 && index < pt1000Entries.size()) {
                 pt1000Entries.replace(index, updatePt1000ParametersInYaml(requestBlock));
             }
             continue;
@@ -615,8 +615,9 @@ QJsonObject updateRequestParametersInYaml(const QJsonObject& requestParameters, 
             }
 
             const QString indexString = parameterKey.mid(QLatin1String(kParametersContactors).size());
-            const int index = indexString.toInt();
-            if (index >= 0 && index < contactorEntries.size()) {
+            bool validIndex = false;
+            const int index = indexString.toInt(&validIndex);
+            if (validIndex && index >= 0 && index < contactorEntries.size()) {
                 contactorEntries.replace(index, updateContactorParametersInYaml(requestBlock));
             }
             continue;
@@ -628,8 +629,9 @@ QJsonObject updateRequestParametersInYaml(const QJsonObject& requestParameters, 
             }
 
             const QString indexString = parameterKey.mid(QLatin1String(kParametersEstops).size());
-            const int index = indexString.toInt();
-            if (index >= 0 && index < estopEntries.size()) {
+            bool validIndex = false;
+            const int index = indexString.toInt(&validIndex);
+            if (validIndex && index >= 0 && index < estopEntries.size()) {
                 estopEntries.replace(index, updateEstopParametersInYaml(requestBlock));
             }
         }
@@ -641,79 +643,129 @@ QJsonObject updateRequestParametersInYaml(const QJsonObject& requestParameters, 
     return updatedYamlRoot;
 }
 
-bool writeSafetyControllerYamlFile(const QString& yamlPath, const QJsonObject& yamlRoot) {
-    QSaveFile yamlFile(yamlPath);
-    if (!yamlFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+bool writeSafetyControllerYamlFile(const QString& yamlPath, const QByteArray& yaml) {
+    QSaveFile file(yamlPath);
+    if (!file.open(QIODevice::WriteOnly) || file.write(yaml) != yaml.size() || !file.commit()) {
+        qWarning() << "Unable to publish Safety Controller YAML:" << yamlPath << file.errorString();
         return false;
     }
-
-    QTextStream stream(&yamlFile);
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    stream.setEncoding(QStringConverter::Utf8);
-#else
-    stream.setCodec("UTF-8");
-#endif
-    stream << "version: " << formatYamlScalar(yamlRoot.value(QStringLiteral("version"))) << "\n\n";
-
-    const auto writeSequence = [&stream](const QString& key, const QJsonArray& entries,
-                                         const QStringList& objectFieldOrder) {
-        stream << key << ":\n";
-        for (const QJsonValue& entry : entries) {
-            if (entry.isObject()) {
-                const QJsonObject entryObject = entry.toObject();
-                bool firstField = true;
-                for (const QString& fieldName : objectFieldOrder) {
-                    if (!entryObject.contains(fieldName)) {
-                        continue;
-                    }
-
-                    stream << (firstField ? QStringLiteral("  - ") : QStringLiteral("    ")) << fieldName << ": "
-                           << formatYamlScalar(entryObject.value(fieldName)) << "\n";
-                    firstField = false;
-                }
-                continue;
-            }
-
-            stream << "  - " << formatYamlScalar(entry) << "\n";
-        }
-    };
-
-    writeSequence(QLatin1String(kSftyCtrlrParamPt1000S),
-                  yamlRoot.value(QLatin1String(kSftyCtrlrParamPt1000S)).toArray(),
-                  {QLatin1String(kSftyCtrlrParamAbortTemp), QLatin1String(kSftyCtrlrParamResistanceOffset)});
-    writeSequence(
-        QLatin1String(kSftyCtrlrParamContactors), yamlRoot.value(QLatin1String(kSftyCtrlrParamContactors)).toArray(),
-        {QLatin1String(kKeyType), QLatin1String(kSftyCtrlrParamCloseTime), QLatin1String(kSftyCtrlrParamOpenTime)});
-    writeSequence(QLatin1String(kSftyCtrlrParamEstops), yamlRoot.value(QLatin1String(kSftyCtrlrParamEstops)).toArray(),
-                  {});
-
-    return stream.status() == QTextStream::Ok && yamlFile.commit();
+    return true;
 }
 
-ModuleResponse convertSafetyControllerYamlToBin(const QString& yamlPath, const QString& binPath,
-                                                ModuleResponse response) {
-    ConsoleConnector console;
-    ConsoleConnector::ExecOptions options;
-
-    const auto command = QLatin1String(kCmdRaPbCreate) + QStringLiteral(" ") + QLatin1String(kCmdFlagI) +
-                         QStringLiteral(" ") + QLatin1String(kCmdYamlPath) + QStringLiteral(" ") +
-                         QLatin1String(kCmdFlagO) + QStringLiteral(" ") + QLatin1String(kCmdBinPath);
-    const ConsoleConnector::RunResult result = console.executeTemplate(command,
-                                                                       {
-                                                                           {QLatin1String(kCmdYamlPath), yamlPath},
-                                                                           {QLatin1String(kCmdBinPath), binPath},
-                                                                       },
-                                                                       options, ConsoleConnector::ExecMode::Sync);
-
-    if (result.exitCode == 0) {
-        return response;
+YAML::Node jsonToYaml(const QJsonValue& value) {
+    if (value.isObject()) {
+        YAML::Node node(YAML::NodeType::Map);
+        const QJsonObject object = value.toObject();
+        for (auto it = object.begin(); it != object.end(); ++it) {
+            node[it.key().toStdString()] = jsonToYaml(it.value());
+        }
+        return node;
     }
+    if (value.isArray()) {
+        YAML::Node node(YAML::NodeType::Sequence);
+        for (const auto& child : value.toArray()) {
+            node.push_back(jsonToYaml(child));
+        }
+        return node;
+    }
+    if (value.isBool()) {
+        return YAML::Node(value.toBool());
+    }
+    if (value.isDouble()) {
+        return YAML::Node(value.toDouble());
+    }
+    if (value.isString()) {
+        return YAML::Node(value.toString().toStdString());
+    }
+    return YAML::Node(YAML::NodeType::Null);
+}
 
-    response.parameters = QJsonObject{
-        {QLatin1String(kError), QLatin1String(kErrorSafetyControllerPbCreateFailed)},
-        {QLatin1String(kErrorStdErr), QString::fromUtf8(result.stderrData).trimmed()},
-    };
-    return response;
+QByteArray emitSafetyControllerYaml(const YAML::Node& root) {
+    YAML::Emitter emitter;
+    emitter << root;
+    return emitter.good() ? QByteArray(emitter.c_str()) + '\n' : QByteArray();
+}
+
+bool writeSafetyControllerYamlFile(const QString& yamlPath, const QJsonObject& yamlRoot) {
+    return writeSafetyControllerYamlFile(yamlPath, emitSafetyControllerYaml(jsonToYaml(yamlRoot)));
+}
+
+QByteArray prepareSafetyControllerYaml(const QString& cachePath, const QJsonObject& settings,
+                                       const QJsonObject& cachedParameters,
+                                       const QStringList& available = loadAvailableSafetyControllerSettings()) {
+    try {
+        YAML::Node root = YAML::LoadFile(cachePath.toStdString());
+        if (!root.IsMap()) {
+            return {};
+        }
+        const QJsonObject updated = updateRequestParametersInYaml(settings, cachedParameters, available);
+        // Patch selected entries in the native document, not a schema-limited reconstruction.
+        const auto patchEntries = [&](const QString& prefix, const QString& section, const QString& setting) {
+            if (!isSafetyControllerSettingAvailable(available, setting)) {
+                return;
+            }
+            const QJsonArray entries = updated.value(section).toArray();
+            for (auto it = settings.begin(); it != settings.end(); ++it) {
+                if (!it.key().startsWith(prefix)) {
+                    continue;
+                }
+                bool validIndex = false;
+                const int index = it.key().mid(prefix.size()).toInt(&validIndex);
+                if (!validIndex || index < 0 || index >= entries.size()) {
+                    continue;
+                }
+                YAML::Node replacement = jsonToYaml(entries.at(index));
+                YAML::Node original = root[section.toStdString()][index];
+                if (original.IsMap() && replacement.IsMap()) {
+                    for (const auto& field : replacement) {
+                        original[field.first.as<std::string>()] = field.second;
+                    }
+                } else {
+                    root[section.toStdString()][index] = replacement;
+                }
+            }
+        };
+        patchEntries(QStringLiteral("pt1000_"), QStringLiteral("pt1000s"), QStringLiteral("pt1000"));
+        patchEntries(QStringLiteral("contactors_"), QStringLiteral("contactors"), QStringLiteral("contactors"));
+        patchEntries(QStringLiteral("estops_"), QStringLiteral("estops"), QStringLiteral("estops"));
+        return emitSafetyControllerYaml(root);
+    } catch (const YAML::Exception& error) {
+        qWarning() << "Unable to prepare Safety Controller YAML:" << error.what();
+        return {};
+    }
+}
+
+bool isValidSafetyControllerYaml(const QByteArray& yaml) {
+    try {
+        const YAML::Node root = YAML::Load(yaml.constData());
+        if (!root.IsMap() || !root["version"].IsScalar()) {
+            return false;
+        }
+        for (const char* section : {"pt1000s", "contactors", "estops"}) {
+            if (!root[section].IsSequence()) {
+                return false;
+            }
+        }
+        return true;
+    } catch (const YAML::Exception&) {
+        return false;
+    }
+}
+
+bool invalidateSafetyControllerCache(const QString& path) {
+    const QString backup = path + QStringLiteral(".invalid");
+    if (QFile::exists(backup) && !QFile::remove(backup)) {
+        return false;
+    }
+    return QFile::rename(path, backup);
+}
+
+QString restoreUnchangedSafetyControllerCache(const QString& path) {
+    if (!QFile::exists(path) && QFile::rename(path + QStringLiteral(".invalid"), path)) {
+        return QStringLiteral("unchanged");
+    }
+    qWarning() << "Unable to restore unchanged Safety Controller cache:" << path;
+    return QStringLiteral("unavailable");
 }
 
 QString quoteCommandArgument(const QString& argument) {
@@ -744,12 +796,27 @@ QString raDataFlashCommand(const QString& deviceName, const QString& resetGpioLi
 }
 
 namespace {
+struct SafetyControllerServiceActions {
+    std::function<EverestStateAllowedResult(const QList<int>&)> check = [](const QList<int>& indices) {
+        return EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, indices);
+    };
+    std::function<EverestServiceControlResult()> stop = []() { return EverestServiceControl::executeEverestStop(); };
+    std::function<EverestServiceControlResult(const QList<int>&)> restart = [](const QList<int>& indices) {
+        return EverestServiceControl::executeEverestRestart(g_rpcApiClient, indices);
+    };
+    std::function<EverestErrorPresentResult(const QList<int>&, bool)> monitor = [](const QList<int>& indices,
+                                                                                   bool error) {
+        return EverestServiceControl::monitorEverestErrorPresent(g_rpcApiClient, indices, 10000, error);
+    };
+};
+
 class SafetyControllerWriteOperation final : public QObject {
 public:
     SafetyControllerWriteOperation(const ModuleRequest& request, const SafetyControllerDevice& device,
-                                   const QString& yamlPath, const QString& binPath, QJsonObject updatedParameters,
+                                   const QString& yamlPath, const QString& binPath, QByteArray updatedParameters,
                                    QObject* owner, std::function<void(const ModuleResponse&)> completed,
-                                   ConsoleConnector::ExecOptions execOptions = {}) :
+                                   ConsoleConnector::ExecOptions execOptions = {},
+                                   SafetyControllerServiceActions serviceActions = {}) :
         QObject(owner),
         m_response{.requestId = request.requestId,
                    .group = QLatin1String(kGroupSafety),
@@ -762,7 +829,8 @@ public:
         m_binPath(binPath),
         m_updatedParameters(std::move(updatedParameters)),
         m_completed(std::move(completed)),
-        m_execOptions(execOptions) {
+        m_execOptions(execOptions),
+        m_serviceActions(std::move(serviceActions)) {
         m_process.setProcessChannelMode(QProcess::SeparateChannels);
         connect(&m_process, &QProcess::started, this, [this]() {
             m_started = true;
@@ -838,7 +906,12 @@ private:
 #endif
     }
 
-    enum class Step { CreateBinary, Flash };
+    enum class Step {
+        CreateBinary,
+        Flash,
+        RecoverDump,
+        RecoverYaml
+    };
 
     void startProcess(const QString& program, const QStringList& arguments) {
         m_startTimer.stop();
@@ -893,8 +966,7 @@ private:
                 return;
             }
             logPhase(QStringLiteral("pre_flash_safety"));
-            const EverestStateAllowedResult allowed =
-                EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, m_device.evseIndices);
+            const EverestStateAllowedResult allowed = m_serviceActions.check(m_device.evseIndices);
             if (!allowed.success) {
                 QString error = allowed.error;
                 if (allowed.error == QLatin1String(kErrorEverestStateNotAllowed)) {
@@ -907,19 +979,33 @@ private:
                 return;
             }
             logPhase(QStringLiteral("stop_everest"));
-            const EverestServiceControlResult stopResult = EverestServiceControl::executeEverestStop();
+            const EverestServiceControlResult stopResult = m_serviceActions.stop();
             if (!stopResult.success) {
                 m_response.parameters = {{QLatin1String(kError), stopResult.error}};
                 complete();
+                return;
+            }
+            if (!invalidateSafetyControllerCache(m_device.yamlPath)) {
+                qWarning() << "Safety Controller cache invalidation failed; flash not started: device="
+                           << m_device.name;
+                m_response.parameters = {
+                    {QLatin1String(kError), QStringLiteral("safety_controller_cache_invalidation_failed")},
+                    {QStringLiteral("cache_state"), QStringLiteral("unchanged")},
+                };
+                restartAfterFlash();
                 return;
             }
             m_step = Step::Flash;
             logPhase(QStringLiteral("flash"));
             startProcess(QStringLiteral("ra-update"),
                          {QStringLiteral("-a"), QStringLiteral("data"), QStringLiteral("-d"),
-                          QStringLiteral("/dev/") + m_device.name, QStringLiteral("-r"),
-                          m_device.resetGpioLineName, QStringLiteral("-m"), m_device.bootModeGpioLineName,
-                          QStringLiteral("flash"), m_binPath});
+                          QStringLiteral("/dev/") + m_device.name, QStringLiteral("-r"), m_device.resetGpioLineName,
+                          QStringLiteral("-m"), m_device.bootModeGpioLineName, QStringLiteral("flash"), m_binPath});
+            return;
+        }
+
+        if (m_step == Step::RecoverDump || m_step == Step::RecoverYaml) {
+            finishRecovery(result);
             return;
         }
 
@@ -941,18 +1027,100 @@ private:
 
         qInfo() << "Safety Controller flash completed: request_id=" << m_response.requestId
                 << "device=" << m_device.name << "flash_succeeded=" << flashSucceeded;
-        logPhase(QStringLiteral("restart_rpc_readiness"));
-        const EverestServiceControlResult restartResult =
-            EverestServiceControl::executeEverestRestart(g_rpcApiClient, m_device.evseIndices);
-        if (flashSucceeded && !writeSafetyControllerYamlFile(m_device.yamlPath, m_updatedParameters)) {
+        if (!flashSucceeded) {
+            QString outcome = QStringLiteral("unexpected_exit");
+            if (result.timedOut) {
+                outcome = QStringLiteral("timeout");
+            } else if (!result.started) {
+                outcome = QStringLiteral("start_failed");
+            } else if (result.normalExit) {
+                outcome = QStringLiteral("nonzero_exit");
+            }
+            m_response.parameters = {
+                {QLatin1String(kError), QLatin1String(kErrorSafetyControllerFlashFailed)},
+                {QLatin1String(kKeyDeviceName), m_device.name},
+                {QStringLiteral("flash_outcome"), outcome},
+                {QStringLiteral("exit_code"), result.exitCode},
+                {QStringLiteral("cache_state"), QStringLiteral("unavailable")},
+            };
+            if (!result.started && !result.timedOut) {
+                m_response.parameters.insert(QStringLiteral("cache_state"),
+                                             restoreUnchangedSafetyControllerCache(m_device.yamlPath));
+                restartAfterFlash();
+            } else if (!m_recoveryDirectory.isValid()) {
+                recoveryFailed(QStringLiteral("temporary_directory_unavailable"));
+            } else {
+                m_step = Step::RecoverDump;
+                logPhase(QStringLiteral("recover_dump"));
+                startProcess(QStringLiteral("ra-update"),
+                             {QStringLiteral("-a"), QStringLiteral("data"), QStringLiteral("-d"),
+                              QStringLiteral("/dev/") + m_device.name, QStringLiteral("-r"), m_device.resetGpioLineName,
+                              QStringLiteral("-m"), m_device.bootModeGpioLineName, QStringLiteral("dump-pb"),
+                              recoveryBinaryPath()});
+            }
+            return;
+        }
+        if (!writeSafetyControllerYamlFile(m_device.yamlPath, m_updatedParameters)) {
             m_response.parameters = {
                 {QLatin1String(kError), QLatin1String(kErrorYamlPublishAfterFlash)},
                 {QLatin1String(kKeyDeviceName), m_device.name},
                 {QStringLiteral("flash_succeeded"), true},
-                {QLatin1String(kKeyMessage), QStringLiteral("The controller was flashed, but its cached YAML could "
-                                                            "not be updated at %1.")
-                                                 .arg(m_device.yamlPath)},
+                {QStringLiteral("cache_state"), QStringLiteral("unavailable")},
+                {QLatin1String(kKeyMessage), QStringLiteral("The controller was flashed, but cached settings are "
+                                                            "unavailable. Check the backend logs.")},
             };
+        } else {
+            QFile::remove(m_device.yamlPath + QStringLiteral(".invalid"));
+        }
+        restartAfterFlash();
+    }
+
+    QString recoveryBinaryPath() const {
+        return m_recoveryDirectory.filePath(QStringLiteral("parameter-block.bin"));
+    }
+
+    void recoveryFailed(const QString& error) {
+        qWarning().noquote() << "Safety Controller cache recovery failed: device=" << m_device.name
+                             << "phase=" << m_phase << "error=" << error << "command=" << m_command
+                             << "started=" << m_started << "timed_out=" << m_timedOut
+                             << "process_error=" << m_processError << "stdout=" << m_stdout << "stderr=" << m_stderr;
+        m_response.parameters.insert(QStringLiteral("recovery_error"), error);
+        restartAfterFlash();
+    }
+
+    void finishRecovery(const ConsoleConnector::RunResult& result) {
+        if (!result.started || result.timedOut || !result.normalExit || result.exitCode != 0) {
+            qWarning() << "Safety Controller readback process failed: exit_code=" << result.exitCode
+                       << "normal_exit=" << result.normalExit;
+            recoveryFailed(QStringLiteral("safety_controller_cache_readback_failed"));
+            return;
+        }
+        if (m_step == Step::RecoverDump) {
+            m_step = Step::RecoverYaml;
+            logPhase(QStringLiteral("recover_yaml"));
+            startProcess(QStringLiteral("ra-pb-dump"), {recoveryBinaryPath()});
+            return;
+        }
+        if (!isValidSafetyControllerYaml(result.stdoutData)) {
+            recoveryFailed(QStringLiteral("safety_controller_cache_readback_invalid"));
+            return;
+        }
+        if (!writeSafetyControllerYamlFile(m_device.yamlPath, result.stdoutData)) {
+            recoveryFailed(QStringLiteral("safety_controller_cache_publish_failed"));
+            return;
+        }
+        m_response.parameters.insert(QStringLiteral("cache_state"), QStringLiteral("refreshed"));
+        QFile::remove(m_device.yamlPath + QStringLiteral(".invalid"));
+        restartAfterFlash();
+    }
+
+    void restartAfterFlash() {
+        logPhase(QStringLiteral("restart_rpc_readiness"));
+        const EverestServiceControlResult restartResult = m_serviceActions.restart(m_device.evseIndices);
+        if (!m_response.parameters.isEmpty()) {
+            if (!restartResult.success) {
+                m_response.parameters.insert(QStringLiteral("restart_error"), restartResult.error);
+            }
             complete();
             return;
         }
@@ -961,46 +1129,29 @@ private:
             complete();
             return;
         }
-        if (flashSucceeded) {
-            logPhase(QStringLiteral("error_present"));
-            const EverestErrorPresentResult errorResult = EverestServiceControl::monitorEverestErrorPresent(
-                g_rpcApiClient, m_device.evseIndices, 10000, restartResult.errorPresent);
-            if (errorResult.success) {
-                m_response.parameters = {
-                    {QLatin1String(kError), QLatin1String(kMessageEverestErrorAfterRestart)},
-                    {QLatin1String(kKeyMessage), QLatin1String(kMessageEverestErrorAfterRestart)},
-                };
-                complete();
-                return;
-            }
-            if (errorResult.error != QLatin1String(kInfoEverestErrorPresentNotDetected)) {
-                qWarning().noquote() << QStringLiteral("Safety Controller post-restart EVSE monitor failed: "
-                                                       "phase=error_present; error=%1")
-                                            .arg(errorResult.error);
-                m_response.parameters = {{QLatin1String(kError), errorResult.error}};
-                complete();
-                return;
-            }
-            m_response.parameters = {{QLatin1String(kKeyDeviceName), m_device.name}};
-            m_response.success = true;
+        logPhase(QStringLiteral("error_present"));
+        const EverestErrorPresentResult errorResult =
+            m_serviceActions.monitor(m_device.evseIndices, restartResult.errorPresent);
+        if (errorResult.success) {
+            m_response.parameters = {
+                {QLatin1String(kError), QLatin1String(kMessageEverestErrorAfterRestart)},
+                {QLatin1String(kKeyMessage), QLatin1String(kMessageEverestErrorAfterRestart)},
+            };
             complete();
             return;
         }
-
-        QString flashOutcome = QStringLiteral("unexpected_exit");
-        if (!result.started) {
-            flashOutcome = QStringLiteral("start_failed");
-        } else if (result.timedOut) {
-            flashOutcome = QStringLiteral("timeout");
-        } else if (result.normalExit) {
-            flashOutcome = QStringLiteral("nonzero_exit");
+        if (errorResult.error != QLatin1String(kInfoEverestErrorPresentNotDetected)) {
+            qWarning().noquote() << QStringLiteral("Safety Controller post-restart EVSE monitor failed: "
+                                                   "phase=error_present; error=%1")
+                                        .arg(errorResult.error);
+            m_response.parameters = {{QLatin1String(kError), errorResult.error}};
+            complete();
+            return;
         }
-        m_response.parameters = {
-            {QLatin1String(kError), QLatin1String(kErrorSafetyControllerFlashFailed)},
-            {QStringLiteral("flash_outcome"), flashOutcome},
-            {QStringLiteral("exit_code"), result.exitCode},
-        };
+        m_response.parameters = {{QLatin1String(kKeyDeviceName), m_device.name}};
+        m_response.success = true;
         complete();
+        return;
     }
 
     void complete() {
@@ -1022,9 +1173,11 @@ private:
     QString m_yamlPath;
     QString m_binPath;
     QString m_command;
-    QJsonObject m_updatedParameters;
+    QByteArray m_updatedParameters;
+    QTemporaryDir m_recoveryDirectory;
     std::function<void(const ModuleResponse&)> m_completed;
     ConsoleConnector::ExecOptions m_execOptions;
+    SafetyControllerServiceActions m_serviceActions;
     QElapsedTimer m_operationElapsed;
     QString m_phase;
     QProcess m_process;
@@ -1040,111 +1193,6 @@ private:
     bool m_started = false;
 };
 } // namespace
-
-ModuleResponse flashSafetyControllerBin(const QString& binPath, const QString& deviceName,
-                                        const QString& resetGpioLineName, const QString& bootModeGpioLineName,
-                                        const QList<int>& evseIndices, ModuleResponse response, bool& flashSucceeded) {
-    flashSucceeded = false;
-#ifdef EVEREST_UI_RPC_DEBUG
-    qInfo() << "Safety Controller synchronous write: phase=pre_flash_safety; request_id=" << response.requestId
-            << "device=" << deviceName;
-#endif
-    const EverestStateAllowedResult stateAllowedResult =
-        EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, evseIndices);
-    if (!stateAllowedResult.success) {
-        QString error = stateAllowedResult.error;
-        if (stateAllowedResult.error == QLatin1String(kErrorEverestStateNotAllowed)) {
-            error = QStringLiteral("settings can't be applied because ra-update "
-                                   "command cannot be run while EVerest is in state "
-                                   "\"%1\" and needs to be stopped first")
-                        .arg(stateAllowedResult.state);
-        }
-
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), error},
-        };
-        return response;
-    }
-
-    const EverestServiceControlResult stopResult = EverestServiceControl::executeEverestStop();
-    if (!stopResult.success) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), stopResult.error},
-        };
-        return response;
-    }
-
-    ConsoleConnector console;
-    ConsoleConnector::ExecOptions options;
-    const ConsoleConnector::RunResult result =
-        console.executeTemplate(raDataFlashCommand(deviceName, resetGpioLineName, bootModeGpioLineName, binPath), {},
-                                options, ConsoleConnector::ExecMode::Sync);
-
-    flashSucceeded = result.started && !result.timedOut && result.normalExit && result.exitCode == 0;
-    if (!flashSucceeded) {
-        qWarning().noquote()
-            << QStringLiteral("Safety Controller flash failed: command='%1'; device='/dev/%2'; "
-                              "started=%3; timed_out=%4; normal_exit=%5; exit_code=%6; process_error='%7'; "
-                              "stdout='%8'; stderr='%9'")
-                   .arg(raDataFlashCommand(deviceName, resetGpioLineName, bootModeGpioLineName, binPath), deviceName)
-                   .arg(result.started)
-                   .arg(result.timedOut)
-                   .arg(result.normalExit)
-                   .arg(result.exitCode)
-                   .arg(result.processError, QString::fromUtf8(result.stdoutData).trimmed(),
-                        QString::fromUtf8(result.stderrData).trimmed());
-    }
-
-#ifdef EVEREST_UI_RPC_DEBUG
-    qInfo() << "Safety Controller synchronous write: phase=restart_rpc_readiness; request_id=" << response.requestId
-            << "device=" << deviceName << "flash_succeeded=" << flashSucceeded;
-#endif
-    const EverestServiceControlResult restartResult =
-        EverestServiceControl::executeEverestRestart(g_rpcApiClient, evseIndices);
-    if (!restartResult.success) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), restartResult.error},
-        };
-        return response;
-    }
-
-    if (result.exitCode == 0) {
-        const EverestErrorPresentResult errorResult = EverestServiceControl::monitorEverestErrorPresent(
-            g_rpcApiClient, evseIndices, 10000, restartResult.errorPresent);
-        if (errorResult.success) {
-            response.parameters = QJsonObject{
-                {QLatin1String(kError), QLatin1String(kMessageEverestErrorAfterRestart)},
-                {QLatin1String(kKeyMessage), QLatin1String(kMessageEverestErrorAfterRestart)},
-            };
-            return response;
-        }
-
-        if (errorResult.error != QLatin1String(kInfoEverestErrorPresentNotDetected)) {
-            response.parameters = QJsonObject{
-                {QLatin1String(kError), errorResult.error},
-            };
-            return response;
-        }
-
-        return response;
-    }
-
-    QString flashOutcome = QStringLiteral("unexpected_exit");
-    if (!result.started) {
-        flashOutcome = QStringLiteral("start_failed");
-    } else if (result.timedOut) {
-        flashOutcome = QStringLiteral("timeout");
-    } else if (result.normalExit) {
-        flashOutcome = QStringLiteral("nonzero_exit");
-    }
-
-    response.parameters = QJsonObject{
-        {QLatin1String(kError), QLatin1String(kErrorSafetyControllerFlashFailed)},
-        {QStringLiteral("flash_outcome"), flashOutcome},
-        {QStringLiteral("exit_code"), result.exitCode},
-    };
-    return response;
-}
 
 ModuleResponse handleReadRequest(const ModuleRequest& request) {
     ModuleResponse response{
@@ -1178,113 +1226,6 @@ ModuleResponse handleReadRequest(const ModuleRequest& request) {
     if (!resolutionErrors.isEmpty()) {
         response.parameters.insert(QLatin1String(kKeyResolutionError), resolutionErrors.join(QLatin1Char(';')));
     }
-    response.success = true;
-    return response;
-}
-
-ModuleResponse handleWriteRequest(const ModuleRequest& request) {
-    ModuleResponse response{
-        .requestId = request.requestId,
-        .group = QLatin1String(kGroupSafety),
-        .action = request.action,
-        .parameters = QJsonObject{},
-        .success = false,
-        .final = true,
-    };
-
-    const QString deviceName = request.parameters.value(QLatin1String(kKeyDeviceName)).toString();
-    if (!isSafeDeviceName(deviceName)) {
-        response.parameters = {{QLatin1String(kError), QLatin1String(kErrorDeviceInvalid)}};
-        return response;
-    }
-
-    if (!g_rpcApiClient || !g_rpcApiClient->isReady()) {
-        response.parameters = {{QLatin1String(kError), QStringLiteral("rpc_api_not_connected")}};
-        return response;
-    }
-
-    const YamlLoadResult configResult = loadEffectiveEverestConfig();
-    if (!configResult.success) {
-        response.parameters = {{QLatin1String(kError), configResult.error}};
-        return response;
-    }
-    const SafetyControllerDeviceResolution resolution =
-        resolveSafetyControllerDevices(configResult.yamlRoot, QStringLiteral("/usr/libexec/everest/modules"));
-    const auto deviceIt =
-        std::find_if(resolution.devices.cbegin(), resolution.devices.cend(),
-                     [&deviceName](const SafetyControllerDevice& device) { return device.name == deviceName; });
-    if (deviceIt == resolution.devices.cend()) {
-        response.parameters = {{QLatin1String(kError), QLatin1String(kErrorDeviceNotConfigured)}};
-        return response;
-    }
-    if (!deviceIt->evseMappingResolved || deviceIt->evseIndices.isEmpty()) {
-        response.parameters = {{QLatin1String(kError), QLatin1String(kErrorEvseMappingUnavailable)}};
-        return response;
-    }
-
-    const YamlLoadResult yamlLoadResult = loadYamlFile(deviceIt->yamlPath);
-    if (!yamlLoadResult.success) {
-        response.parameters = {{QLatin1String(kError), yamlLoadResult.error}};
-        return response;
-    }
-
-    const SafetyControllerConfigPathResult binPathResult =
-        loadSafetyControllerSettingsPath(QLatin1String(kConfSafetyControllerSettingsBin));
-    if (!binPathResult.success) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), binPathResult.error},
-        };
-        return response;
-    }
-
-    const SafetyControllerConfigPathResult yamlPathResult =
-        loadSafetyControllerSettingsPath(QLatin1String(kConfSafetyControllerSettingsYaml));
-    if (!yamlPathResult.success) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), yamlPathResult.error},
-        };
-        return response;
-    }
-
-    QJsonObject settings = request.parameters;
-    settings.remove(QLatin1String(kKeyDeviceName));
-    QJsonObject updatedParameters = updateRequestParametersInYaml(settings, yamlLoadResult.yamlRoot);
-    if (!writeSafetyControllerYamlFile(yamlPathResult.path, updatedParameters)) {
-        response.parameters = QJsonObject{
-            {QLatin1String(kError), QLatin1String(kErrorSafetyControllerYamlWriteFailed)},
-        };
-        return response;
-    }
-
-    response = convertSafetyControllerYamlToBin(yamlPathResult.path, binPathResult.path, response);
-    if (!response.parameters.isEmpty()) {
-        return response;
-    }
-
-    bool flashSucceeded = false;
-    response =
-        flashSafetyControllerBin(binPathResult.path, deviceName, deviceIt->resetGpioLineName,
-                                 deviceIt->bootModeGpioLineName, deviceIt->evseIndices, response, flashSucceeded);
-    if (flashSucceeded && !writeSafetyControllerYamlFile(deviceIt->yamlPath, updatedParameters)) {
-        const QJsonObject flashResponseParameters = response.parameters;
-        response.parameters = {
-            {QLatin1String(kError), QLatin1String(kErrorYamlPublishAfterFlash)},
-            {QLatin1String(kKeyDeviceName), deviceName},
-            {QStringLiteral("flash_succeeded"), true},
-            {QStringLiteral("message"), QStringLiteral("The controller was flashed, but its cached YAML could "
-                                                       "not be updated at %1.")
-                                            .arg(deviceIt->yamlPath)},
-        };
-        if (!flashResponseParameters.isEmpty()) {
-            response.parameters.insert(QStringLiteral("post_flash_error"), flashResponseParameters);
-        }
-        return response;
-    }
-    if (!response.parameters.isEmpty()) {
-        return response;
-    }
-
-    response.parameters = {{QLatin1String(kKeyDeviceName), deviceName}};
     response.success = true;
     return response;
 }
@@ -1347,8 +1288,9 @@ ModuleResponse startWriteRequest(const ModuleRequest& request, QObject* owner,
 
     QJsonObject settings = request.parameters;
     settings.remove(QLatin1String(kKeyDeviceName));
-    QJsonObject updatedParameters = updateRequestParametersInYaml(settings, yamlLoadResult.yamlRoot);
-    if (!writeSafetyControllerYamlFile(yamlPathResult.path, updatedParameters)) {
+    const QByteArray updatedParameters =
+        prepareSafetyControllerYaml(deviceIt->yamlPath, settings, yamlLoadResult.yamlRoot);
+    if (updatedParameters.isEmpty() || !writeSafetyControllerYamlFile(yamlPathResult.path, updatedParameters)) {
         response.parameters = {{QLatin1String(kError), QLatin1String(kErrorSafetyControllerYamlWriteFailed)}};
         return response;
     }

@@ -108,7 +108,8 @@ export function renderSafetyPage(container, {
       parameters: settings
     }));
     matrix.setDisabled(!controller.writable);
-    matrices.push({ matrix, writable: controller.writable });
+    const matrixState = { matrix, writable: controller.writable };
+    matrices.push(matrixState);
     pane.appendChild(matrix.element);
 
     if (controller.message) {
@@ -118,7 +119,7 @@ export function renderSafetyPage(container, {
     }
 
     matrix.bindSubmit(() => {
-      if (!controller.writable) {
+      if (!matrixState.writable) {
         return;
       }
       const request = buildRequest(
@@ -130,7 +131,7 @@ export function renderSafetyPage(container, {
       if (pendingWrites.size > 0) {
         return;
       }
-      pendingWrites.set(String(request.requestId), { matrix, status, writable: controller.writable });
+      pendingWrites.set(String(request.requestId), { matrix, status, matrixState });
       status.hidden = true;
       setAllMatricesDisabled(true);
       const sent = sendSafetyRequest(sendPayload, addLog, request,
@@ -190,6 +191,9 @@ export function renderSafetyPage(container, {
           return;
         }
         pendingWrites.delete(String(message.requestId));
+        if (safetyWriteRequiresReload(message.parameters)) {
+          pending.matrixState.writable = false;
+        }
         setAllMatricesDisabled(false);
         pending.status.textContent = message.type === 'safety.write_settings.result'
           ? 'Safety Controller settings flashed successfully.'
@@ -272,7 +276,11 @@ function sendSafetyRequest(sendPayload, addLog, request, group, action) {
   return result.ok;
 }
 
-function getSafetyWriteErrorMessage(parameters = {}) {
+export function safetyWriteRequiresReload(parameters = {}) {
+  return ['unavailable', 'refreshed'].includes(parameters?.cache_state);
+}
+
+export function getSafetyWriteErrorMessage(parameters = {}) {
   const error = parameters.error || 'unknown error';
   if (error === 'safety_controller_busy') {
     return 'Unable to apply Safety Controller settings: another system operation is in progress.';
@@ -290,5 +298,10 @@ function getSafetyWriteErrorMessage(parameters = {}) {
     (parameters.flash_outcome === 'nonzero_exit' && Number.isInteger(parameters.exit_code)
       ? `Flash command exited with code ${parameters.exit_code}.`
       : 'Flash command failed.');
-  return `Unable to apply Safety Controller settings: ${status}`;
+  const cacheStatus = parameters.cache_state === 'unavailable'
+    ? ' Cached settings are unavailable; a controller readback is required. Check the backend logs.'
+    : parameters.cache_state === 'refreshed'
+      ? ' Current settings were read back from the controller. Reload this page before editing again.'
+      : '';
+  return `Unable to apply Safety Controller settings: ${status}${cacheStatus}`;
 }

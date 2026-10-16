@@ -91,6 +91,19 @@ remaining budget. Optional platform overrides use the exact `/proc/device-tree/c
 the first matching compatible entry takes precedence. Explicitly configured values remain authoritative:
 update an installed `everest_rpc_api_ready_timeout_seconds=15` to `20` to use the new default duration.
 
+Safety Controller settings are read from `/run/ra-utils/<device>.yaml`. Saves preserve the complete YAML
+document, including settings not exposed by the UI. The cache is the write baseline, not a live read:
+its producer must publish atomically for the correct controller and refresh it after external changes.
+External tools must not access that controller concurrently with a UI flash or recovery.
+
+Before flashing, the backend quarantines the cache as `<device>.yaml.invalid`. A verified successful flash
+publishes the updated YAML before EVerest restarts. If a started flash fails, the backend attempts one bounded
+device-specific parameter dump and YAML conversion while EVerest is still stopped. Valid readback replaces
+the cache; failed readback leaves settings unavailable and editing disabled until a producer publishes a
+fresh cache. A definite failure to start restores the unchanged cache. Neither a backend restart nor a
+failed recovery restores uncertain cached values automatically. Recovery never retries the flash.
+The flash still reports failure even when readback succeeds; reload the page before further editing.
+
 Safety Controller operation summaries and warnings remain available in the backend journal. Verbose RPC
 connection, request, retry, readiness, and Safety Controller phase tracing is compiled out by default.
 Enable it explicitly with the CMake option below (independent of Debug/Release build type):

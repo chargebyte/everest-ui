@@ -49,7 +49,7 @@ jobs:
         run: ctest --test-dir build-test --output-on-failure
       - id: javascript_tests
         name: Run JavaScript tests
-        run: node --experimental-default-type=module --test tests/network-response-test.mjs tests/ssh-page-test.mjs
+        run: node --experimental-default-type=module --test tests/network-response-test.mjs tests/ssh-page-test.mjs tests/safety-page-test.mjs
       - id: show_binary
         name: Show details of the final binaries
         run: |
