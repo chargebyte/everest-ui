@@ -19,7 +19,7 @@ The project installs three binaries:
 - `webserver`
 - `webui`
 
-It installs the runtime configuration files into `/etc/everest-ui/`, the browser assets into `/usr/share/everest-ui/public/`, and the auth store is created at `/var/lib/everest/everest-ui/auth.json`.
+It installs the runtime configuration files into `/etc/everest-ui/`, the browser assets into `/usr/share/everest-ui/public/`, and the auth store is created at `/var/lib/everest-ui/auth.json`.
 
 Example build and install flow:
 
@@ -91,7 +91,7 @@ The browser assets are installed to `${prefix}/share/everest-ui/public/`.
 
 The authentication database is created on first setup at:
 
-- `/var/lib/everest/everest-ui/auth.json`
+- `/var/lib/everest-ui/auth.json`
 
 ### EVerest configuration paths
 

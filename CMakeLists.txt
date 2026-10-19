@@ -32,7 +32,7 @@ set(EVEREST_UI_INSTALL_WEBSERVER_BINARY
 set(EVEREST_UI_INSTALL_PUBLIC_DIR
     "${CMAKE_INSTALL_FULL_DATADIR}/everest-ui/public")
 set(EVEREST_UI_INSTALL_AUTH_FILE
-    "/var/lib/everest/everest-ui/auth.json")
+    "/var/lib/everest-ui/auth.json")
 
 configure_file(
     "${CMAKE_SOURCE_DIR}/backend/InstallPaths.hpp.in"

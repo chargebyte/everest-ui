@@ -54,6 +54,11 @@ the webserver, for example, still rejects unsupported effective keys and invalid
 Frontend `root` and `auth_file` relative paths resolve against the directory of the file supplying each value,
 not against the directory of the last layer. Absolute paths behave as before.
 
+The default `auth_file` is `/var/lib/everest-ui/auth.json`, created on first authentication setup.
+An explicit `auth_file` override remains authoritative. Existing installations with a different path
+in `/etc/everest-ui/frontend.conf` must remove or update that override to use the default location;
+authentication data is not migrated automatically.
+
 ## Reloads and Errors
 
 Launcher and webserver settings take effect after restart. Backend reads reload the layers, allowing existing
