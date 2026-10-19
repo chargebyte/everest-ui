@@ -210,17 +210,17 @@ helper or manage the SSH units and to change the root password, normally by runn
 See the [SSH API reference](docs/api/API.md#ssh-configuration) for command deadlines, password validation,
 errors, and [JSON request/response examples](docs/api/API.md#example-templates).
 
-## Recover forgotten WebUI credentials
+## Recover forgotten EVerest UI credentials
 
 After a hard/cold boot, the login page shows **Forgotten password?** and, while
 reset is available, a **Reset password** button for the configured window
-(60 seconds by default) from the first webserver start. Confirming the reset
+(60 seconds by default) from the first `everest-ui-webserver` start. Confirming the reset
 removes the existing username and password and ends all authenticated sessions,
 including open WebSocket connections. The existing first-time setup screen
 then lets you choose a new username and password **without a time limit**, even
 after a reload or restart. Successful setup logs you in automatically.
 
-One reset is allowed per boot. Restarting the WebUI service does not reopen or
+One reset is allowed per boot. Restarting `everest-ui.service` does not reopen or
 extend the window. A regular software reboot does not enable reset; the login
 page instead asks you to switch the device off and on. An expired or already used
 window shows the same instruction. Unknown boot information leaves reset disabled.
@@ -235,11 +235,11 @@ The authentication server reads these optional settings from `frontend.conf`:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `password_reset_window_seconds` | `60` | Window from first webserver start; `0` disables reset. |
+| `password_reset_window_seconds` | `60` | Window from first `everest-ui-webserver` start; `0` disables reset. |
 | `password_reset_boot_status_path` | `/sys/bus/nvmem/devices/44440000.bbnsm:nvmem0/nvmem` | Writable BBNSM NVMEM device. |
 | `allowed_hosts` | empty | Additional trusted hostnames or IP literals, comma-separated; no schemes, ports, or wildcards. |
 
-**The revised kernel must retain the boot marker until the WebUI reads it.**
+**The revised kernel must retain the boot marker until EVerest UI reads it.**
 The original development patch which cleared the marker during driver probe is
 not compatible. The server reads a little-endian 32-bit value at byte offset 28:
 zero permits reset; `0x5741524d` (WARM) denies it. Unmarked unclean resets, such as
@@ -248,9 +248,9 @@ the original classification, the server clears only those four bytes, without
 truncating NVMEM. Failed clearing is retried on the next webserver start while
 reset remains disabled for that boot.
 
-The systemd unit creates `/run/everest-ui` with mode `0700` and uses
+The `everest-ui.service` unit creates `/run/everest-ui` with mode `0700` and uses
 `RuntimeDirectoryPreserve=yes` to preserve it across restart and separate
-stop/start operations. The launcher passes `RUNTIME_DIRECTORY` to the webserver;
+stop/start operations. The `everest-ui` launcher passes `RUNTIME_DIRECTORY` to `everest-ui-webserver`;
 its actual value determines the directory for `password-reset-state.json` and
 `password-reset.lock`, both mode `0600`. A non-blocking `flock` serializes
 initialization and reset. Missing or unusable runtime environment disables reset
@@ -270,7 +270,7 @@ node --experimental-default-type=module --test tests/password-reset-ui-test.mjs
 ```
 
 Before firmware delivery, record `systemctl --version` on the target and confirm
-that `RUNTIME_DIRECTORY` reaches the webserver. Verify the revised kernel's
+that `RUNTIME_DIRECTORY` reaches `everest-ui-webserver`. Verify the revised kernel's
 marker retention and four-byte write permissions, power-cycle versus regular
 reboot, service restart and separate stop/start, and a representative watchdog
 reset. These hardware checks are additional to the host-side automated tests.
