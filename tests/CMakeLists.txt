@@ -1,7 +1,14 @@
 find_package(${QT_PACKAGE_NAME} REQUIRED COMPONENTS Test)
 
-add_executable(layered_config_test LayeredConfigTest.cpp ../backend/webserver/config/ServerConfig.cpp)
-target_include_directories(layered_config_test PRIVATE "${CMAKE_SOURCE_DIR}/backend/webserver/config")
+add_executable(layered_config_test
+    LayeredConfigTest.cpp
+    ../backend/webserver/config/ServerConfig.cpp
+    ../backend/webserver/http/RequestSecurity.cpp
+)
+target_include_directories(layered_config_test PRIVATE
+    "${CMAKE_SOURCE_DIR}/backend/webserver/config"
+    "${CMAKE_SOURCE_DIR}/backend/webserver/http"
+)
 target_link_libraries(layered_config_test PRIVATE everest_ui_config ${QT_PACKAGE_NAME}::Network ${QT_PACKAGE_NAME}::Test)
 add_test(NAME layered_config_test COMMAND layered_config_test)
 
@@ -277,6 +284,7 @@ target_include_directories(password_reset_test PRIVATE
     ../backend/webserver/http ../backend/webserver/ui ../backend/webserver/ws
 )
 target_link_libraries(password_reset_test PRIVATE
+    everest_ui_config
     ${QT_PACKAGE_NAME}::Core ${QT_PACKAGE_NAME}::Network
     ${QT_PACKAGE_NAME}::WebSockets ${QT_PACKAGE_NAME}::Test
 )
