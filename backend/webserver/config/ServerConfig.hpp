@@ -5,6 +5,8 @@
 #ifndef SERVER_CONFIG_HPP
 #define SERVER_CONFIG_HPP
 
+#include "LayeredConfig.hpp"
+
 #include <QHostAddress>
 #include <QString>
 #include <QUrl>
@@ -36,5 +38,6 @@ struct ServerConfig {
 bool loadAndValidateServerConfig(const QString &configPath,
                                  ServerConfig &cfg,
                                  QString &errorMessage);
+bool loadAndValidateServerConfig(const UiConfig::Paths& paths, ServerConfig& cfg, QString& errorMessage);
 
 #endif // SERVER_CONFIG_HPP

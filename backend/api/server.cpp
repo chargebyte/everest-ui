@@ -21,29 +21,30 @@
 
 namespace {
 quint16 loadServerPort() {
-    const QString configPath = resolveBackendConfigPath();
-    const QString configuredPort = readBackendConfigValue(QStringLiteral("backend_port"));
+    const UiConfig::Snapshot config = readBackendConfiguration();
+    if (!config.valid()) {
+        qCritical().noquote() << config.error;
+        return 0;
+    }
+    const QString configPath = config.source(QStringLiteral("backend_port"));
+    const QString configuredPort = config.value(QStringLiteral("backend_port"));
     if (configuredPort.isEmpty()) {
-        qCritical().noquote()
-            << "Missing required configuration entry 'backend_port' in"
-            << configPath
-            << ". Add a line like 'backend_port=9002' and restart the backend.";
+        qCritical().noquote() << "Missing required configuration entry 'backend_port' in" << configPath
+                              << ". Add a line like 'backend_port=9002' and restart the backend.";
         return 0;
     }
 
     bool validPort = false;
     const quint16 port = configuredPort.toUShort(&validPort);
     if (!validPort || port == 0) {
-        qCritical().noquote()
-            << "Invalid configuration entry 'backend_port=" + configuredPort + "' in"
-            << configPath
-            << ". Use a TCP port like 'backend_port=9002' and restart the backend.";
+        qCritical().noquote() << "Invalid configuration entry 'backend_port=" + configuredPort + "' in" << configPath
+                              << ". Use a TCP port like 'backend_port=9002' and restart the backend.";
         return 0;
     }
 
     return port;
 }
-}
+} // namespace
 
 MinimalWebSocketServer::MinimalWebSocketServer(QObject *parent)
     : QObject(parent),

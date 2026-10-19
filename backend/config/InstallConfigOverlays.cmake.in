@@ -1,0 +1,10 @@
+# Preserve existing local configuration, including symlinks and full legacy files.
+set(overlay_dir "@EVEREST_UI_INSTALL_CONFIG_DIR@")
+file(MAKE_DIRECTORY "$ENV{DESTDIR}${overlay_dir}")
+foreach(name IN ITEMS backend frontend)
+    set(target "$ENV{DESTDIR}${overlay_dir}/${name}.conf")
+    if(NOT EXISTS "${target}" AND NOT IS_SYMLINK "${target}")
+        file(INSTALL DESTINATION "${overlay_dir}" TYPE FILE
+            FILES "@EVEREST_UI_OVERLAY_TEMPLATE_DIR@/${name}.overlay.conf" RENAME "${name}.conf")
+    endif()
+endforeach()

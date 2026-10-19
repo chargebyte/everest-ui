@@ -3,10 +3,10 @@
 // Copyright 2026 chargebyte GmbH
 
 #include "InstallPaths.hpp"
+#include "LayeredConfig.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
-#include <QFile>
 #include <QFileInfo>
 #include <QHostAddress>
 #include <QProcess>
@@ -161,50 +161,11 @@ QString resolveFrontendBinaryPath() {
     });
 }
 
-QString resolveBackendConfigPath() {
-    const QString applicationDir = QCoreApplication::applicationDirPath();
-    return resolveFirstExistingPath({
-        QStringLiteral(EVEREST_UI_INSTALL_BACKEND_CONFIG),
-        QDir(applicationDir).absoluteFilePath(QStringLiteral("../config/backend.conf")),
-        QDir(applicationDir).absoluteFilePath(QStringLiteral("backend.conf")),
-    });
-}
-
-QString readConfigValue(const QString &configPath, const QString &configKey) {
-    QFile configFile(configPath);
-    if (!configFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return QString();
-    }
-
-    QTextStream stream(&configFile);
-    while (!stream.atEnd()) {
-        const QString line = stream.readLine().trimmed();
-        if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) {
-            continue;
-        }
-
-        const QStringList parts = line.split(QLatin1Char('='));
-        if (parts.size() != 2) {
-            continue;
-        }
-
-        const QString key = parts.at(0).trimmed();
-        if (key != configKey) {
-            continue;
-        }
-
-        return parts.at(1).trimmed();
-    }
-
-    return QString();
-}
-
 class WebUiLauncher : public QObject {
     Q_OBJECT
 
 public:
-    explicit WebUiLauncher(QObject *parent = nullptr)
-        : QObject(parent) {
+    explicit WebUiLauncher(QObject* parent = nullptr) : QObject(parent) {
         m_backend.setProcessChannelMode(QProcess::ForwardedChannels);
         m_frontend.setProcessChannelMode(QProcess::ForwardedChannels);
         m_backendPollTimer.setInterval(kBackendPollIntervalMs);
@@ -217,15 +178,15 @@ public:
         connect(&m_frontend, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
                 &WebUiLauncher::onFrontendFinished);
         connect(&m_backendPollTimer, &QTimer::timeout, this, &WebUiLauncher::pollBackend);
-        connect(&m_backendStartupTimeout, &QTimer::timeout, this,
-                &WebUiLauncher::onBackendStartupTimeout);
+        connect(&m_backendStartupTimeout, &QTimer::timeout, this, &WebUiLauncher::onBackendStartupTimeout);
         connect(qApp, &QCoreApplication::aboutToQuit, this, &WebUiLauncher::shutdownChildren);
     }
 
     int start() {
         m_backendBinaryPath = resolveBackendBinaryPath();
         m_frontendBinaryPath = resolveFrontendBinaryPath();
-        m_backendConfigPath = resolveBackendConfigPath();
+        const UiConfig::Snapshot config = UiConfig::load(UiConfig::pathsFor(UiConfig::Kind::Backend));
+        m_backendConfigPath = config.source(QStringLiteral("backend_port"));
 
         if (!QFileInfo::exists(m_backendBinaryPath)) {
             QTextStream(stderr) << "Missing api binary: " << m_backendBinaryPath << "\n";
@@ -235,28 +196,23 @@ public:
             QTextStream(stderr) << "Missing webserver binary: " << m_frontendBinaryPath << "\n";
             return 1;
         }
-        if (!QFileInfo::exists(m_backendConfigPath)) {
-            QTextStream(stderr) << "Missing backend config: " << m_backendConfigPath << "\n";
+        if (!config.valid()) {
+            QTextStream(stderr) << config.error << "\n";
             return 1;
         }
 
-        const QString configuredPort =
-            readConfigValue(m_backendConfigPath, QStringLiteral("backend_port"));
+        const QString configuredPort = config.value(QStringLiteral("backend_port"));
         if (configuredPort.isEmpty()) {
-            QTextStream(stderr)
-                << "Missing required configuration entry 'backend_port' in "
-                << m_backendConfigPath
-                << ". Add a line like 'backend_port=9002'.\n";
+            QTextStream(stderr) << "Missing required configuration entry 'backend_port' in " << m_backendConfigPath
+                                << ". Add a line like 'backend_port=9002'.\n";
             return 1;
         }
 
         bool validPort = false;
         const quint16 port = configuredPort.toUShort(&validPort);
         if (!validPort || port == 0) {
-            QTextStream(stderr)
-                << "Invalid configuration entry 'backend_port=" << configuredPort << "' in "
-                << m_backendConfigPath
-                << ". Use a TCP port like 'backend_port=9002'.\n";
+            QTextStream(stderr) << "Invalid configuration entry 'backend_port=" << configuredPort << "' in "
+                                << m_backendConfigPath << ". Use a TCP port like 'backend_port=9002'.\n";
             return 1;
         }
         m_backendPort = port;

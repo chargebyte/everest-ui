@@ -5,16 +5,13 @@
 #include "ServerConfig.hpp"
 
 #include <QDir>
-#include <QFile>
 #include <QFileInfo>
-#include <QHash>
 #include <QSet>
-#include <QTextStream>
 
 namespace {
-using RawConfigMap = QHash<QString, QString>;
+using RawConfigMap = QMap<QString, QString>;
 
-bool resolveBindAddress(const QString &bind, QHostAddress &address) {
+bool resolveBindAddress(const QString& bind, QHostAddress& address) {
     if (bind == QLatin1String("0.0.0.0")) {
         address = QHostAddress::Any;
         return true;
@@ -26,7 +23,7 @@ bool resolveBindAddress(const QString &bind, QHostAddress &address) {
     return address.setAddress(bind);
 }
 
-bool isValidBackendWsUrl(const QUrl &url) {
+bool isValidBackendWsUrl(const QUrl& url) {
     if (!url.isValid() || url.host().isEmpty() || url.port() <= 0) {
         return false;
     }
@@ -34,7 +31,7 @@ bool isValidBackendWsUrl(const QUrl &url) {
     return scheme == QLatin1String("ws") || scheme == QLatin1String("wss");
 }
 
-bool isValidOriginUrl(const QUrl &url) {
+bool isValidOriginUrl(const QUrl& url) {
     if (!url.isValid() || url.host().isEmpty()) {
         return false;
     }
@@ -42,77 +39,29 @@ bool isValidOriginUrl(const QUrl &url) {
     return scheme == QLatin1String("http") || scheme == QLatin1String("https");
 }
 
-bool validateAndReadConfigLines(const QString &path,
-                                RawConfigMap &rawParams,
-                                QString &baseDir,
-                                QString &errorMessage) {
+bool validateConfigKeys(const UiConfig::Snapshot& config, QString& errorMessage) {
     static const QSet<QString> kAllowedKeys = {
-        QStringLiteral("port"),
-        QStringLiteral("root"),
-        QStringLiteral("bind"),
-        QStringLiteral("ws_path"),
-        QStringLiteral("backend_ws"),
-        QStringLiteral("max_request_bytes"),
-        QStringLiteral("log_level"),
-        QStringLiteral("allow_origin"),
-        QStringLiteral("auth_file"),
+        QStringLiteral("port"),      QStringLiteral("root"),         QStringLiteral("bind"),
+        QStringLiteral("ws_path"),   QStringLiteral("backend_ws"),   QStringLiteral("max_request_bytes"),
+        QStringLiteral("log_level"), QStringLiteral("allow_origin"), QStringLiteral("auth_file"),
         QStringLiteral("app_title"),
     };
 
-    rawParams.clear();
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        errorMessage = QStringLiteral("Cannot open config file: %1").arg(path);
-        return false;
-    }
-
-    baseDir = QFileInfo(path).absolutePath();
-    QTextStream in(&file);
-    int lineNumber = 0;
-    while (!in.atEnd()) {
-        const QString line = in.readLine();
-        ++lineNumber;
-        const QString trimmed = line.trimmed();
-        if (trimmed.isEmpty() || trimmed.startsWith('#')) {
-            continue;
-        }
-
-        const int firstEq = trimmed.indexOf('=');
-        const int lastEq = trimmed.lastIndexOf('=');
-        if (firstEq <= 0 || firstEq != lastEq) {
-            errorMessage = QStringLiteral("Invalid config format at line %1: expected key=value")
-                               .arg(lineNumber);
+    for (auto it = config.entries.begin(); it != config.entries.end(); ++it) {
+        if (!kAllowedKeys.contains(it.key())) {
+            errorMessage = QStringLiteral("Unknown config key at %1: %2").arg(config.source(it.key()), it.key());
             return false;
         }
-
-        const QString key = trimmed.left(firstEq).trimmed();
-        const QString value = trimmed.mid(firstEq + 1).trimmed();
-        if (!kAllowedKeys.contains(key)) {
-            errorMessage = QStringLiteral("Unknown config key at line %1: %2")
-                               .arg(lineNumber)
-                               .arg(key);
-            return false;
-        }
-
-        rawParams.insert(key, value);
     }
-
     return true;
 }
 
-bool applyDirectParameters(const RawConfigMap &rawParams,
-                           const QString &baseDir,
-                           ServerConfig &cfg,
-                           QString &errorMessage) {
+bool applyDirectParameters(const RawConfigMap& rawParams, const UiConfig::Snapshot& source, ServerConfig& cfg,
+                           QString& errorMessage) {
     static const QSet<QString> kRequiredKeys = {
-        QStringLiteral("port"),
-        QStringLiteral("root"),
-        QStringLiteral("bind"),
-        QStringLiteral("ws_path"),
-        QStringLiteral("backend_ws"),
-        QStringLiteral("max_request_bytes"),
-        QStringLiteral("log_level"),
-        QStringLiteral("auth_file"),
+        QStringLiteral("port"),      QStringLiteral("root"),       QStringLiteral("bind"),
+        QStringLiteral("ws_path"),   QStringLiteral("backend_ws"), QStringLiteral("max_request_bytes"),
+        QStringLiteral("log_level"), QStringLiteral("auth_file"),
     };
 
     cfg = ServerConfig{};
@@ -138,7 +87,8 @@ bool applyDirectParameters(const RawConfigMap &rawParams,
         return false;
     }
     if (QDir::isRelativePath(cfg.root)) {
-        cfg.root = QDir(baseDir).absoluteFilePath(cfg.root);
+        cfg.root = QDir(QFileInfo(source.entries.value(QStringLiteral("root")).path).absolutePath())
+                       .absoluteFilePath(cfg.root);
     }
 
     cfg.bind = rawParams.value(QStringLiteral("bind"));
@@ -189,7 +139,8 @@ bool applyDirectParameters(const RawConfigMap &rawParams,
         return false;
     }
     if (QDir::isRelativePath(cfg.authFile)) {
-        cfg.authFile = QDir(baseDir).absoluteFilePath(cfg.authFile);
+        cfg.authFile = QDir(QFileInfo(source.entries.value(QStringLiteral("auth_file")).path).absolutePath())
+                           .absoluteFilePath(cfg.authFile);
     }
 
     cfg.appTitle = rawParams.value(QStringLiteral("app_title")).trimmed();
@@ -197,7 +148,7 @@ bool applyDirectParameters(const RawConfigMap &rawParams,
     return true;
 }
 
-bool deriveFinalParameters(ServerConfig &cfg, QString &errorMessage) {
+bool deriveFinalParameters(ServerConfig& cfg, QString& errorMessage) {
     cfg.backendUrl = QUrl(cfg.backendWs);
     if (!isValidBackendWsUrl(cfg.backendUrl)) {
         errorMessage = QStringLiteral("Invalid backend_ws URL: %1").arg(cfg.backendWs);
@@ -243,12 +194,21 @@ bool deriveFinalParameters(ServerConfig &cfg, QString &errorMessage) {
 bool loadAndValidateServerConfig(const QString &configPath,
                                  ServerConfig &cfg,
                                  QString &errorMessage) {
-    RawConfigMap rawParams;
-    QString baseDir;
-    if (!validateAndReadConfigLines(configPath, rawParams, baseDir, errorMessage)) {
+    return loadAndValidateServerConfig(UiConfig::Paths{configPath, {}}, cfg, errorMessage);
+}
+
+bool loadAndValidateServerConfig(const UiConfig::Paths& paths, ServerConfig& cfg, QString& errorMessage) {
+    errorMessage.clear();
+    const UiConfig::Snapshot source = UiConfig::load(paths);
+    if (!source.valid()) {
+        errorMessage = source.error;
         return false;
     }
-    if (!applyDirectParameters(rawParams, baseDir, cfg, errorMessage)) {
+    if (!validateConfigKeys(source, errorMessage)) {
+        return false;
+    }
+    if (!applyDirectParameters(source.values(), source, cfg, errorMessage)) {
+        errorMessage += QStringLiteral(" (configuration: %1)").arg(source.files.join(QStringLiteral(", ")));
         return false;
     }
     if (!deriveFinalParameters(cfg, errorMessage)) {

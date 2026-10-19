@@ -5,12 +5,14 @@
 #ifndef BACKEND_CONFIG_HPP
 #define BACKEND_CONFIG_HPP
 
+#include "LayeredConfig.hpp"
+
 #include <QByteArray>
 #include <QMap>
 #include <QString>
 #include <QStringList>
 
-QString resolveBackendConfigPath();
+UiConfig::Snapshot readBackendConfiguration();
 QString readBackendConfigValue(const QString& configKey);
 QMap<QString, QString> readBackendConfigValues(const QString& keyPrefix);
 QByteArray readDeviceTreeCompatibleData();

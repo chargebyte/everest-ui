@@ -2,6 +2,17 @@
 
 This document describes the API implemented by this source tree. It is an implementation reference, not a versioned stability contract. The protocol constants are in `backend/api/ProtocolSchema.hpp`.
 
+## Runtime Configuration
+
+The launcher/API read distribution `backend.conf` and the webserver reads distribution `frontend.conf` from
+`${prefix}/share/everest-ui/config/` (normally `/usr/share/everest-ui/config/` in distribution builds), then
+apply the corresponding `/etc/everest-ui/` file key by key. Local `key=value` replaces a value, `key=` is
+explicitly empty, and a standalone `!key` removes an inherited key. Removing the local directive restores
+inheritance. Existing complete local files remain valid and are preserved during installation. The shared
+overlay writer writes only local directives; there is no new browser API for editing these files. Protocol
+payloads are unchanged. See [Configuration Layers](../configuration.md) for fallback semantics, migration,
+relative paths, runtime reload/error behavior, and package-update preservation requirements.
+
 ## Network interface
 
 `webserver` listens on the configured HTTP address (default `0.0.0.0:80`) and upgrades `GET /ws` to WebSocket. The browser-facing URL is `ws://<same-host>:<port>/ws`, or `wss://<same-host>:<port>/ws` when the page is served over HTTPS. The path and defaults are in `backend/webserver/config/frontend.conf.in`.

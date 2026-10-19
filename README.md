@@ -19,7 +19,7 @@ The project installs three binaries:
 - `webserver`
 - `webui`
 
-It installs the runtime configuration files into `/etc/everest-ui/`, the browser assets into `/usr/share/everest-ui/public/`, and the auth store is created at `/var/lib/everest/everest-ui/auth.json`.
+It installs the runtime configuration files into `/etc/everest-ui/`, the browser assets into `/usr/share/everest-ui/public/`, and the auth store is created at `/var/lib/everest-ui/auth.json`.
 
 Example build and install flow:
 
@@ -67,16 +67,31 @@ reconfigured when changing it.
 
 ### UI configuration files
 
-The UI installs its own configuration files to `/etc/everest-ui/`:
+Distribution defaults are installed under `${prefix}/share/everest-ui/config/`
+(normally `/usr/share/everest-ui/config/` for a distribution build):
+
+- `backend.conf`
+- `frontend.conf`
+
+The launcher, API, and webserver merge these defaults with local, key-by-key overrides:
 
 - `/etc/everest-ui/backend.conf`
 - `/etc/everest-ui/frontend.conf`
 
-The browser assets are installed to `/usr/share/everest-ui/public/`.
+Missing local files are allowed. New installations create comment-only overlays; upgrades and repeated
+`cmake --install` calls preserve existing local files. Existing complete `/etc` configurations remain valid,
+but their explicit entries keep overriding future distribution defaults until removed.
+
+Use `key=value` to override, `key=` to set an empty value, and a standalone `!key` to remove an inherited
+key. Removing the local directive restores inheritance. Lists are replaced per key, not concatenated.
+See [Configuration Layers](docs/configuration.md) for syntax, migration, save behavior, and the distinction
+between clearing a value and disabling functionality. All shipped setting values remain unchanged.
+
+The browser assets are installed to `${prefix}/share/everest-ui/public/`.
 
 The authentication database is created on first setup at:
 
-- `/var/lib/everest/everest-ui/auth.json`
+- `/var/lib/everest-ui/auth.json`
 
 ### EVerest configuration paths
 
@@ -227,7 +242,9 @@ The API binds only to IPv4 loopback (`127.0.0.1`), so external clients must use 
 
 In `frontend.conf`, it needs to be ensured that the same backend port is used in the entry `backend_ws`.
 
-The template for that file is [`backend/webserver/config/frontend.conf.in`](./backend/webserver/config/frontend.conf.in). The installed file is created during `cmake`/`make install` and placed in `/etc/everest-ui/frontend.conf`.
+The template for the distribution defaults is [`backend/webserver/config/frontend.conf.in`](./backend/webserver/config/frontend.conf.in).
+Its installed location is `${prefix}/share/everest-ui/config/frontend.conf`; put local overrides in
+`/etc/everest-ui/frontend.conf`.
 
 The entry `port` in `frontend.conf` defines on which port the UI is accessible from the browser.
 
@@ -257,7 +274,8 @@ systemctl start webui.service
 
 ## Access the UI
 
-The UI is accessed via the browser using the IP address of the device together with the port specified in `/etc/everest-ui/frontend.conf`.
+The UI is accessed via the browser using the IP address of the device together with the effective frontend
+`port` (distribution default or `/etc/everest-ui/frontend.conf` override).
 
 Example:
 
