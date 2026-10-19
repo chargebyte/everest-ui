@@ -3,6 +3,7 @@
 // Copyright 2026 chargebyte GmbH
 
 #include "ServerConfig.hpp"
+#include "RequestSecurity.hpp"
 
 #include <QDir>
 #include <QFileInfo>
@@ -45,6 +46,9 @@ bool validateConfigKeys(const UiConfig::Snapshot& config, QString& errorMessage)
         QStringLiteral("ws_path"),   QStringLiteral("backend_ws"),   QStringLiteral("max_request_bytes"),
         QStringLiteral("log_level"), QStringLiteral("allow_origin"), QStringLiteral("auth_file"),
         QStringLiteral("app_title"),
+        QStringLiteral("password_reset_window_seconds"),
+        QStringLiteral("password_reset_boot_status_path"),
+        QStringLiteral("allowed_hosts"),
     };
 
     for (auto it = config.entries.begin(); it != config.entries.end(); ++it) {
@@ -143,6 +147,31 @@ bool applyDirectParameters(const RawConfigMap& rawParams, const UiConfig::Snapsh
                            .absoluteFilePath(cfg.authFile);
     }
 
+    if (rawParams.contains("password_reset_window_seconds")) {
+        cfg.passwordResetWindowSeconds = rawParams.value("password_reset_window_seconds").toInt(&ok);
+        if (!ok || cfg.passwordResetWindowSeconds < 0) {
+            errorMessage = "Invalid password_reset_window_seconds";
+            return false;
+        }
+    }
+    if (rawParams.contains("password_reset_boot_status_path")) {
+        cfg.passwordResetBootStatusPath = rawParams.value("password_reset_boot_status_path");
+        if (!QDir::isAbsolutePath(cfg.passwordResetBootStatusPath)) {
+            errorMessage = "password_reset_boot_status_path must be absolute";
+            return false;
+        }
+    }
+    const auto hostList = rawParams.value("allowed_hosts").trimmed();
+    if (!hostList.isEmpty()) {
+        for (const auto &entry : hostList.split(',')) {
+            const auto name = entry.trimmed();
+            if (!RequestSecurity::validHostName(name)) {
+                errorMessage = "Invalid allowed_hosts entry";
+                return false;
+            }
+            cfg.allowedHosts.append(name);
+        }
+    }
     cfg.appTitle = rawParams.value(QStringLiteral("app_title")).trimmed();
 
     return true;

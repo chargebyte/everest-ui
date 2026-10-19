@@ -1,0 +1,7 @@
+{
+  "http_status": 403,
+  "headers": {},
+  "body": {
+    "error": "reset_unavailable"
+  }
+}

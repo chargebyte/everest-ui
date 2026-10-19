@@ -1,0 +1,7 @@
+{
+  "http_status": 400,
+  "headers": {
+    "Content-Type": "text/plain"
+  },
+  "body": "Transfer-Encoding is not supported"
+}

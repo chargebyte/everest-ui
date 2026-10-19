@@ -1,0 +1,9 @@
+{
+  "http_status": 500,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "error": "internal_error"
+  }
+}

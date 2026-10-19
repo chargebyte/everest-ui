@@ -92,6 +92,23 @@ bool AuthManager::authenticate(const QString &username, const QString &password)
     return hashPassword(password, m_user.salt) == m_user.password;
 }
 
+bool AuthManager::resetUser(QString &errorMessage) {
+    if (!m_loaded || !m_hasUser) {
+        errorMessage = QStringLiteral("No user to reset");
+        return false;
+    }
+    const UserRecord previous = m_user;
+    m_user = UserRecord{};
+    m_hasUser = false;
+    if (!save(errorMessage)) {
+        m_user = previous;
+        m_hasUser = true;
+        return false;
+    }
+    m_sessions.clear();
+    return true;
+}
+
 QString AuthManager::createSession(const QString &username) {
     if (!m_loaded || !m_hasUser || username.trimmed().toLower() != m_user.username) {
         return QString();

@@ -30,12 +30,92 @@ Before opening `/ws`, use the HTTP endpoints:
 GET  /auth/status
 POST /auth/setup   {"username":"...", "password":"..."}
 POST /auth/login   {"username":"...", "password":"..."}
+POST /auth/reset   {"confirm":true}
 POST /auth/logout
 ```
 
-Login sets the HttpOnly, SameSite=Strict cookie `everest_ui_session`; non-browser clients must retain and send it during the WebSocket handshake. `/auth/status` returns `setupRequired`, `authenticated`, `uiBusy`, and `appTitle`. Authentication and upgrade behavior are implemented in `backend/webserver/http/StaticServer.cpp`.
+Login sets the HttpOnly, SameSite=Strict cookie `everest_ui_session`; non-browser clients must retain and send it during the WebSocket handshake. `/auth/status` returns `setupRequired`, `authenticated`, `uiBusy`, `appTitle`, and `passwordReset`. `uiBusy` reports occupancy only for an authenticated requester.
 
-Request and response templates: [`auth.status`](examples/auth.status.request.json) ([response](examples/auth.status.response.json)), [`auth.setup`](examples/auth.setup.request.json) ([success](examples/auth.setup.response.json), [error](examples/auth.setup.response.error.json)), [`auth.login`](examples/auth.login.request.json) ([success](examples/auth.login.response.json), [error](examples/auth.login.response.error.json)), and [`auth.logout`](examples/auth.logout.request.json) ([response](examples/auth.logout.response.json)). These files wrap the HTTP method, path, headers, and body for requests; the `http_status`, headers, and `body` fields document the HTTP response. Only `body` is the JSON response body on the wire. `null` means the endpoint has no request body.
+### Password recovery lifecycle
+
+Recovery is available once per boot, within the configured window after the first `everest-ui-webserver` start, only when the boot marker permits cold-boot recovery. Regular software reboots do not enable it. Restarting or stopping/starting `everest-ui.service` neither extends the deadline nor restores a consumed allowance. Unusable boot information or runtime state leaves recovery unavailable. See [recovery configuration and kernel requirements](../../README.md#configuration-and-kernel-requirements) for the reset window, boot marker, and `RUNTIME_DIRECTORY` contract.
+
+1. Read `/auth/status` to determine whether reset is available. The browser may count down locally, but the server checks the deadline again when reset is requested.
+2. Send `POST /auth/reset` with `{"confirm":true}`. No authenticated session or existing password is required. Success removes credentials and all sessions, clears the requester's cookie, and closes active browser WebSockets with code `1008` (policy violation) and reason `credentials reset`. Forwarding to the backend is stopped and queued proxy messages are discarded; this is not cancellation of operations already accepted by the backend. An upgrade whose session became invalid is also closed with code `1008`, reason `session expired`.
+3. `/auth/status` now reports `setupRequired: true`. Send `POST /auth/setup` with `username` and `password` to create replacement credentials. Setup is not limited by the recovery deadline. Success returns `{"success":true}` but does not set a session cookie.
+4. Send `POST /auth/login` with the new credentials to obtain a cookie, then connect to `/ws`. The browser performs login automatically after setup; setup itself does not authenticate the client.
+
+If credential deletion fails, existing credentials remain usable, while the reset allowance stays closed once consumed. Clients should read status after a storage error rather than assume reset can safely be repeated. A `503` lock conflict can be retried while the original window remains open; it does not extend the window.
+
+### Recovery status
+
+| `passwordReset` field | Type | Meaning |
+| --- | --- | --- |
+| `available` | boolean | Whether a reset may currently be attempted. The operation can still fail if eligibility changes or the lock is busy. |
+| `remainingSeconds` | number | Seconds until the deadline; may be fractional. Zero whenever unavailable. |
+| `windowSeconds` | integer | Configured window length, normally `60`; `0` disables recovery. |
+| `reason` | string | Empty while available; otherwise one of the reasons below. |
+
+If credentials do not exist, `setup_required` overrides every other reason. Otherwise the first applicable reason wins in the following order:
+
+| Reason | Meaning | Status example |
+| --- | --- | --- |
+| `disabled` | Recovery is disabled or initialization could not enable it, for example because `RUNTIME_DIRECTORY` is missing. | [disabled](examples/auth.status.response.disabled.json) |
+| `boot_info_invalid` | Boot classification could not be established. | [invalid boot information](examples/auth.status.response.boot_info_invalid.json) |
+| `warm_boot` | The boot marker identifies a regular software reboot. | [warm boot](examples/auth.status.response.warm_boot.json) |
+| `unavailable_this_boot` | Allowance consumed or blocked, state invalid, marker clearing pending, or another runtime prerequisite failed. | [unavailable this boot](examples/auth.status.response.unavailable_this_boot.json) |
+| `expired` | An otherwise eligible recovery window has ended. | [expired](examples/auth.status.response.expired.json) |
+
+Also see [available](examples/auth.status.response.json) and [setup required](examples/auth.status.response.setup_required.json). These reasons report the implementation's current state, not a complete diagnosis of an underlying failure.
+
+### Endpoint results
+
+All rows in this table have JSON bodies. Error bodies are `{"error":"<identifier>"}`; successful setup/reset bodies are `{"success":true}`.
+
+| Endpoint | HTTP status | Result | Example |
+| --- | --- | --- | --- |
+| `/auth/reset` | `200` | Credentials/sessions removed; session cookie cleared. | [success](examples/auth.reset.response.json) |
+| `/auth/reset` | `400` | `reset_confirmation_required`: invalid JSON, non-object body, or `confirm` not boolean `true`. | [confirmation required](examples/auth.reset.response.confirmation_required.json) |
+| `/auth/reset` | `403` | `reset_unavailable`: reset not currently eligible, including when no user exists. | [unavailable](examples/auth.reset.response.error.json) |
+| `/auth/reset` | `503` | `reset_temporarily_unavailable`: reset lock could not be acquired. | [temporary conflict](examples/auth.reset.response.temporarily_unavailable.json) |
+| `/auth/reset` | `500` | `reset_failed`: persisting state or removing credentials failed. | [storage failure](examples/auth.reset.response.failed.json) |
+| `/auth/setup` | `200` | Credentials created; no session cookie issued. | [success](examples/auth.setup.response.json) |
+| `/auth/setup` | `409` | `setup_not_required`: credentials already exist. | [not required](examples/auth.setup.response.error.json) |
+
+Existing setup validation also returns `400` for `invalid_json`, `missing_credentials`, or the credential/storage validation error supplied by the authentication manager. These endpoint results are separate from shared validation failures below.
+
+### Shared setup/reset validation
+
+Both `/auth/setup` and `/auth/reset` validate `Host`: it must be an IP literal, `localhost`, the device hostname, its `.local` name, the hostname configured by `allow_origin`, or an entry in `allowed_hosts`. Any syntactically valid IP literal is accepted; the server does not check whether it belongs to a local interface. Hostnames are compared against this allowlist without DNS resolution. A port may be supplied in Host, and IPv6 authorities use brackets. The Host allowlist does not apply to other HTTP routes or WebSocket upgrades.
+
+Both POST endpoints require `Content-Type: application/json`; valid media-type parameters such as `charset=utf-8` are accepted. `Origin` may be omitted. When supplied, it must be an `http://` origin matching the Host hostname and effective port (default `80`); paths, `https://`, and literal `null` are rejected. Forwarded headers and TLS-terminating reverse proxies are not supported by this policy.
+
+Validation order is HTTP framing/parsing, Host validation for these paths, method validation (`POST` required), Content-Type, Origin, then endpoint body and operation checks. Thus malformed requests can fail before any JSON endpoint error is generated. Unsupported methods return plain-text `405 Method Not Allowed` after Host validation.
+
+| HTTP status | Body type | Body/error identifier | Shared example |
+| --- | --- | --- | --- |
+| `400` | text/plain | `Invalid Host` | [invalid Host](examples/auth.mutation.response.invalid_host.json) |
+| `421` | application/json | `host_not_allowed` | [unlisted Host](examples/auth.mutation.response.host_not_allowed.json) |
+| `415` | application/json | `unsupported_media_type` | [unsupported media type](examples/auth.mutation.response.unsupported_media_type.json) |
+| `403` | application/json | `origin_forbidden` | [disallowed Origin](examples/auth.mutation.response.origin_forbidden.json) |
+| `500` | application/json | `internal_error`: internal Content-Type validator failure | [internal validation failure](examples/auth.mutation.response.internal_error.json) |
+
+The HTTP parser additionally rejects the following requests on all routes with `400` and a **plain-text** body, not a JSON error object:
+
+| Rejection | Exact body | Example |
+| --- | --- | --- |
+| Header line starting with space/tab | `Folded header is not supported` | [folded header](examples/http.response.folded_header.json) |
+| Missing colon or invalid header-name characters | `Invalid header name` | [invalid header name](examples/http.response.invalid_header_name.json) |
+| Repeated Host, Origin, Content-Type, or Content-Length (case-insensitive) | `Duplicate header` | [duplicate header](examples/http.response.duplicate_header.json) |
+| Any Transfer-Encoding header | `Transfer-Encoding is not supported` | [unsupported transfer encoding](examples/http.response.transfer_encoding.json) |
+
+Framing checks precede these parser checks; an invalid Content-Length, for example, can be rejected first with `Invalid Content-Length`.
+
+### Authentication templates
+
+Requests: [status](examples/auth.status.request.json), [setup](examples/auth.setup.request.json), [login](examples/auth.login.request.json), [reset](examples/auth.reset.request.json), and [logout](examples/auth.logout.request.json). Responses: status variants and setup/reset results above, [login success](examples/auth.login.response.json), [login error](examples/auth.login.response.error.json), and [logout success](examples/auth.logout.response.json).
+
+These files wrap the HTTP method, path, headers, and body for requests; `http_status`, headers, and `body` describe responses. Headers shown are illustrative subsets; clients must supply normal HTTP framing, including Content-Length for bodies. Only `body` is sent as the payload: an object for JSON responses, or the literal string contents for plain-text responses (without JSON quotes). `null` denotes an absent request body. The shared `auth.mutation.*` responses apply to both setup and reset; `http.response.*` examples apply across routes. WebSocket close codes/reasons above describe control frames, not JSON messages.
 
 ## Request
 

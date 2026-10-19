@@ -1,0 +1,9 @@
+{
+  "http_status": 421,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "error": "host_not_allowed"
+  }
+}

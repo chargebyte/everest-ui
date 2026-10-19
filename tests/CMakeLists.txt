@@ -1,12 +1,43 @@
 find_package(${QT_PACKAGE_NAME} REQUIRED COMPONENTS Test)
 
-add_executable(layered_config_test LayeredConfigTest.cpp ../backend/webserver/config/ServerConfig.cpp)
-target_include_directories(layered_config_test PRIVATE "${CMAKE_SOURCE_DIR}/backend/webserver/config")
+add_executable(layered_config_test
+    LayeredConfigTest.cpp
+    ../backend/webserver/config/ServerConfig.cpp
+    ../backend/webserver/http/RequestSecurity.cpp
+)
+target_include_directories(layered_config_test PRIVATE
+    "${CMAKE_SOURCE_DIR}/backend/webserver/config"
+    "${CMAKE_SOURCE_DIR}/backend/webserver/http"
+)
 target_link_libraries(layered_config_test PRIVATE everest_ui_config ${QT_PACKAGE_NAME}::Network ${QT_PACKAGE_NAME}::Test)
 add_test(NAME layered_config_test COMMAND layered_config_test)
 
 add_test(NAME config_overlay_install_test COMMAND "${CMAKE_COMMAND}"
     "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/ConfigOverlayInstallTest.cmake")
+
+add_executable(request_parsing_test
+    RequestParsingTest.cpp
+    ../backend/webserver/http/RequestParsing.cpp
+    ../backend/webserver/http/StaticResponse.cpp
+)
+target_include_directories(request_parsing_test PRIVATE ../backend/webserver/http)
+target_link_libraries(request_parsing_test PRIVATE
+    ${QT_PACKAGE_NAME}::Core
+    ${QT_PACKAGE_NAME}::Test
+)
+add_test(NAME request_parsing_test COMMAND request_parsing_test)
+
+add_executable(request_security_test
+    RequestSecurityTest.cpp
+    ../backend/webserver/http/RequestSecurity.cpp
+)
+target_include_directories(request_security_test PRIVATE ../backend/webserver/http)
+target_link_libraries(request_security_test PRIVATE
+    ${QT_PACKAGE_NAME}::Core
+    ${QT_PACKAGE_NAME}::Network
+    ${QT_PACKAGE_NAME}::Test
+)
+add_test(NAME request_security_test COMMAND request_security_test)
 
 add_executable(pcap_test
     PCAPTest.cpp
@@ -233,3 +264,28 @@ foreach(config_test_target IN ITEMS pcap_test network_interface_utils_test backe
         network_configuration_test ssh_configuration_test everest_config_test safety_controller_test rpc_api_client_test)
     target_link_libraries(${config_test_target} everest_ui_config)
 endforeach()
+
+add_executable(password_reset_test
+    PasswordResetTest.cpp
+    ../backend/webserver/ws/WebSocketProxySession.cpp
+    ../backend/webserver/auth/AuthManager.cpp
+    ../backend/webserver/auth/PasswordReset.cpp
+    ../backend/webserver/config/ServerConfig.cpp
+    ../backend/webserver/http/RequestParsing.cpp
+    ../backend/webserver/http/RequestSecurity.cpp
+    ../backend/webserver/http/StaticServer.cpp
+    ../backend/webserver/http/StaticContent.cpp
+    ../backend/webserver/http/StaticResponse.cpp
+    ../backend/webserver/ui/AppTitleResolver.cpp
+    ../backend/webserver/ui/UiOccupancyTracker.cpp
+)
+target_include_directories(password_reset_test PRIVATE
+    ../backend/webserver/auth ../backend/webserver/config
+    ../backend/webserver/http ../backend/webserver/ui ../backend/webserver/ws
+)
+target_link_libraries(password_reset_test PRIVATE
+    everest_ui_config
+    ${QT_PACKAGE_NAME}::Core ${QT_PACKAGE_NAME}::Network
+    ${QT_PACKAGE_NAME}::WebSockets ${QT_PACKAGE_NAME}::Test
+)
+add_test(NAME password_reset_test COMMAND password_reset_test)
