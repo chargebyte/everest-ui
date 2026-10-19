@@ -131,6 +131,109 @@ private slots:
         QVERIFY(!fresh.read().valid());
     }
 
+    void retainsEstablishedDefaultsAfterLoss_data() {
+        QTest::addColumn<bool>("removeDefaults");
+        QTest::addColumn<QByteArray>("replacement");
+        QTest::newRow("missing") << true << QByteArray();
+        QTest::newRow("empty") << false << QByteArray();
+        QTest::newRow("whitespace") << false << QByteArray(" \t\r\n\n");
+        QTest::newRow("comments") << false << QByteArray("# temporarily empty\n\n");
+    }
+
+    void retainsEstablishedDefaultsAfterLoss() {
+        QFETCH(bool, removeDefaults);
+        QFETCH(QByteArray, replacement);
+        QTemporaryDir dir;
+        const auto configPaths = paths(dir);
+        QVERIFY(writeFile(configPaths.defaults, "available_features=none\nnetwork_device_whitelist.board=eth0\n"));
+        QVERIFY(writeFile(configPaths.overlay, "# no overrides\n"));
+        UiConfig::Store store(configPaths);
+        const auto original = store.read();
+        QVERIFY(original.valid());
+        QVERIFY(original.defaultsLoaded);
+        QVERIFY(original.defaultsHaveDirectives);
+        if (removeDefaults) {
+            QVERIFY(QFile::remove(configPaths.defaults));
+        } else {
+            QVERIFY(writeFile(configPaths.defaults, replacement));
+        }
+        QVERIFY(writeFile(configPaths.overlay, "available_features=all\n"));
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral(".*retaining last valid configuration.*")));
+        QCOMPARE(store.read().values(), original.values());
+        QCOMPARE(store.read().values(), original.values());
+        // Stateless reads still accept missing/empty layers, unlike the established store.
+        QVERIFY(UiConfig::load(configPaths).valid());
+        QVERIFY(writeFile(configPaths.defaults, "available_features=none\nnetwork_device_whitelist.board=eth1\n"));
+        QCOMPARE(store.read().value(QStringLiteral("network_device_whitelist.board")), QStringLiteral("eth1"));
+        QCOMPARE(store.read().value(QStringLiteral("available_features")), QStringLiteral("all"));
+        QVERIFY(QFile::remove(configPaths.overlay));
+        QCOMPARE(store.read().value(QStringLiteral("available_features")), QStringLiteral("none"));
+        // Recovery clears warning suppression, so a subsequent loss warns again.
+        QVERIFY(QFile::remove(configPaths.defaults));
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral(".*retaining last valid configuration.*")));
+        QCOMPARE(store.read().value(QStringLiteral("available_features")), QStringLiteral("none"));
+    }
+
+    void protectsDefaultsOnlyAfterSuccessfulAcceptance() {
+        QTemporaryDir dir;
+        const auto configPaths = paths(dir);
+        QVERIFY(writeFile(configPaths.overlay, "key=legacy\n"));
+        UiConfig::Store store(configPaths);
+        auto config = store.read();
+        QVERIFY(config.valid());
+        QVERIFY(!config.defaultsLoaded);
+        QCOMPARE(config.value(QStringLiteral("key")), QStringLiteral("legacy"));
+        QVERIFY(writeFile(configPaths.defaults, "key=vendor\n"));
+        QVERIFY(writeFile(configPaths.overlay, "bad\n"));
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral(".*retaining last valid configuration.*")));
+        QCOMPARE(store.read().values(), config.values());
+        QVERIFY(QFile::remove(configPaths.defaults));
+        QVERIFY(QFile::remove(configPaths.overlay));
+        config = store.read();
+        QVERIFY(config.valid());
+        QVERIFY(!config.defaultsLoaded);
+        QVERIFY(config.entries.isEmpty());
+        QVERIFY(writeFile(configPaths.defaults, "key=vendor\n"));
+        QCOMPARE(store.read().value(QStringLiteral("key")), QStringLiteral("vendor"));
+        QVERIFY(QFile::remove(configPaths.defaults));
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral(".*retaining last valid configuration.*")));
+        QCOMPARE(store.read().value(QStringLiteral("key")), QStringLiteral("vendor"));
+    }
+
+    void acceptsInitiallyEmptyDefaultsButProtectsTheirPresence() {
+        QTemporaryDir dir;
+        const auto configPaths = paths(dir);
+        QVERIFY(writeFile(configPaths.defaults, "# initially empty\n"));
+        UiConfig::Store store(configPaths);
+        auto config = store.read();
+        QVERIFY(config.valid());
+        QVERIFY(config.defaultsLoaded);
+        QVERIFY(!config.defaultsHaveDirectives);
+        QVERIFY(writeFile(configPaths.defaults, ""));
+        QVERIFY(store.read().valid());
+        QVERIFY(QFile::remove(configPaths.defaults));
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral(".*retaining last valid configuration.*")));
+        QVERIFY(store.read().defaultsLoaded);
+        QVERIFY(writeFile(configPaths.defaults, "key=\n"));
+        config = store.read();
+        QVERIFY(config.contains(QStringLiteral("key")));
+        QVERIFY(config.value(QStringLiteral("key")).isEmpty());
+        QVERIFY(config.defaultsHaveDirectives);
+        QVERIFY(writeFile(configPaths.defaults, "!key\n"));
+        config = store.read();
+        QVERIFY(config.defaultsHaveDirectives);
+        QVERIFY(!config.contains(QStringLiteral("key")));
+        QVERIFY(writeFile(configPaths.defaults, "# emptied again\n"));
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral(".*retaining last valid configuration.*")));
+        QVERIFY(store.read().defaultsHaveDirectives);
+    }
+
     void writesOnlyLocalDirectivesAndPreservesUnrelatedContent() {
         QTemporaryDir dir;
         const auto configPaths = paths(dir);

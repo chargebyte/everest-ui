@@ -155,7 +155,8 @@ Paths pathsFor(Kind kind) {
 
 Snapshot load(const Paths& paths) {
     Snapshot result;
-    for (const QString& path : {paths.defaults, paths.overlay}) {
+    for (const bool defaults : {true, false}) {
+        const QString& path = defaults ? paths.defaults : paths.overlay;
         QStringList lines;
         if (!readFile(path, lines, result.error)) {
             result.entries.clear();
@@ -165,6 +166,9 @@ Snapshot load(const Paths& paths) {
             continue;
         }
         result.files.append(path);
+        if (defaults) {
+            result.defaultsLoaded = true;
+        }
         for (int i = 0; i < lines.size(); ++i) {
             Directive directive;
             if (!parseLine(lines.at(i), directive)) {
@@ -172,6 +176,9 @@ Snapshot load(const Paths& paths) {
                     QStringLiteral("Invalid configuration at %1:%2: expected key=value or !key").arg(path).arg(i + 1);
                 result.entries.clear();
                 return result;
+            }
+            if (defaults && !directive.key.isEmpty()) {
+                result.defaultsHaveDirectives = true;
             }
             if (directive.mask) {
                 result.entries.remove(directive.key);
@@ -188,7 +195,13 @@ Store::Store(Paths paths) : m_paths(std::move(paths)) {
 
 Snapshot Store::read() {
     QMutexLocker lock(&m_mutex);
-    const Snapshot candidate = load(m_paths);
+    Snapshot candidate = load(m_paths);
+    if (candidate.valid() && m_snapshot.defaultsLoaded && !candidate.defaultsLoaded) {
+        candidate.error = QStringLiteral("Established configuration defaults are missing: %1").arg(m_paths.defaults);
+    } else if (candidate.valid() && m_snapshot.defaultsHaveDirectives && !candidate.defaultsHaveDirectives) {
+        candidate.error =
+            QStringLiteral("Established configuration defaults contain no directives: %1").arg(m_paths.defaults);
+    }
     if (candidate.valid()) {
         m_snapshot = candidate;
         m_loaded = true;

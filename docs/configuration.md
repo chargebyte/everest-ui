@@ -70,6 +70,16 @@ fails rather than silently treating a broken overlay as missing. After a success
 syntax/read failure retains the complete last-good snapshot and logs a warning; a repaired file is picked up
 on the next read. Typed setting validation and existing built-in fallbacks remain the consumer's responsibility.
 
+Missing defaults at startup remain supported for legacy installations with complete local configuration.
+Once the backend store has accepted a defaults file, its later disappearance also retains the entire
+last-good snapshot. Once accepted defaults contain directives, replacing them with an empty, whitespace-only,
+or comment-only file does the same. Repeated identical failures warn only once until recovery. Overlay
+deletion is still accepted and restores inheritance. Explicit empty assignments and masks count as directives.
+
+This guard does not detect syntactically valid partial defaults files. Producers should replace defaults
+atomically rather than truncate and rewrite them in place. The standalone loader remains stateless;
+these runtime protections apply to the shared configuration store.
+
 ## Saving and Updates
 
 Only local overlays are writable configuration targets. The shared C++ API in `backend/config/LayeredConfig.hpp`

@@ -27,6 +27,8 @@ struct Snapshot {
     QMap<QString, Entry> entries;
     QStringList files;
     QString error;
+    bool defaultsLoaded = false;
+    bool defaultsHaveDirectives = false;
     bool valid() const {
         return error.isEmpty();
     }
