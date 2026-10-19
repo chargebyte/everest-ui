@@ -18,7 +18,7 @@
 
 int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);
-    QCoreApplication::setApplicationName(QStringLiteral("webui"));
+    QCoreApplication::setApplicationName(QStringLiteral("everest-ui-webserver"));
 
     const UiConfig::Paths configPaths = UiConfig::pathsFor(UiConfig::Kind::Frontend);
     ServerConfig cfg;
@@ -38,7 +38,7 @@ int main(int argc, char *argv[]) {
     AppTitleResolver appTitleResolver(cfg.appTitle, cfg.backendUrl);
     UiOccupancyTracker uiOccupancyTracker;
     StaticServer server(cfg, &authManager, &appTitleResolver, &uiOccupancyTracker);
-    QWebSocketServer wsServer(QStringLiteral("webui-ws"), QWebSocketServer::NonSecureMode);
+    QWebSocketServer wsServer(QStringLiteral("everest-ui-ws"), QWebSocketServer::NonSecureMode);
 
     QObject::connect(&server, &StaticServer::webSocketUpgradeRequested,
                      &server, [&server, &wsServer](QTcpSocket *socket) {

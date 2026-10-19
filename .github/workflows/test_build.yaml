@@ -54,5 +54,5 @@ jobs:
         name: Show details of the final binaries
         run: |
           cd build-test
-          ls -l backend/launcher/webui backend/webserver/webserver backend/api/api
-          ldd -r backend/launcher/webui backend/webserver/webserver backend/api/api
+          ls -l backend/launcher/everest-ui backend/webserver/everest-ui-webserver backend/api/everest-ui-api
+          ldd -r backend/launcher/everest-ui backend/webserver/everest-ui-webserver backend/api/everest-ui-api

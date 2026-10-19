@@ -154,6 +154,7 @@ void MinimalWebSocketServer::handleDisconnected() {
 
 int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);
+    QCoreApplication::setApplicationName(QStringLiteral("everest-ui-api"));
 
     const quint16 serverPort = loadServerPort();
     if (serverPort == 0) {

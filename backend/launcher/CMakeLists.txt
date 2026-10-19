@@ -1,22 +1,22 @@
-add_executable(webui
+add_executable(everest-ui
     src/main.cpp
 )
 
 include(GNUInstallDirs)
 
-target_link_libraries(webui PRIVATE
+target_link_libraries(everest-ui PRIVATE
     everest_ui_config
     ${QT_PACKAGE_NAME}::Core
     ${QT_PACKAGE_NAME}::Network
 )
 
-target_include_directories(webui PRIVATE
+target_include_directories(everest-ui PRIVATE
     "${CMAKE_BINARY_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
-install(TARGETS webui
-    RUNTIME DESTINATION bin
+install(TARGETS everest-ui
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
 )
 
 find_package(PkgConfig QUIET)
@@ -37,11 +37,11 @@ set(EVEREST_UI_SYSTEMD_UNIT_DIR "${SYSTEMD_SYSTEM_UNIT_DIR}"
 )
 
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/systemd/webui.service.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/webui.service"
+    "${CMAKE_CURRENT_SOURCE_DIR}/systemd/everest-ui.service.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/everest-ui.service"
     @ONLY
 )
 
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/webui.service"
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/everest-ui.service"
     DESTINATION "${EVEREST_UI_SYSTEMD_UNIT_DIR}"
 )

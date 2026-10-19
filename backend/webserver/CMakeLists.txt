@@ -1,4 +1,4 @@
-add_executable(webserver
+add_executable(everest-ui-webserver
     main.cpp
     auth/AuthManager.cpp
     auth/AuthManager.hpp
@@ -20,14 +20,14 @@ add_executable(webserver
     ws/WebSocketProxySession.hpp
 )
 
-target_link_libraries(webserver PRIVATE
+target_link_libraries(everest-ui-webserver PRIVATE
     everest_ui_config
     ${QT_PACKAGE_NAME}::Core
     ${QT_PACKAGE_NAME}::Network
     ${QT_PACKAGE_NAME}::WebSockets
 )
 
-target_include_directories(webserver PRIVATE
+target_include_directories(everest-ui-webserver PRIVATE
     "${CMAKE_BINARY_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/auth"
     "${CMAKE_CURRENT_SOURCE_DIR}/config"
@@ -43,7 +43,7 @@ configure_file(
     @ONLY
 )
 
-install(TARGETS webserver
+install(TARGETS everest-ui-webserver
     RUNTIME DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/everest-ui"
 )
 

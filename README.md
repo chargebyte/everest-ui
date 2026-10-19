@@ -15,9 +15,9 @@ The project also requires:
 
 The project installs three binaries:
 
-- `api`
-- `webserver`
-- `webui`
+- `everest-ui-api`
+- `everest-ui-webserver`
+- `everest-ui`
 
 It installs the runtime configuration files into `/etc/everest-ui/`, the browser assets into `/usr/share/everest-ui/public/`, and the auth store is created at `/var/lib/everest-ui/auth.json`.
 
@@ -142,7 +142,7 @@ RPC-related test targets. Verbose messages include EVSE/request IDs, remaining b
 generations. To collect one complete Save cycle, run:
 
 ```bash
-journalctl -b -u webui.service -u everest.service -o short-monotonic
+journalctl -b -u everest-ui.service -u everest.service -o short-monotonic
 ```
 
 PCAP captures are bounded by these backend settings:
@@ -250,26 +250,27 @@ The entry `port` in `frontend.conf` defines on which port the UI is accessible f
 
 ## Start the UI
 
-The UI is started by running the `webui` binary.
+The UI is started by running the `everest-ui` binary.
 
 Example:
 
 ```bash
-${prefix}/bin/webui
+${prefix}/bin/everest-ui
 ```
 
 If you use the default install prefix, that is:
 
 ```bash
-/usr/local/bin/webui
+/usr/local/bin/everest-ui
 ```
 
-The launcher `webui` starts the helper binaries from `${prefix}/libexec/everest-ui/`.
+The launcher `everest-ui` starts `everest-ui-api` and `everest-ui-webserver` from
+`${prefix}/libexec/everest-ui/`.
 
 If the systemd service was installed and is not started automatically, it can be started with:
 
 ```bash
-systemctl start webui.service
+systemctl start everest-ui.service
 ```
 
 ## Access the UI
