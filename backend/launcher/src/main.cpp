@@ -149,7 +149,7 @@ QString resolveBackendBinaryPath() {
     const QString applicationDir = QCoreApplication::applicationDirPath();
     return resolveFirstExistingPath({
         QStringLiteral(EVEREST_UI_INSTALL_API_BINARY),
-        QDir(applicationDir).absoluteFilePath(QStringLiteral("api")),
+        QDir(applicationDir).absoluteFilePath(QStringLiteral("everest-ui-api")),
     });
 }
 
@@ -157,7 +157,7 @@ QString resolveFrontendBinaryPath() {
     const QString applicationDir = QCoreApplication::applicationDirPath();
     return resolveFirstExistingPath({
         QStringLiteral(EVEREST_UI_INSTALL_WEBSERVER_BINARY),
-        QDir(applicationDir).absoluteFilePath(QStringLiteral("webserver")),
+        QDir(applicationDir).absoluteFilePath(QStringLiteral("everest-ui-webserver")),
     });
 }
 
@@ -349,7 +349,7 @@ private:
 
 int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);
-    QCoreApplication::setApplicationName(QStringLiteral("webui"));
+    QCoreApplication::setApplicationName(QStringLiteral("everest-ui"));
 
 #ifdef Q_OS_UNIX
     UnixSignalHandler unixSignalHandler;

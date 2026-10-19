@@ -1,4 +1,4 @@
-# webui configuration
+# everest-ui frontend configuration
 port=80
 root=@WEBSERVER_INSTALL_ROOT@
 bind=0.0.0.0
