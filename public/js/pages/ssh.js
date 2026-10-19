@@ -4,6 +4,7 @@
 
 import { MODULE_IDS } from '../protocol/constants.js';
 import { buildRequest } from '../protocol/requestBuilder.js';
+import { eyeIcon } from '../ui/eyeIcon.js';
 
 const kGroup = MODULE_IDS.SSH;
 
@@ -31,12 +32,12 @@ export function renderSshPage(container, { sendPayload, addLog }) {
         <label class="label" for="ssh-password">Password</label>
         <div class="ssh-password-field">
           <input class="input ssh-password-control" id="ssh-password" type="password" autocomplete="new-password" />
-          <button class="btn btn-peek ssh-password-reveal" id="ssh-password-reveal" type="button" aria-label="Show password while pressed" title="Show password while pressed">◉</button>
+          <button class="btn btn-peek ssh-password-reveal" id="ssh-password-reveal" type="button" aria-label="Show password while pressed" aria-controls="ssh-password" title="Show password while pressed">${eyeIcon}</button>
         </div>
         <label class="label" for="ssh-password-confirm">Repeat password</label>
         <div class="ssh-password-field">
           <input class="input ssh-password-control" id="ssh-password-confirm" type="password" autocomplete="new-password" />
-          <button class="btn btn-peek ssh-password-reveal" id="ssh-password-confirm-reveal" type="button" aria-label="Show password while pressed" title="Show password while pressed">◉</button>
+          <button class="btn btn-peek ssh-password-reveal" id="ssh-password-confirm-reveal" type="button" aria-label="Show password while pressed" aria-controls="ssh-password-confirm" title="Show password while pressed">${eyeIcon}</button>
         </div>
       </div>
       <p id="ssh-warning" class="network-settings-warning" hidden></p>
