@@ -1,0 +1,16 @@
+{
+  "http_status": 200,
+  "headers": {},
+  "body": {
+    "setupRequired": true,
+    "authenticated": false,
+    "uiBusy": false,
+    "passwordReset": {
+      "available": false,
+      "remainingSeconds": 0,
+      "windowSeconds": 60,
+      "reason": "setup_required"
+    },
+    "appTitle": "EVerest WebUI"
+  }
+}

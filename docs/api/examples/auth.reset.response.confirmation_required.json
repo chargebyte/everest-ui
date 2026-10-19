@@ -1,0 +1,9 @@
+{
+  "http_status": 400,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "error": "reset_confirmation_required"
+  }
+}

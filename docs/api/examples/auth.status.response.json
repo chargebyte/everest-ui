@@ -7,7 +7,7 @@
     "uiBusy": false,
     "passwordReset": {
       "available": true,
-      "remainingSeconds": 42,
+      "remainingSeconds": 42.25,
       "windowSeconds": 60,
       "reason": ""
     },
