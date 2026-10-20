@@ -17,7 +17,6 @@ private:
     QList<int> m_checked;
     bool m_unplugged = true;
     int m_loads = 0;
-    int m_reboots = 0;
 
     QString script(const QByteArray& body) {
         const auto path = m_dir.filePath(QStringLiteral("fake-reset"));
@@ -38,8 +37,7 @@ private:
                 [this](const QList<int>& indices) {
                     m_checked = indices;
                     return m_unplugged;
-                },
-                [this]() { ++m_reboots; }};
+                }};
     }
 
     ModuleRequest request(const QString& action, QJsonObject parameters = {}) {
@@ -61,7 +59,7 @@ private slots:
         m_effective = QJsonDocument::fromJson(R"({"active_modules":{"evse":{"module":"EvseManager"}}})").object();
         m_unplugged = true;
         m_checked.clear();
-        m_loads = m_reboots = 0;
+        m_loads = 0;
     }
 
     void resolvesEveryEvseAndRejectsIncompleteMappings() {
@@ -103,7 +101,7 @@ private slots:
         QTRY_VERIFY(!responses.isEmpty());
         QVERIFY(last(responses).final);
         QCOMPARE(last(responses).parameters.value("error").toString(), QString("factory_reset_not_allowed"));
-        QVERIFY(!last(responses).parameters.contains("restart_required"));
+        QVERIFY(!last(responses).parameters.contains("reboot_expected"));
         QCOMPARE(m_checked, QList<int>{1});
     }
 
@@ -129,7 +127,6 @@ private slots:
         QVERIFY(!runtime.handleRequest(request("reset", {{"confirm", true}}), true).success);
         QVERIFY(!runtime.handleRequest(request("reboot")).success);
         QCOMPARE(m_loads, 0);
-        QCOMPARE(m_reboots, 0);
     }
 
     void commandOutcomes_data() {
@@ -160,19 +157,25 @@ private slots:
         const auto final = last(responses);
         QVERIFY(final.final);
         QCOMPARE(final.success, success);
-        QVERIFY(final.parameters.value("restart_required").toBool());
-        QCOMPARE(final.parameters.size(), success ? 1 : 2);
+        QCOMPARE(final.parameters.value("reboot_expected").toBool(), success);
+        QCOMPARE(final.parameters.size(), 1);
         if (!success)
             QCOMPARE(final.parameters.value("error").toString(), QString("factory_reset_failed"));
-        QVERIFY(runtime.handleRequest(request("read_status")).parameters.value("reboot_available").toBool());
+        const auto outcome = runtime.handleRequest(request("read_status"));
+        QCOMPARE(outcome.parameters.value("reboot_expected").toBool(), success);
+        QCOMPARE(outcome.parameters.value("state").toString(), success ? QString("rebooting") : QString("failed"));
         const int count = responses.count();
         QTest::qWait(30);
         QCOMPARE(responses.count(), count);
-        QVERIFY(!runtime.handleRequest(request("reboot"), true).success);
-        QVERIFY(runtime.handleRequest(request("reboot")).success);
-        QVERIFY(runtime.isRebootPending());
-        QCOMPARE(m_reboots, 1);
         QVERIFY(!runtime.handleRequest(request("reboot")).success);
+        if (success) {
+            QVERIFY(runtime.isRebootExpected());
+            QVERIFY(!outcome.parameters.value("can_reset").toBool());
+            QVERIFY(!runtime.handleRequest(request("reset", {{"confirm", true}})).success);
+        } else {
+            QVERIFY(!runtime.isRebootExpected());
+            QVERIFY(outcome.parameters.value("can_reset").toBool());
+        }
     }
 
     void defaultBudgetAllowsTwoSecondKeepalivesAndStatusRecovery() {
@@ -189,8 +192,8 @@ private slots:
         reconnect.requestId = 100;
         const auto status = runtime.handleRequest(reconnect);
         QCOMPARE(status.requestId, qint64(100));
-        QCOMPARE(status.parameters.value("state").toString(), QString("succeeded"));
-        QVERIFY(status.parameters.value("reboot_available").toBool());
+        QCOMPARE(status.parameters.value("state").toString(), QString("rebooting"));
+        QVERIFY(status.parameters.value("reboot_expected").toBool());
     }
 };
 

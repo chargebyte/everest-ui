@@ -4,7 +4,7 @@
 import { buildRequest } from '../protocol/requestBuilder.js';
 import { MODULE_IDS } from '../protocol/constants.js';
 
-export function renderFactoryResetPane({ sendPayload, addLog, actions, onBusyChange = () => {},
+export function renderFactoryResetPane({ sendPayload, addLog, actions, rebootRecovery, onBusyChange = () => {},
   confirm = (message) => window.confirm(message) }) {
   const element = document.createElement('section');
   element.className = 'section factory-reset';
@@ -13,30 +13,27 @@ export function renderFactoryResetPane({ sendPayload, addLog, actions, onBusyCha
     <p id="factory-reset-status" role="status" aria-live="polite">Loading...</p>
     <div class="controls">
       <button class="btn btn-secondary" id="factory-reset-start" type="button" disabled>Factory Reset</button>
-      <button class="btn btn-secondary" id="factory-reset-reboot" type="button" disabled>Reboot</button>
     </div>
   `;
   const status = element.querySelector('#factory-reset-status');
   const resetButton = element.querySelector('#factory-reset-start');
-  const rebootButton = element.querySelector('#factory-reset-reboot');
   let connected = false;
   let externalBusy = false;
   let unknown = true;
-  let backend = { state: 'idle', can_reset: false, reboot_available: false };
+  let backend = { state: 'idle', can_reset: false, reboot_expected: false };
   let operation = null;
   let statusRequest = null;
   let polling = null;
-  let rebooting = false;
   let destroyed = false;
 
   function isBusy() {
-    return unknown || operation !== null || backend.state === 'running' || rebooting;
+    return unknown || operation !== null || backend.state === 'running' || backend.reboot_expected === true;
   }
 
   function sync() {
+    if (backend.reboot_expected) rebootRecovery.expectFactoryReboot();
     const blocked = !connected || externalBusy || isBusy();
-    resetButton.disabled = blocked || backend.can_reset !== true;
-    rebootButton.disabled = blocked || backend.reboot_available !== true;
+    resetButton.disabled = blocked || backend.can_reset !== true || !rebootRecovery.canStart();
     onBusyChange(isBusy());
   }
 
@@ -45,7 +42,7 @@ export function renderFactoryResetPane({ sendPayload, addLog, actions, onBusyCha
     const request = buildRequest(definition?.group || MODULE_IDS.FACTORY_RESET,
       definition?.action || action, {});
     request.parameters = parameters;
-    const result = sendPayload(request);
+    const result = action === 'reset' ? rebootRecovery.requestFactoryReset(request) : sendPayload(request);
     if (!result.ok) {
       addLog(`factory_reset.${action} could not be sent`);
       return null;
@@ -59,12 +56,12 @@ export function renderFactoryResetPane({ sendPayload, addLog, actions, onBusyCha
   }
 
   function refreshOutcome() {
-    if (backend.state === 'succeeded') {
-      status.textContent = 'Factory reset completed. Reboot the device.';
+    if (backend.reboot_expected) {
+      status.textContent = 'Factory reset completed. The device is rebooting automatically.';
     } else if (backend.state === 'failed') {
-      status.textContent = 'Factory reset failed. You can still choose to reboot the device.';
+      status.textContent = 'Factory reset failed. The device may not reboot automatically.';
     } else if (backend.state === 'running') {
-      status.textContent = 'Factory reset in progress...';
+      status.textContent = 'Factory reset in progress. The device will reboot automatically.';
     } else {
       status.textContent = backend.can_reset ? 'Ready' : 'Factory reset is not currently available.';
     }
@@ -72,20 +69,12 @@ export function renderFactoryResetPane({ sendPayload, addLog, actions, onBusyCha
 
   resetButton.addEventListener('click', () => {
     if (resetButton.disabled || !connected || externalBusy || isBusy()) return;
-    if (!confirm('Are you sure you want to reset this device to factory defaults?')) return;
+    if (!confirm('Are you sure you want to reset this device to factory defaults? The device will reboot automatically.')) return;
     const requestId = send('reset', { confirm: true });
     if (requestId === null) return;
     operation = { requestId, action: 'reset' };
     statusRequest = null; // Ignore an older eligibility reply already in flight.
-    status.textContent = 'Factory reset in progress...';
-    sync();
-  });
-  rebootButton.addEventListener('click', () => {
-    if (rebootButton.disabled || !connected || externalBusy || isBusy()) return;
-    const requestId = send('reboot');
-    if (requestId === null) return;
-    operation = { requestId, action: 'reboot' };
-    status.textContent = 'Requesting reboot...';
+    status.textContent = 'Factory reset in progress. The device will reboot automatically.';
     sync();
   });
 
@@ -93,6 +82,7 @@ export function renderFactoryResetPane({ sendPayload, addLog, actions, onBusyCha
   return {
     element,
     isBusy,
+    onRebootAvailabilityChange: sync,
     setMaintenanceBusy(value) {
       externalBusy = value === true;
       sync();
@@ -113,27 +103,18 @@ export function renderFactoryResetPane({ sendPayload, addLog, actions, onBusyCha
         return;
       }
       if (operation?.requestId !== message.requestId || message.final === false) return;
-      const action = operation.action;
       operation = null;
-      if (action === 'reset') {
-        backend = { state: message.ok ? 'succeeded' : 'failed', can_reset: false,
-          reboot_available: message.parameters?.restart_required === true };
-        if (backend.reboot_available) {
-          refreshOutcome();
-        } else {
-          backend.state = 'idle';
-          status.textContent = 'Factory reset was not started.';
-        }
-        unknown = message.parameters?.restart_required !== true;
-        readStatus();
-      } else if (message.ok) {
-        rebooting = true;
-        status.textContent = 'Reboot requested.';
+      backend = { state: message.ok ? 'rebooting' : 'failed', can_reset: false,
+        reboot_expected: message.parameters?.reboot_expected === true };
+      unknown = false;
+      if (backend.reboot_expected || message.parameters?.error === 'factory_reset_failed') {
+        refreshOutcome();
       } else {
+        backend.state = 'idle';
         unknown = true;
-        status.textContent = 'Unable to request reboot.';
-        readStatus();
+        status.textContent = 'Factory reset was not started.';
       }
+      if (!backend.reboot_expected) readStatus();
       sync();
     },
     onConnectionChange(value) {
@@ -147,7 +128,7 @@ export function renderFactoryResetPane({ sendPayload, addLog, actions, onBusyCha
         readStatus();
         polling = setInterval(readStatus, 5000);
       } else {
-        status.textContent = 'Disconnected. Waiting to confirm factory reset status.';
+        status.textContent = 'Disconnected. The device may be rebooting automatically.';
       }
       sync();
     },

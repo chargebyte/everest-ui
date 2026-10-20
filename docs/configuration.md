@@ -115,9 +115,10 @@ The following existing consumer semantics remain unchanged:
 | `network_iso_high_level_comms_drivers` | Empty or absent makes the configured driver list empty. |
 | `pcap_max_size_bytes`, `pcap_max_duration_seconds` | Empty, invalid, or non-positive values restore built-in limits; they do not disable limits. |
 | `firmware_reboot_command` | Empty or absent falls back to `reboot`; clearing it does not disable rebooting. |
-| `factory_reset_command` | Empty or absent restores `/usr/sbin/factory-reset --force`; clearing it does not disable reset. |
+| `factory_reset_command` | Empty or absent restores `/usr/sbin/factory-reset --force --reboot`; clearing it does not disable reset. Existing local overrides without `--reboot` must be updated explicitly. |
 | `factory_reset_timeout_seconds` | Empty, absent, invalid, or non-positive restores the 20-second execution timeout. |
 | `factory_reset_require_unplugged` | Only case-insensitive `false` bypasses RPC/EVSE discovery and the Unplugged guard; empty, absent, masked, or invalid enforces it. |
+| `reboot_wait_timeout_seconds` | First valid matching platform override, then base setting, then 30 seconds. Empty/invalid/non-positive values are skipped. The browser fetches this through the API; it is not a frontend setting. Probing continues after the wait period. |
 | `ssh_control_method` | Empty or absent selects `ssh-autostart`; this chooses a control mechanism, not SSH enablement. |
 | `app_title` | Empty or absent restores automatic title lookup, not a blank title. |
 | `allow_origin` | Empty or absent disables the additional configured-origin check; authentication is unchanged. |

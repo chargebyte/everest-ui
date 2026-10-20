@@ -1,8 +1,0 @@
-{
-  "ok": false,
-  "final": true,
-  "requestId": 42,
-  "type": "factory_reset.reboot.error",
-  "parameters": { "error": "not_allowed" },
-  "responseId": "r-1"
-}

@@ -18,6 +18,7 @@ add_executable(everest-ui-api
     modules/SSHConfiguration.cpp
     libs/ConsoleConnector.cpp
     libs/RebootCommand.cpp
+    libs/RebootSettings.cpp
     libs/BackendConfig.cpp
     libs/NetworkInterfaceUtils.cpp
     libs/ResponseBuilder.cpp

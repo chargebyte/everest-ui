@@ -11,6 +11,7 @@ import { renderFactoryResetPane } from '../ui/factoryReset.js';
 export function renderFirmwarePage(container, {
   appTitle,
   parameterCatalog,
+  rebootRecovery,
   sendPayload,
   addLog
 }) {
@@ -54,12 +55,13 @@ export function renderFirmwarePage(container, {
   firmwarePane.disabled = true;
   firmwarePane.appendChild(updateBlock.element);
   const factoryReset = renderFactoryResetPane({
-    sendPayload, addLog,
+    sendPayload, addLog, rebootRecovery,
     actions: parameterCatalog?.modules?.factory_reset?.actions,
     onBusyChange(busy) {
-      firmwarePane.disabled = busy || !firmwareState.connected;
+      firmwarePane.disabled = busy || !firmwareState.connected || rebootRecovery.isActive();
     }
   });
+  updateBlock.setRebootEnabled(rebootRecovery.canStart());
 
   updateBlock.bindUpdate(async () => {
     if (factoryReset.isBusy()) return;
@@ -124,19 +126,9 @@ export function renderFirmwarePage(container, {
       return;
     }
 
-    const rebootRequest = buildRequest(
-      rebootAction.group,
-      rebootAction.action,
-      {}
-    );
-
-    sendFirmwareRequest(
-      sendPayload,
-      addLog,
-      rebootRequest,
-      rebootAction.group,
-      rebootAction.action
-    );
+    if (!rebootRecovery.requestReboot(rebootAction)) {
+      updateBlock.setWarning('Unable to send the reboot request.');
+    }
   });
 
   pageElement.appendChild(firmwarePane);
@@ -293,12 +285,6 @@ export function renderFirmwarePage(container, {
           return;
         }
 
-        if (message.type === 'firmware.reboot.ack' && message.ok === true) {
-          addLog('firmware.reboot.ack received');
-          updateBlock.setProgress('Reboot requested');
-          return;
-        }
-
         if (message.type === 'firmware.read_version.error') {
           const error = message.parameters?.error;
           addLog(`firmware.read_version.error: ${error}`);
@@ -335,10 +321,10 @@ export function renderFirmwarePage(container, {
 
         if (message.type === 'firmware.reboot.error') {
           const error = message.parameters?.error;
-          updateBlock.setWarning('');
+          updateBlock.setWarning('Reboot request was rejected.');
           addLog(`firmware.reboot.error: ${error}`);
           updateBlock.setRebootRequired(true);
-          updateBlock.setProgress('Reboot failed');
+          updateBlock.setProgress('Reboot request rejected');
           return;
         }
 
@@ -377,6 +363,10 @@ export function renderFirmwarePage(container, {
       }
     },
     onRequestTimeout(context) { factoryReset.onRequestTimeout(context); },
+    onRebootAvailabilityChange() {
+      updateBlock.setRebootEnabled(rebootRecovery.canStart());
+      factoryReset.onRebootAvailabilityChange();
+    },
     destroy() { factoryReset.destroy(); }
   };
 }

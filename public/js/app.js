@@ -7,6 +7,7 @@ import { formatAuthError } from './ui/authErrors.js';
 
 import { eyeIcon } from './ui/eyeIcon.js';
 import { createTransport } from './transport.js';
+import { createRebootRecovery, createRebootOverlay, probeAuthStatus } from './ui/rebootRecovery.js';
 import { renderLayout } from './ui/layout.js';
 import { appendLog, state } from './state.js';
 import { setUiLog, bindUiLogResize } from './ui/uiLog.js';
@@ -29,10 +30,37 @@ import { MODULE_IDS } from './protocol/constants.js';
 import { buildRequest } from './protocol/requestBuilder.js';
 
 let disposePasswordReset = () => {};
+let rebootRecovery = null;
+let currentAppContext = null;
+
+function getRebootRecovery() {
+  if (!rebootRecovery) {
+    const render = createRebootOverlay(createAppRoot(), () => rebootRecovery.manualReload());
+    rebootRecovery = createRebootRecovery({
+      sendPayload: (...args) => currentAppContext?.transport?.sendPayload(...args) || { ok: false },
+      closeTransport: () => currentAppContext?.transport?.close(),
+      render,
+      onChange: () => currentAppContext?.state.page?.onRebootAvailabilityChange?.()
+    });
+  }
+  return rebootRecovery;
+}
 
 async function init() {
   const appRoot = createAppRoot();
-  const status = await readAuthStatus();
+  const recovery = getRebootRecovery();
+  if (recovery.resume() === 'waiting') return;
+  let status;
+  try {
+    status = await readAuthStatus();
+  } catch (error) {
+    if (recovery.isActive()) { recovery.retryRecovery(); return; }
+    throw error;
+  }
+  if (recovery.isActive() && !recovery.acceptReturnedStatus(status)) {
+    recovery.retryRecovery();
+    return;
+  }
   const appTitle = normalizeAppTitle(status.appTitle);
   if (status.setupRequired) {
     renderAuthGate(appRoot, 'setup', appTitle);
@@ -53,6 +81,7 @@ async function startAuthenticatedApp(appRoot, appTitle) {
   disposePasswordReset();
   document.title = appTitle;
   const appContext = await initializeApp(appRoot, appTitle);
+  currentAppContext = appContext;
   startAppRuntime(appContext);
 }
 
@@ -79,14 +108,10 @@ function createAppRoot() {
 }
 
 async function readAuthStatus() {
-  const response = await fetch('/auth/status', {
-    cache: 'no-cache',
-    credentials: 'same-origin'
-  });
-  if (!response.ok) {
-    throw new Error(`Auth status failed: HTTP ${response.status}`);
-  }
-  return response.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  try { return await probeAuthStatus(controller.signal); }
+  finally { clearTimeout(timeout); }
 }
 
 function normalizeAppTitle(appTitle) {
@@ -263,6 +288,7 @@ function createAppTransport(appContext) {
     wsPath: '/ws',
     onOpen() {
       state.connection.connected = true;
+      getRebootRecovery().onConnected();
       handlePcapConnectionChange(true);
       const networkRequest = buildRequest(MODULE_IDS.NETWORK, 'read_interfaces', {
         expert_mode: { backend_path: 'expert_mode', value_type: 'boolean', value: state.network.expertMode }
@@ -278,7 +304,9 @@ function createAppTransport(appContext) {
       state.connection.connected = false;
       state.network.interfacesRequestPending = false;
       handlePcapConnectionChange(false);
+      const expectedReboot = getRebootRecovery().onDisconnected();
       appContext.state.page?.onConnectionChange?.(false);
+      if (expectedReboot) return;
       if (event?.reason === 'credentials reset' || event?.reason === 'session expired') {
         appContext.transport?.close();
         init().catch(() => window.location.reload());
@@ -289,6 +317,7 @@ function createAppTransport(appContext) {
       }
     },
     onMessage(message) {
+      if (getRebootRecovery().onMessage(message)) return;
       if (isPcapMessage(message)) {
         handlePcapMessage(message, (logMessage) => addLog(appContext, logMessage));
       }
@@ -314,6 +343,7 @@ function createAppTransport(appContext) {
       appContext.state.page?.onPcapStateChange?.();
     },
     onRequestTimeout({ requestId, moduleAction }) {
+      if (getRebootRecovery().onRequestTimeout({ requestId, moduleAction })) return;
       addLog(appContext, `request timeout: ${moduleAction} (${requestId})`);
       if (handlePcapRequestTimeout(requestId, moduleAction)) {
         appContext.state.page?.onPcapStateChange?.();
@@ -413,6 +443,7 @@ function renderRoute(appContext, route) {
   appContext.state.page = renderPage(appContext.layout.pageOutlet, {
     parameterCatalog: appContext.parameterCatalog,
     appTitle: appContext.appTitle,
+    rebootRecovery: getRebootRecovery(),
     sendPayload(payload) {
       return appContext.transport.sendPayload(payload);
     },

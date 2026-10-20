@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "system.read_reboot_settings.result",
+  "parameters": {
+    "wait_timeout_seconds": 30,
+    "boot_id": "11111111-1111-1111-1111-111111111111"
+  },
+  "responseId": "r-1"
+}

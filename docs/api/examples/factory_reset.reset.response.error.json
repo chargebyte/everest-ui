@@ -3,6 +3,6 @@
   "final": true,
   "requestId": 42,
   "type": "factory_reset.reset.error",
-  "parameters": { "error": "factory_reset_failed", "restart_required": true },
+  "parameters": { "error": "factory_reset_failed" },
   "responseId": "r-2"
 }

@@ -5,6 +5,7 @@
     "setupRequired": true,
     "authenticated": false,
     "uiBusy": false,
+    "bootId": "11111111-1111-1111-1111-111111111111",
     "passwordReset": {
       "available": false,
       "remainingSeconds": 0,

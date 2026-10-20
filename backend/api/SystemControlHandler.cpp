@@ -6,7 +6,7 @@
 #include "BackendConfig.hpp"
 #include "EverestServiceControl.hpp"
 #include "ProtocolSchema.hpp"
-#include "RebootCommand.hpp"
+#include "RebootSettings.hpp"
 #include "RpcApiClient.hpp"
 #include "YamlUtils.hpp"
 #include "modules/EverestConfig.hpp"
@@ -38,10 +38,6 @@ SystemControl::SystemControl(RpcApiClient* rpcApiClient, QObject* parent) :
                     EverestServiceControl::checkEverestStateAllowed(m_rpcApiClient, indices,
                                                                     {QStringLiteral("Unplugged")})
                         .success;
-         },
-         [this]() {
-             const auto command = readBackendConfigValue(QStringLiteral("firmware_reboot_command")).trimmed();
-             runDeferredRebootCommand(this, command.isEmpty() ? QStringLiteral("reboot") : command);
          }},
         this);
     connect(m_factoryReset, &FactoryResetRuntime::responseReady, this, &SystemControl::handleModuleResponse);
@@ -52,8 +48,12 @@ SystemControl::SystemControl(RpcApiClient* rpcApiClient, QObject* parent) :
 }
 
 void SystemControl::enqueueRequest(const ModuleRequest& request) {
+    if (request.group == ModuleGroup::System && request.action == QLatin1String(kActionReadRebootSettings)) {
+        emitResponse(handleSystemRequest(request));
+        return;
+    }
     const bool busy = m_pendingRequest.has_value() || !m_queue.isEmpty() || FirmwareUpdate::runtime().isBusy();
-    const bool factoryBusy = m_factoryReset->isRunning() || m_factoryReset->isRebootPending();
+    const bool factoryBusy = m_factoryReset->isRunning() || m_factoryReset->isRebootExpected();
     if (request.group == ModuleGroup::FactoryReset && (busy || factoryBusy) &&
         request.action == QLatin1String(kActionReadStatus)) {
         emitResponse(m_factoryReset->handleRequest(request, true));
@@ -187,6 +187,9 @@ void SystemControl::startRequest(const ModuleRequest &request) {
 }
 
 ModuleResponse SystemControl::handleSystemRequest(const ModuleRequest &request) const {
+    if (request.action == QLatin1String(kActionReadRebootSettings)) {
+        return {request.requestId, QLatin1String(kGroupSystem), request.action, readRebootSettings(), true, true};
+    }
     if (request.action != QLatin1String(kActionReadAppTitle)) {
         return ModuleResponse{
             .requestId = request.requestId,

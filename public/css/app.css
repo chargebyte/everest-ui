@@ -15,6 +15,29 @@
   --cb-ok: #20b26b;
 }
 
+.reboot-recovery-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(0 0 0 / 45%);
+}
+
+.reboot-recovery-dialog {
+  width: min(100%, 460px);
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  padding: 24px;
+  border-radius: 8px;
+  background: var(--cb-surface);
+  border: 1px solid var(--cb-border);
+}
+
+.reboot-recovery-dialog h2 { margin: 0 0 12px; font-size: 21px; }
+.reboot-recovery-dialog p { margin: 0 0 16px; line-height: 1.5; }
+
 * {
   box-sizing: border-box;
 }

@@ -7,6 +7,7 @@
 #include "AuthManager.hpp"
 #include "RequestParsing.hpp"
 #include "RequestSecurity.hpp"
+#include "BootIdentity.hpp"
 #include "StaticContent.hpp"
 #include "UiOccupancyTracker.hpp"
 
@@ -261,6 +262,7 @@ StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request,
                                             {QStringLiteral("authenticated"),
                                              authenticated},
                                             {QStringLiteral("uiBusy"), uiBusy},
+                                            {QStringLiteral("bootId"), UiRuntime::deviceBootId()},
                                             {QStringLiteral("passwordReset"), m_passwordReset.status(m_authManager->hasUser())},
                                             {QStringLiteral("appTitle"),
                                              m_appTitleResolver

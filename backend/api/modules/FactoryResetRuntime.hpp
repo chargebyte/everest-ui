@@ -19,7 +19,6 @@ public:
         std::function<QString(const QString&)> config;
         std::function<QJsonObject()> effectiveConfig;
         std::function<bool(const QList<int>&)> unplugged;
-        std::function<void()> reboot;
     };
     explicit FactoryResetRuntime(Actions actions, QObject* parent = nullptr);
     ~FactoryResetRuntime() override;
@@ -27,8 +26,8 @@ public:
     bool isRunning() const {
         return m_running;
     }
-    bool isRebootPending() const {
-        return m_rebootPending;
+    bool isRebootExpected() const {
+        return m_rebootExpected;
     }
     static QList<int> resolveEvseIndices(const QJsonObject& configuration);
 
@@ -57,8 +56,7 @@ private:
     bool m_running = false;
     bool m_checking = false;
     bool m_timedOut = false;
-    bool m_rebootAvailable = false;
-    bool m_rebootPending = false;
+    bool m_rebootExpected = false;
     int m_executionTimeoutMs = 20000;
 };
 

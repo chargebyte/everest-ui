@@ -85,7 +85,7 @@ QList<int> FactoryResetRuntime::resolveEvseIndices(const QJsonObject& configurat
 }
 
 bool FactoryResetRuntime::eligible() {
-    if (m_checking || m_rebootPending) {
+    if (m_checking || m_rebootExpected) {
         return false;
     }
     QScopedValueRollback<bool> checking(m_checking, true);
@@ -103,25 +103,14 @@ bool FactoryResetRuntime::eligible() {
 ModuleResponse FactoryResetRuntime::handleRequest(const ModuleRequest& request, bool maintenanceBusy) {
     if (request.action == QLatin1String(kActionReadStatus)) {
         const bool canReset = !m_running && !maintenanceBusy && eligible();
-        return response(
-            request, true,
-            {{"state", m_state},
-             {"can_reset", canReset},
-             {"reboot_available", m_rebootAvailable && !m_running && !maintenanceBusy && !m_rebootPending}});
+        return response(request, true,
+                        {{"state", m_state}, {"can_reset", canReset}, {"reboot_expected", m_rebootExpected}});
     }
-    if (request.action != QLatin1String(kActionReset) && request.action != QLatin1String(kActionReboot)) {
+    if (request.action != QLatin1String(kActionReset)) {
         return response(request, false, {{"error", "unsupported_action"}});
     }
-    if (m_running || maintenanceBusy || m_rebootPending) {
+    if (m_running || maintenanceBusy || m_rebootExpected) {
         return response(request, false, {{"error", "factory_reset_busy"}});
-    }
-    if (request.action == QLatin1String(kActionReboot)) {
-        if (!m_rebootAvailable) {
-            return response(request, false, {{"error", "not_allowed"}});
-        }
-        m_rebootPending = true;
-        m_actions.reboot();
-        return response(request, true, {});
     }
     if (request.parameters.value(QStringLiteral("confirm")) != QJsonValue(true)) {
         return response(request, false, {{"error", "factory_reset_confirmation_required"}});
@@ -142,7 +131,7 @@ void FactoryResetRuntime::start() {
     }
     m_command = m_actions.config(QStringLiteral("factory_reset_command")).trimmed();
     if (m_command.isEmpty()) {
-        m_command = QStringLiteral("/usr/sbin/factory-reset --force");
+        m_command = QStringLiteral("/usr/sbin/factory-reset --force --reboot");
     }
     const auto timeout = m_actions.config(QStringLiteral("factory_reset_timeout_seconds")).trimmed();
     bool valid = false;
@@ -156,7 +145,7 @@ void FactoryResetRuntime::start() {
     m_timedOut = false;
     m_stdout.clear();
     m_stderr.clear();
-    m_rebootAvailable = false;
+    m_rebootExpected = false;
     const auto command = ConsoleConnector::parseCommand(m_command);
     qInfo() << "Factory reset starting: command=" << m_command << "timeout_ms=" << m_executionTimeoutMs;
     if (command.program.isEmpty()) {
@@ -193,8 +182,8 @@ void FactoryResetRuntime::finish(bool success, bool attempted) {
     m_running = false;
     if (attempted) {
         drainOutput();
-        m_state = success ? QStringLiteral("succeeded") : QStringLiteral("failed");
-        m_rebootAvailable = true;
+        m_state = success ? QStringLiteral("rebooting") : QStringLiteral("failed");
+        m_rebootExpected = success;
         qInfo() << "Factory reset finished: command=" << m_command << "success=" << success
                 << "timed_out=" << m_timedOut << "exit_code=" << m_process.exitCode()
                 << "process_error=" << m_process.errorString() << "stdout_tail=" << m_stdout
@@ -204,8 +193,8 @@ void FactoryResetRuntime::finish(bool success, bool attempted) {
         qWarning() << "Factory reset rejected by Unplugged safety policy";
     }
     QJsonObject parameters;
-    if (attempted) {
-        parameters.insert(QStringLiteral("restart_required"), true);
+    if (success) {
+        parameters.insert(QStringLiteral("reboot_expected"), true);
     }
     if (!success) {
         parameters.insert(QStringLiteral("error"), attempted ? QStringLiteral("factory_reset_failed")

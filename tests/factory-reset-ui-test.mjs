@@ -29,9 +29,17 @@ function fixture(t, confirmation = true) {
   const sent = [];
   const busy = [];
   let confirmations = 0;
+  let expectedReboots = 0;
+  const recovery = {
+    ready: true,
+    canStart() { return this.ready; },
+    requestFactoryReset(request) { sent.push(request); return { ok: true }; },
+    expectFactoryReboot() { expectedReboots++; }
+  };
   const pane = renderFactoryResetPane({
     sendPayload(request) { sent.push(request); return { ok: true }; },
     addLog() {},
+    rebootRecovery: recovery,
     confirm() { confirmations++; return confirmation; },
     onBusyChange(value) { busy.push(value); }
   });
@@ -43,13 +51,14 @@ function fixture(t, confirmation = true) {
     pane.onMessage({ requestId: request.requestId, type: `factory_reset.${request.action}.${ok ?
       Object.keys(parameters).length ? 'result' : 'ack' : 'error'}`, parameters, ok, final });
   }
-  function statusReply(state = 'idle', canReset = true, rebootAvailable = false) {
+  function statusReply(state = 'idle', canReset = true, rebootExpected = false) {
     const request = sent.findLast(item => item.action === 'read_status');
-    reply(request, { state, can_reset: canReset, reboot_available: rebootAvailable });
+    reply(request, { state, can_reset: canReset, reboot_expected: rebootExpected });
   }
   pane.onConnectionChange(true);
   statusReply();
-  return { pane, sent, busy, reset, reboot, status, reply, statusReply, confirmations: () => confirmations };
+  return { pane, sent, busy, reset, reboot, status, reply, statusReply, recovery,
+    expectedReboots: () => expectedReboots, confirmations: () => confirmations };
 }
 
 test('confirmation cancellation sends no destructive request', (t) => {
@@ -58,10 +67,10 @@ test('confirmation cancellation sends no destructive request', (t) => {
   assert.equal(f.confirmations(), 1);
   assert.deepEqual(f.sent.map(item => item.action), ['read_status']);
   assert.equal(f.reset.disabled, false);
-  assert.equal(f.reboot.disabled, true);
+  assert.equal(f.reboot, undefined);
 });
 
-test('confirmed reset locks controls until final outcome and offers reboot on both outcomes', (t) => {
+test('confirmed reset expects automatic reboot only on success and never renders a reboot button', (t) => {
   for (const success of [true, false]) {
     const f = fixture(t);
     f.reset.click();
@@ -69,22 +78,24 @@ test('confirmed reset locks controls until final outcome and offers reboot on bo
     assert.equal(request.group, 'factory_reset');
     assert.deepEqual(request.parameters, { confirm: true });
     assert.equal(f.reset.disabled, true);
-    assert.equal(f.reboot.disabled, true);
+    assert.equal(f.reboot, undefined);
     assert.equal(f.pane.isBusy(), true);
     f.reply(request, {}, true, false);
     assert.equal(f.pane.isBusy(), true);
     assert.equal(f.reset.disabled, true);
-    f.reply(request, success ? { restart_required: true } :
-      { error: 'factory_reset_failed', restart_required: true }, success);
-    assert.equal(f.reboot.disabled, false);
+    f.reply(request, success ? { reboot_expected: true } : { error: 'factory_reset_failed' }, success);
     assert.match(f.status.textContent, success ? /completed/ : /failed/);
-    f.statusReply(success ? 'succeeded' : 'failed', true, true);
-    f.reboot.click();
-    assert.equal(f.sent.at(-1).action, 'reboot');
-    f.reply(f.sent.at(-1), {});
-    assert.equal(f.reset.disabled, true);
-    assert.equal(f.reboot.disabled, true);
-    assert.equal(f.status.textContent, 'Reboot requested.');
+    if (success) {
+      assert.equal(f.reset.disabled, true);
+      assert.ok(f.expectedReboots() > 0);
+      assert.match(f.status.textContent, /rebooting automatically/);
+    } else {
+      f.statusReply('failed', true, false);
+      assert.equal(f.reset.disabled, false);
+      assert.match(f.status.textContent, /may not reboot automatically/);
+      assert.equal(f.expectedReboots(), 0);
+    }
+    assert.equal(f.sent.filter(item => item.action === 'reboot').length, 0);
   }
 });
 
@@ -94,6 +105,10 @@ test('backend eligibility and other maintenance prevent action', (t) => {
   f.reset.click();
   assert.equal(f.confirmations(), 0);
   f.pane.setMaintenanceBusy(false);
+  f.recovery.ready = false;
+  f.pane.onRebootAvailabilityChange();
+  assert.equal(f.reset.disabled, true);
+  f.recovery.ready = true;
   f.pane.onConnectionChange(false);
   assert.equal(f.reset.disabled, true);
   f.pane.onConnectionChange(true);
@@ -111,9 +126,10 @@ test('reconnection recovers a running operation and its completed outcome withou
   assert.equal(f.pane.isBusy(), true);
   f.pane.onConnectionChange(false);
   f.pane.onConnectionChange(true);
-  f.statusReply('failed', false, true);
+  f.statusReply('failed', true, false);
   assert.equal(f.pane.isBusy(), false);
-  assert.equal(f.reboot.disabled, false);
+  assert.equal(f.reboot, undefined);
+  assert.equal(f.reset.disabled, false);
   assert.equal(f.sent.filter(item => item.action === 'reset').length, 1);
 });
 
@@ -124,17 +140,18 @@ test('transport timeout with string request ID locks until an authoritative stat
   f.pane.onRequestTimeout({ requestId: String(request.requestId), moduleAction: 'factory_reset:reset' });
   assert.equal(f.reset.disabled, true);
   assert.equal(f.sent.at(-1).action, 'read_status');
-  f.reply(request, { restart_required: true }); // Late transport replies cannot unlock this operation.
+  f.reply(request, { reboot_expected: true }); // Late transport replies cannot unlock this operation.
   assert.equal(f.reset.disabled, true);
-  f.statusReply('succeeded', false, true);
-  assert.equal(f.reboot.disabled, false);
+  f.statusReply('rebooting', false, true);
+  assert.equal(f.reset.disabled, true);
+  assert.ok(f.expectedReboots() > 0);
 });
 
 test('rejection before command execution does not offer reboot', (t) => {
   const f = fixture(t);
   f.reset.click();
   f.reply(f.sent.at(-1), { error: 'factory_reset_not_allowed' }, false);
-  assert.equal(f.reboot.disabled, true);
+  assert.equal(f.reboot, undefined);
   f.statusReply('idle', false, false);
-  assert.equal(f.reboot.disabled, true);
+  assert.equal(f.reboot, undefined);
 });

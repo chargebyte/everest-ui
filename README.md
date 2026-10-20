@@ -173,18 +173,47 @@ The optional `available_features` entry in `backend.conf` is a comma-separated l
 If it is omitted, all features are enabled. The Network Configuration page is enabled when `network` is
 listed; for example, `available_features=network`. Other feature names are reserved for future use.
 
+## Reboot Recovery
+
+Reboot requests are sent once, without waiting for an API acknowledgement: the API is terminated by
+the reboot as well. A blocking overlay shows progress and automatically checks for the device's return.
+After a new Linux boot is confirmed, the UI reloads to login. Factory reset may instead require initial
+user setup if it removes the stored credentials. No reset or reboot command is automatically repeated.
+
+The backend supplies the wait period through `system.read_reboot_settings`, not `frontend.conf`:
+
+```ini
+reboot_wait_timeout_seconds=30
+# Example for a slower platform:
+reboot_wait_timeout_seconds.chargebyte,imx6ull-tarragon-master=120
+```
+
+Compatible strings come from `/proc/device-tree/compatible`; the first valid matching override wins,
+then the base setting, then the 30-second fallback. After this period, the overlay offers **Reload**
+while automatic checks continue. Clicking Reload clears the recovery context and reloads manually.
+Ordinary refreshes during recovery preserve it in session storage. When recovery is confirmed, a
+temporary authentication-service failure after automatic reload resumes the checks rather than showing
+an offline page. If browser storage is unavailable, recovery can only survive within the current page.
+
+Recovery probes `/auth/status` every two seconds with a three-second request limit. It requires a
+changed `bootId` and a valid unauthenticated status response; a live proxy or static page is not proof
+of reboot. A generic webserver/proxy must forward `/auth/*` and `/ws` to the device and must not cache
+authentication responses. Missing boot identity prevents automatic confirmation; manual reload remains
+available. Command failures reported before disconnection are displayed rather than treated as reboot.
+
 ## Factory Reset
 
 The Firmware Update page includes a separate Factory Reset pane. Confirming **Factory Reset** starts
 the backend command; cancelling the confirmation sends nothing. Maintenance controls stay disabled
-until the backend reports a final outcome. The pane offers its own **Reboot** button after either
-success or command failure. Reset and reboot are never retried automatically.
+while reset and reboot are pending. Successful reset reboots automatically; the pane has no Reboot
+button. Cancelling the initial confirmation has no effect. A reported failure shows a generic error
+without promising a reboot and allows retry only when the backend reports that reset is eligible.
 
 Distribution defaults and local `backend.conf` overrides support:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `factory_reset_command` | `/usr/sbin/factory-reset --force` | Executable and arguments, parsed without an implicit shell. |
+| `factory_reset_command` | `/usr/sbin/factory-reset --force --reboot` | Executable and arguments, parsed without an implicit shell; the tool reboots on success. |
 | `factory_reset_timeout_seconds` | `20` | Positive execution timeout, starting when the process starts. |
 | `factory_reset_require_unplugged` | `true` | Require every configured EVSE to report exactly `Unplugged` over RpcApi. |
 
@@ -195,15 +224,19 @@ Setting `factory_reset_require_unplugged=false` skips RPC and EVSE/config discov
 masked, or invalid safety settings enforce the guard; only case-insensitive `false` disables it.
 
 The configured tool owns what is restored; the UI does not implement file deletion itself or stop
-EVerest separately. The tool must return without rebooting, stopping the UI services, or severing
-connectivity, otherwise a final response cannot be guaranteed. A timeout requests termination, then
+EVerest separately. A reboot may terminate the API before it can send a final response; disconnection
+after a confirmed reset starts reboot recovery, not a reset retry or an assertion of success.
+A timeout while the command is still running requests termination, then
 forces termination if needed; partial reset changes are not rolled back. Child processes managed by
 the tool must also stop when it is terminated. Process details stay in the backend journal; the GUI
-receives only generic failure. The reboot action shares `firmware_reboot_command` (default `reboot`).
+receives only generic failure. The Controller Firmware Reboot button continues to use
+`firmware_reboot_command` (default `reboot`), independently of the reset tool's automatic reboot.
 
-Browser disconnects do not cancel reset. On reconnect, the pane reloads backend status rather than
-repeating the operation. State and reboot eligibility last for the API process lifetime, not across
-API restarts. See [Factory Reset API](docs/api/API.md#factory-reset) for wire messages and examples.
+Browser disconnects do not cancel reset. A successful command response reports `reboot_expected`,
+not reboot completion. Backend operation state lasts only for the API process lifetime; browser recovery
+uses the Linux boot ID instead. See [Factory Reset API](docs/api/API.md#factory-reset) for wire messages.
+Existing local command overrides remain authoritative: update an override without `--reboot` to opt
+into the new default behavior, otherwise automatic reboot may never occur.
 
 ## SSH Configuration
 

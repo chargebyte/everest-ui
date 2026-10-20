@@ -3,6 +3,6 @@
   "final": true,
   "requestId": 42,
   "type": "factory_reset.reset.result",
-  "parameters": { "restart_required": true },
+  "parameters": { "reboot_expected": true },
   "responseId": "r-2"
 }

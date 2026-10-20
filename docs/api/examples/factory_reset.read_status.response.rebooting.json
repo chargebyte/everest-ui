@@ -3,6 +3,6 @@
   "final": true,
   "requestId": 42,
   "type": "factory_reset.read_status.result",
-  "parameters": { "state": "succeeded", "can_reset": true, "reboot_available": true },
+  "parameters": { "state": "rebooting", "can_reset": false, "reboot_expected": true },
   "responseId": "r-1"
 }
