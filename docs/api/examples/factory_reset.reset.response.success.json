@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "factory_reset.reset.result",
+  "parameters": { "restart_required": true },
+  "responseId": "r-2"
+}

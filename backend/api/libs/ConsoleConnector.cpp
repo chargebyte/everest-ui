@@ -175,6 +175,10 @@ ConsoleConnector::CommandSpec ConsoleConnector::renderTemplate(
     for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
         command.replace(it.key(), it.value());
     }
+    return parseCommand(command);
+}
+
+ConsoleConnector::CommandSpec ConsoleConnector::parseCommand(const QString &command) {
     const QStringList parts = splitCommandCompat(command);
     if (parts.isEmpty()) {
         return {};

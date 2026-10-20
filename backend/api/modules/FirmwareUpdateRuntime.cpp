@@ -3,6 +3,7 @@
 // Copyright 2026 chargebyte GmbH
 
 #include "FirmwareUpdateRuntime.hpp"
+#include "RebootCommand.hpp"
 
 #include "FirmwareUpdate.hpp"
 #include "ProtocolSchema.hpp"
@@ -117,7 +118,7 @@ ModuleResponse FirmwareUpdateRuntime::handleRebootRequest(const ModuleRequest &r
         .final = true,
     };
 
-    if (m_updateRunning || m_uploadRunning || !m_rebootRequired) {
+    if (isBusy() || !m_rebootRequired) {
         response.parameters = QJsonObject{
             {QLatin1String(kError), QString::fromLatin1(kFirmwareRebootNotAllowed)},
         };
@@ -125,11 +126,10 @@ ModuleResponse FirmwareUpdateRuntime::handleRebootRequest(const ModuleRequest &r
     }
 
     const QString rebootCommand =
-        FirmwareUpdate::loadBackendConfigValue(QString::fromLatin1(kFirmwareRebootCommandConfigKey))
-            .trimmed();
+        FirmwareUpdate::loadBackendConfigValue(QString::fromLatin1(kFirmwareRebootCommandConfigKey)).trimmed();
     m_rebootRequired = false;
-    runDeferredRebootCommand(rebootCommand.isEmpty() ? QString::fromLatin1(kActionReboot)
-                                                     : rebootCommand);
+    m_rebootPending = true;
+    runDeferredRebootCommand(this, rebootCommand.isEmpty() ? QString::fromLatin1(kActionReboot) : rebootCommand);
     response.success = true;
     return response;
 }
@@ -525,21 +525,6 @@ void FirmwareUpdateRuntime::handleStreamingFinished(const ConsoleConnector::RunR
     m_ackSent = false;
     m_successSeen = false;
     m_failureSeen = false;
-}
-
-void FirmwareUpdateRuntime::runDeferredRebootCommand(const QString &command) {
-    QTimer::singleShot(0, this, [command]() {
-        ConsoleConnector console;
-        ConsoleConnector::ExecOptions options;
-        options.syncTimeoutMs = 5000;
-        const ConsoleConnector::RunResult result =
-            console.executeTemplate(command, {}, options, ConsoleConnector::ExecMode::Sync);
-
-        if (result.exitCode != 0) {
-            qWarning() << "Firmware reboot command failed with exit code" << result.exitCode
-                       << "stderr:" << result.stderrData;
-        }
-    });
 }
 
 void FirmwareUpdateRuntime::resetUploadState() {

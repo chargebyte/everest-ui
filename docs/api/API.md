@@ -150,6 +150,7 @@ Malformed JSON returns `request.parse.error` with `{"error":"invalid_json"}`. A 
 | `safety` | `read_settings`, `write_settings` |
 | `ocpp` | `read_settings`, `write_settings` |
 | `firmware` | `read_version`, `upload_image.start`, `upload_image.chunk`, `upload_image.finish`, `update_image`, `reboot` |
+| `factory_reset` | `read_status`, `reset`, `reboot` |
 | `system_logs` | `read`, `download`, `extract` |
 | `network` | `read_interfaces`, `read_settings`, `write_settings`, `reset_settings`, `cancel_reset_settings`, `apply` |
 | `ssh` | `read`, `enable`, `disable`, `set_password` |
@@ -221,6 +222,77 @@ With `systemd`, enable prefers `sshd.socket`, falling back to `sshd.service` if 
 
 The target must provide the selected control method's dependencies (`/usr/sbin/ssh-autostart`, or systemd system-bus access and `pkill`) and `chpasswd` for password changes. The backend needs the corresponding operating-system permissions, including permission to change the root password. Web UI authentication does not grant these OS permissions.
 
+### Factory Reset
+
+Factory reset is a separate maintenance operation, initially hosted on the Firmware Update page.
+It uses the normal authenticated WebSocket and response ACK protocol, not an HTTP endpoint.
+The pane can be mounted independently and has its own reboot control.
+
+| Action | Request parameters | Responses |
+| --- | --- | --- |
+| `read_status` | `{}` | Final result with `state`, `can_reset`, and `reboot_available`. Allowed during reset. |
+| `reset` | `{"confirm":true}` | Initial and two-second non-final `.ack` messages, then one final `.result` or `.error`. |
+| `reboot` | `{}` | Final `.ack` when reboot is scheduled, or `.error` if disallowed/busy. |
+
+`state` is `idle`, `running`, `succeeded`, or `failed`. `running` includes pre-execution safety checks.
+`can_reset` is boolean eligibility at the time of reading, not a reservation: execution rechecks it.
+`reboot_available` becomes true after any completed command attempt, including failure to start, crash,
+nonzero exit, or timeout. It is false during reset, competing maintenance, and after reboot is scheduled.
+The backend rejects requests that would wait behind another operation with `factory_reset_busy` rather
+than queueing reset/reboot. During reset, other system-control requests are rejected with the same error;
+reset status reads remain available. Firmware uploads also exclude reset even between upload requests.
+
+A normal command exit with code `0` produces `factory_reset.reset.result` with
+`{"restart_required":true}`. Every command-attempt failure produces `factory_reset.reset.error` with
+`{"error":"factory_reset_failed","restart_required":true}`. Output, exit codes, and failure causes
+are not transmitted; consult the backend journal. There is no rollback of partial changes.
+
+| Error | Meaning |
+| --- | --- |
+| `factory_reset_confirmation_required` | `confirm` is absent or not boolean `true`; no execution. |
+| `factory_reset_busy` | A conflicting maintenance request is active or reboot is pending; no new reset execution. |
+| `factory_reset_not_allowed` | Pre-execution safety policy failed; no command attempt and no new reboot eligibility. |
+| `factory_reset_failed` | Command attempt completed unsuccessfully; reboot is offered. |
+| `not_allowed` | Factory-reset reboot requested before any completed attempt. |
+| `unsupported_action` | Unknown action in the factory-reset group. |
+
+The guard defaults to requiring all configured `EvseManager` instances to resolve to EVSE indices and
+report exactly `Unplugged`. A single instance with no mapping falls back to index `1`; an incomplete
+multi-EVSE mapping, absent RPC/configuration, or unreadable state fails closed. The guard is independent
+of `everest_restart_allowed_states`. With `factory_reset_require_unplugged=false`, the backend skips
+EVSE/config discovery and RPC entirely; this explicitly permits resetting during charging.
+
+`factory_reset_command` defaults to `/usr/sbin/factory-reset --force` and is executed without an implicit
+shell. `factory_reset_timeout_seconds` defaults to `20`, measured from successful startup; startup has
+a separate two-second budget. Timeout sends termination, escalating to kill after one second, and the
+backend waits for process exit before the final response. The tool is responsible for its descendants.
+The command must return without rebooting or terminating the UI. Reset itself does not stop EVerest.
+Both reboot controls use `firmware_reboot_command` and its `reboot` fallback; the factory-reset reboot
+does not require an installed firmware update. Reboot acknowledgement means scheduled, not reboot completed.
+See [configuration and deployment caveats](../../README.md#factory-reset).
+
+Clients must wait for `final:true`; keepalives are not completion. Do not automatically retry after
+disconnect or request timeout: query `read_status`. The operation continues without its browser;
+state is retained for the backend process lifetime only, and cannot prove an outcome after an API restart.
+Closing/cancelling the frontend confirmation makes no API call. The frontend disables maintenance
+controls while waiting and polls status every five seconds while the pane is mounted and connected.
+
+Examples: [status request](examples/factory_reset.read_status.request.json),
+[idle](examples/factory_reset.read_status.response.idle.json),
+[running](examples/factory_reset.read_status.response.running.json),
+[succeeded](examples/factory_reset.read_status.response.succeeded.json),
+[failed](examples/factory_reset.read_status.response.failed.json),
+[confirmed reset](examples/factory_reset.reset.request.json),
+[keepalive](examples/factory_reset.reset.response.ack.json),
+[success](examples/factory_reset.reset.response.success.json),
+[command failure](examples/factory_reset.reset.response.error.json),
+[missing confirmation](examples/factory_reset.reset.response.confirmation_required.json),
+[safety rejection](examples/factory_reset.reset.response.not_allowed.json),
+[busy rejection](examples/factory_reset.reset.response.busy.json),
+[reboot request](examples/factory_reset.reboot.request.json),
+[reboot acknowledgement](examples/factory_reset.reboot.response.ack.json),
+and [reboot rejection](examples/factory_reset.reboot.response.error.json).
+
 ### EVerest configuration
 
 Read and write use nested module/parameter objects:
@@ -255,6 +327,9 @@ WebSocket template filenames use `<group>.<action>.request.json`, `<group>.<acti
 | `firmware.upload_image.finish` | [request](examples/firmware.upload_image.finish.request.json) | [response](examples/firmware.upload_image.finish.response.success.json) | [response](examples/firmware.upload_image.finish.response.error.json) |
 | `firmware.update_image` | [request](examples/firmware.update_image.request.json) | [final response](examples/firmware.update_image.response.success.json), [progress](examples/firmware.update_image.response.progress.json) | [response](examples/firmware.update_image.response.error.json) |
 | `firmware.reboot` | [request](examples/firmware.reboot.request.json) | [response](examples/firmware.reboot.response.success.json) | [response](examples/firmware.reboot.response.error.json) |
+| `factory_reset.read_status` | [request](examples/factory_reset.read_status.request.json) | [idle](examples/factory_reset.read_status.response.idle.json), [running](examples/factory_reset.read_status.response.running.json), [succeeded](examples/factory_reset.read_status.response.succeeded.json), [failed](examples/factory_reset.read_status.response.failed.json) | See [Factory Reset](#factory-reset). |
+| `factory_reset.reset` | [request](examples/factory_reset.reset.request.json) | [acknowledgement](examples/factory_reset.reset.response.ack.json), [result](examples/factory_reset.reset.response.success.json) | [command failure](examples/factory_reset.reset.response.error.json), [confirmation](examples/factory_reset.reset.response.confirmation_required.json), [safety policy](examples/factory_reset.reset.response.not_allowed.json), [busy](examples/factory_reset.reset.response.busy.json) |
+| `factory_reset.reboot` | [request](examples/factory_reset.reboot.request.json) | [acknowledgement](examples/factory_reset.reboot.response.ack.json) | [not allowed](examples/factory_reset.reboot.response.error.json) |
 | `system_logs.read` | [request](examples/system_logs.read.request.json) | [response](examples/system_logs.read.response.success.json) | [response](examples/system_logs.read.response.error.json) |
 | `system_logs.download` | [request](examples/system_logs.download.request.json) | [response](examples/system_logs.download.response.success.json) | [response](examples/system_logs.download.response.error.json) |
 | `system_logs.extract` | [request](examples/system_logs.extract.request.json) | [response](examples/system_logs.extract.response.success.json) | [response](examples/system_logs.extract.response.error.json) |

@@ -12,10 +12,12 @@ add_executable(everest-ui-api
     modules/OCPPConfig.cpp
     modules/FirmwareUpdate.cpp
     modules/FirmwareUpdateRuntime.cpp
+    modules/FactoryResetRuntime.cpp
     modules/SystemLogs.cpp
     modules/NetworkConfiguration.cpp
     modules/SSHConfiguration.cpp
     libs/ConsoleConnector.cpp
+    libs/RebootCommand.cpp
     libs/BackendConfig.cpp
     libs/NetworkInterfaceUtils.cpp
     libs/ResponseBuilder.cpp

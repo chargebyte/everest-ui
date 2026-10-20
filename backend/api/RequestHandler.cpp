@@ -135,6 +135,7 @@ void RequestHandler::handleTextMessage(const QString &message) {
     case ModuleGroup::Network:
     case ModuleGroup::SSHConfiguration:
     case ModuleGroup::System:
+    case ModuleGroup::FactoryReset:
     case ModuleGroup::Unknown:
         emit systemControlEnqueueRequested(routedRequest);
         return;
@@ -373,6 +374,9 @@ ModuleRequest RequestHandler::toModuleRequest(const QJsonObject &obj) {
 }
 
 ModuleGroup RequestHandler::toModuleGroup(const QString &group) {
+    if (group == QLatin1String(kGroupFactoryReset)) {
+        return ModuleGroup::FactoryReset;
+    }
     if (group == QLatin1String(kGroupPcap)) {
         return ModuleGroup::PCAP;
     }

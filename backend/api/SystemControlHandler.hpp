@@ -43,6 +43,7 @@ private:
     ModuleGroup toModuleGroup(const QString &group) const;
 
     class RpcApiClient *m_rpcApiClient = nullptr;
+    class FactoryResetRuntime *m_factoryReset = nullptr;
     QQueue<ModuleRequest> m_queue;
     std::optional<ModuleRequest> m_pendingRequest;
     QTimer m_safetyWriteKeepAliveTimer;

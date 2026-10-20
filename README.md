@@ -173,6 +173,38 @@ The optional `available_features` entry in `backend.conf` is a comma-separated l
 If it is omitted, all features are enabled. The Network Configuration page is enabled when `network` is
 listed; for example, `available_features=network`. Other feature names are reserved for future use.
 
+## Factory Reset
+
+The Firmware Update page includes a separate Factory Reset pane. Confirming **Factory Reset** starts
+the backend command; cancelling the confirmation sends nothing. Maintenance controls stay disabled
+until the backend reports a final outcome. The pane offers its own **Reboot** button after either
+success or command failure. Reset and reboot are never retried automatically.
+
+Distribution defaults and local `backend.conf` overrides support:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `factory_reset_command` | `/usr/sbin/factory-reset --force` | Executable and arguments, parsed without an implicit shell. |
+| `factory_reset_timeout_seconds` | `20` | Positive execution timeout, starting when the process starts. |
+| `factory_reset_require_unplugged` | `true` | Require every configured EVSE to report exactly `Unplugged` over RpcApi. |
+
+With the safety guard enabled, missing RpcApi, unknown EVSE mappings, missing EVerest configuration,
+or an unreadable EVSE state block reset. The single-EVSE mapping fallback is index `1`.
+Setting `factory_reset_require_unplugged=false` skips RPC and EVSE/config discovery entirely.
+**This explicitly permits reset during charging and is a deployment safety decision.** Empty, missing,
+masked, or invalid safety settings enforce the guard; only case-insensitive `false` disables it.
+
+The configured tool owns what is restored; the UI does not implement file deletion itself or stop
+EVerest separately. The tool must return without rebooting, stopping the UI services, or severing
+connectivity, otherwise a final response cannot be guaranteed. A timeout requests termination, then
+forces termination if needed; partial reset changes are not rolled back. Child processes managed by
+the tool must also stop when it is terminated. Process details stay in the backend journal; the GUI
+receives only generic failure. The reboot action shares `firmware_reboot_command` (default `reboot`).
+
+Browser disconnects do not cancel reset. On reconnect, the pane reloads backend status rather than
+repeating the operation. State and reboot eligibility last for the API process lifetime, not across
+API restarts. See [Factory Reset API](docs/api/API.md#factory-reset) for wire messages and examples.
+
 ## SSH Configuration
 
 The SSH Configuration page enables or disables SSH and changes the Linux **root account password**.

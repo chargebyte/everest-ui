@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "final": false,
+  "requestId": 42,
+  "type": "factory_reset.reset.ack",
+  "parameters": {},
+  "responseId": "r-1"
+}

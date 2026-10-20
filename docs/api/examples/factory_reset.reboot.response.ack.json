@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "factory_reset.reboot.ack",
+  "parameters": {},
+  "responseId": "r-1"
+}

@@ -368,6 +368,14 @@
         ]
       }
     },
+    "factory_reset": {
+      "title": "Factory Reset",
+      "actions": {
+        "read_status": { "group": "factory_reset", "action": "read_status", "parameters_mode": "empty" },
+        "reset": { "group": "factory_reset", "action": "reset", "parameters_mode": "raw_object" },
+        "reboot": { "group": "factory_reset", "action": "reboot", "parameters_mode": "empty" }
+      }
+    },
     "system_logs": {
       "title": "System Logs",
       "actions": {

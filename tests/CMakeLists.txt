@@ -1,5 +1,11 @@
 find_package(${QT_PACKAGE_NAME} REQUIRED COMPONENTS Test)
 
+add_executable(factory_reset_test FactoryResetTest.cpp
+    ../backend/api/modules/FactoryResetRuntime.cpp ../backend/api/libs/ConsoleConnector.cpp)
+target_include_directories(factory_reset_test PRIVATE ../backend/api ../backend/api/modules ../backend/api/libs)
+target_link_libraries(factory_reset_test PRIVATE ${QT_PACKAGE_NAME}::Core ${QT_PACKAGE_NAME}::Test)
+add_test(NAME factory_reset_test COMMAND factory_reset_test)
+
 add_executable(layered_config_test
     LayeredConfigTest.cpp
     ../backend/webserver/config/ServerConfig.cpp

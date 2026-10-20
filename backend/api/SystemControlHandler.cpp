@@ -2,17 +2,22 @@
 
 // Copyright 2026 chargebyte GmbH
 
+#include "SystemControlHandler.hpp"
+#include "BackendConfig.hpp"
+#include "EverestServiceControl.hpp"
+#include "ProtocolSchema.hpp"
+#include "RebootCommand.hpp"
+#include "RpcApiClient.hpp"
+#include "YamlUtils.hpp"
 #include "modules/EverestConfig.hpp"
+#include "modules/FactoryResetRuntime.hpp"
 #include "modules/FirmwareUpdate.hpp"
 #include "modules/FirmwareUpdateRuntime.hpp"
-#include "modules/SystemLogs.hpp"
-#include "modules/OCPPConfig.hpp"
-#include "modules/SafetyController.hpp"
 #include "modules/NetworkConfiguration.hpp"
+#include "modules/OCPPConfig.hpp"
 #include "modules/SSHConfiguration.hpp"
-#include "RpcApiClient.hpp"
-#include "SystemControlHandler.hpp"
-#include "ProtocolSchema.hpp"
+#include "modules/SafetyController.hpp"
+#include "modules/SystemLogs.hpp"
 
 #include "ResponseBuilder.hpp"
 
@@ -20,21 +25,56 @@
 
 #include <stdexcept>
 
-SystemControl::SystemControl(RpcApiClient *rpcApiClient, QObject *parent)
-    : QObject(parent),
-      m_rpcApiClient(rpcApiClient) {
+SystemControl::SystemControl(RpcApiClient* rpcApiClient, QObject* parent) :
+    QObject(parent), m_rpcApiClient(rpcApiClient) {
     EverestConfig::setRpcApiClient(rpcApiClient);
     SafetyController::setRpcApiClient(rpcApiClient);
     OCPPConfig::setRpcApiClient(rpcApiClient);
+    m_factoryReset = new FactoryResetRuntime(
+        {[](const QString& key) { return readBackendConfigValue(key); },
+         []() { return loadEffectiveEverestConfig().yamlRoot; },
+         [this](const QList<int>& indices) {
+             return m_rpcApiClient && m_rpcApiClient->isReady() &&
+                    EverestServiceControl::checkEverestStateAllowed(m_rpcApiClient, indices,
+                                                                    {QStringLiteral("Unplugged")})
+                        .success;
+         },
+         [this]() {
+             const auto command = readBackendConfigValue(QStringLiteral("firmware_reboot_command")).trimmed();
+             runDeferredRebootCommand(this, command.isEmpty() ? QStringLiteral("reboot") : command);
+         }},
+        this);
+    connect(m_factoryReset, &FactoryResetRuntime::responseReady, this, &SystemControl::handleModuleResponse);
     connect(&FirmwareUpdate::runtime(), &FirmwareUpdateRuntime::responseReady, this,
             &SystemControl::handleAsyncFirmwareResponse);
     m_safetyWriteKeepAliveTimer.setInterval(10000);
     connect(&m_safetyWriteKeepAliveTimer, &QTimer::timeout, this, &SystemControl::handleSafetyWriteKeepAlive);
 }
 
-void SystemControl::enqueueRequest(const ModuleRequest &request) {
-    if (request.group == ModuleGroup::SafetyController &&
-        request.action == QLatin1String(kActionReadSettings) && m_safetyWriteInProgress) {
+void SystemControl::enqueueRequest(const ModuleRequest& request) {
+    const bool busy = m_pendingRequest.has_value() || !m_queue.isEmpty() || FirmwareUpdate::runtime().isBusy();
+    const bool factoryBusy = m_factoryReset->isRunning() || m_factoryReset->isRebootPending();
+    if (request.group == ModuleGroup::FactoryReset && (busy || factoryBusy) &&
+        request.action == QLatin1String(kActionReadStatus)) {
+        emitResponse(m_factoryReset->handleRequest(request, true));
+        return;
+    }
+    if (factoryBusy || (request.group == ModuleGroup::FactoryReset && busy)) {
+        for (const auto* group : {kGroupEverest, kGroupSafety, kGroupOcpp, kGroupFirmware, kGroupSystemLogs,
+                                  kGroupNetwork, kGroupSSH, kGroupSystem, kGroupFactoryReset}) {
+            if (toModuleGroup(QLatin1String(group)) == request.group) {
+                emitResponse({request.requestId,
+                              QLatin1String(group),
+                              request.action,
+                              {{QStringLiteral("error"), QStringLiteral("factory_reset_busy")}},
+                              false,
+                              true});
+                return;
+            }
+        }
+    }
+    if (request.group == ModuleGroup::SafetyController && request.action == QLatin1String(kActionReadSettings) &&
+        m_safetyWriteInProgress) {
         emit responseReady(ResponseBuilder::buildResponse(ModuleResponse{
             .requestId = request.requestId,
             .group = QLatin1String(kGroupSafety),
@@ -45,8 +85,7 @@ void SystemControl::enqueueRequest(const ModuleRequest &request) {
         }));
         return;
     }
-    if (request.group == ModuleGroup::SafetyController &&
-        request.action == QLatin1String(kActionWriteSettings) &&
+    if (request.group == ModuleGroup::SafetyController && request.action == QLatin1String(kActionWriteSettings) &&
         (m_safetyWriteInProgress || m_pendingRequest.has_value() || !m_queue.isEmpty())) {
         emit responseReady(ResponseBuilder::buildResponse(ModuleResponse{
             .requestId = request.requestId,
@@ -77,6 +116,10 @@ void SystemControl::processQueue() {
 
 void SystemControl::startRequest(const ModuleRequest &request) {
     switch (request.group) {
+    case ModuleGroup::FactoryReset: {
+        handleModuleResponse(m_factoryReset->handleRequest(request, FirmwareUpdate::runtime().isBusy()));
+        return;
+    }
     case ModuleGroup::EverestConfig: {
         const ModuleResponse response = EverestConfig::handleRequest(request);
         handleModuleResponse(response);
@@ -237,6 +280,9 @@ void SystemControl::emitResponse(const ModuleResponse &response) {
 }
 
 ModuleGroup SystemControl::toModuleGroup(const QString &group) const {
+    if (group == QLatin1String(kGroupFactoryReset)) {
+        return ModuleGroup::FactoryReset;
+    }
     if (group == QLatin1String(kGroupEverest)) {
         return ModuleGroup::EverestConfig;
     }
