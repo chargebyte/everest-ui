@@ -189,9 +189,14 @@ reboot_wait_timeout_seconds.chargebyte,imx6ull-tarragon-master=120
 ```
 
 Compatible strings come from `/proc/device-tree/compatible`; the first valid matching override wins,
-then the base setting, then the 30-second fallback. After this period, the overlay offers **Reload**
-while automatic checks continue. Clicking Reload clears the recovery context and reloads manually.
-Ordinary refreshes during recovery preserve it in session storage. When recovery is confirmed, a
+then the base setting, then the 30-second fallback. **Reload** is available immediately while waiting
+for reboot, but not while factory reset is still executing. After the configured period, the overlay
+warns that reboot has not been confirmed; automatic checks continue. Clicking Reload stops recovery
+and reloads manually, without cancelling or retrying the backend operation. A dismissed factory-reset
+reboot expectation stays dismissed for this boot in this browser tab, including after page navigation
+or reload. If no boot identity is available, dismissal lasts for the tab session. A new boot or explicit
+maintenance operation clears it. The backend maintenance lock is not cleared by Reload.
+Ordinary refreshes during recovery preserve the pending wait in session storage. When recovery is confirmed, a
 temporary authentication-service failure after automatic reload resumes the checks rather than showing
 an offline page. If browser storage is unavailable, recovery can only survive within the current page.
 
@@ -199,7 +204,11 @@ Recovery probes `/auth/status` every two seconds with a three-second request lim
 changed `bootId` and a valid unauthenticated status response; a live proxy or static page is not proof
 of reboot. A generic webserver/proxy must forward `/auth/*` and `/ws` to the device and must not cache
 authentication responses. Missing boot identity prevents automatic confirmation; manual reload remains
-available. Command failures reported before disconnection are displayed rather than treated as reboot.
+available. The UI releases its WebSocket when waiting for reboot, so it does not retain the exclusive UI
+slot. Informational status polls do not log blocked-access messages. If no reboot occurs, manually
+reloading can return to the existing authenticated session; a login is required only after a real reboot
+(or session expiry). Factory-reset failures reported before disconnection are displayed rather than
+treated as reboot.
 
 ## Factory Reset
 

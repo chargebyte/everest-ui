@@ -57,7 +57,7 @@ export function renderFactoryResetPane({ sendPayload, addLog, actions, rebootRec
 
   function refreshOutcome() {
     if (backend.reboot_expected) {
-      status.textContent = 'Factory reset completed. The device is rebooting automatically.';
+      status.textContent = 'Factory reset completed. An automatic reboot is expected.';
     } else if (backend.state === 'failed') {
       status.textContent = 'Factory reset failed. The device may not reboot automatically.';
     } else if (backend.state === 'running') {

@@ -282,6 +282,51 @@ private slots:
         QCOMPARE(client.closeReason(), QString("credentials reset"));
         QCOMPARE(forwarded.count(), 1);
     }
+    void authStatusIsInformationalWhileUiOccupied() {
+        AuthManager auth(authPath());
+        user(auth);
+        const auto session = auth.createSession("alice");
+        ServerConfig cfg;
+        cfg.passwordResetBootStatusPath = marker();
+        cfg.maxRequestBytes = 8192;
+        UiOccupancyTracker occupancy;
+        StaticServer server(cfg, &auth, nullptr, &occupancy);
+        QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+        QVERIFY(occupancy.tryClaim("active websocket"));
+        const QByteArray cookie = "Cookie: everest_ui_session=" + session.toUtf8() + "\r\n";
+        for (int i = 0; i < 3; ++i) {
+            const auto response = request(server, "/auth/status", {}, cookie);
+            QVERIFY(response.startsWith("HTTP/1.1 200"));
+            QVERIFY(response.contains("\"authenticated\":true"));
+            QVERIFY(response.contains("\"uiBusy\":true"));
+            QVERIFY(response.contains("Cache-Control: no-store"));
+            QVERIFY(occupancy.isBusy());
+            QVERIFY(!occupancy.tryClaim("another websocket"));
+        }
+        occupancy.release();
+        const auto response = request(server, "/auth/status", {}, cookie);
+        QVERIFY(response.contains("\"authenticated\":true"));
+        QVERIFY(response.contains("\"uiBusy\":false"));
+        QVERIFY(auth.validateSession(session));
+    }
+    void websocketCloseReleasesUiSlot() {
+        QWebSocketServer frontend("test", QWebSocketServer::NonSecureMode);
+        QWebSocketServer backend("backend", QWebSocketServer::NonSecureMode);
+        QVERIFY(frontend.listen(QHostAddress::LocalHost, 0));
+        QVERIFY(backend.listen(QHostAddress::LocalHost, 0));
+        UiOccupancyTracker occupancy;
+        connect(&frontend, &QWebSocketServer::newConnection, this, [&] {
+            auto *peer = frontend.nextPendingConnection();
+            new WebSocketProxySession(peer,
+                QUrl(QString("ws://127.0.0.1:%1").arg(backend.serverPort())), &occupancy, peer);
+        });
+        QWebSocket client;
+        client.open(QUrl(QString("ws://127.0.0.1:%1").arg(frontend.serverPort())));
+        QTRY_VERIFY(occupancy.isBusy());
+        client.close();
+        QTRY_VERIFY(!occupancy.isBusy());
+        QVERIFY(occupancy.tryClaim("replacement websocket"));
+    }
     void httpResetFlow() {
         AuthManager auth(authPath()); user(auth); const auto session = auth.createSession("alice");
         ServerConfig cfg; cfg.passwordResetBootStatusPath = marker(); cfg.maxRequestBytes = 8192;

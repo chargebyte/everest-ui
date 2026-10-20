@@ -42,7 +42,7 @@ private:
     bool isPublicFrontendAsset(const ParsedRequest &request) const;
     bool isAuthenticated(const ParsedRequest &request);
     QString sessionIdFromRequest(const ParsedRequest &request) const;
-    StaticResponse handleAuthRequest(const ParsedRequest &request, const QString &peerAddress);
+    StaticResponse handleAuthRequest(const ParsedRequest &request);
     static void sendResponseAndClose(QTcpSocket *socket, const StaticResponse &response);
 
     PasswordReset m_passwordReset;

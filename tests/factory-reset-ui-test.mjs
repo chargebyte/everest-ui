@@ -10,20 +10,38 @@ cpSync(path.resolve('public/js'), path.join(root, 'js'), { recursive: true });
 writeFileSync(path.join(root, 'package.json'), '{"type":"module"}\n');
 after(() => rmSync(root, { recursive: true, force: true }));
 const { renderFactoryResetPane } = await import(pathToFileURL(path.join(root, 'js/ui/factoryReset.js')).href);
+const { createRebootRecovery, createRebootOverlay } =
+  await import(pathToFileURL(path.join(root, 'js/ui/rebootRecovery.js')).href);
 
 class Element {
+  constructor(tag = 'div') { this.tag = tag; }
   children = new Map();
   listeners = new Map();
   disabled = false;
+  hidden = false;
   textContent = '';
   set innerHTML(markup) {
-    for (const match of markup.matchAll(/id="([^"]+)"/g)) this.children.set(match[1], new Element());
+    this.children.clear();
+    for (const match of markup.matchAll(/<([a-z][a-z0-9]*)\b([^>]*)>/g)) {
+      const child = new Element(match[1]);
+      child.hidden = /\bhidden\b/.test(match[2]);
+      const id = match[2].match(/id="([^"]+)"/)?.[1];
+      this.children.set(id || `${child.tag}-${this.children.size}`, child);
+    }
   }
-  querySelector(selector) { return this.children.get(selector.slice(1)); }
+  querySelector(selector) {
+    return selector.startsWith('#') ? this.children.get(selector.slice(1))
+      : [...this.children.values()].find(child => child.tag === selector);
+  }
+  appendChild(child) { this.children.set(`child-${this.children.size}`, child); child.parent = this; }
+  remove() {
+    for (const [key, child] of this.parent?.children || []) if (child === this) this.parent.children.delete(key);
+  }
+  focus() { document.activeElement = this; }
   addEventListener(name, callback) { this.listeners.set(name, callback); }
-  click() { if (!this.disabled) this.listeners.get('click')?.(); }
+  click() { if (!this.disabled && !this.hidden) this.listeners.get('click')?.(); }
 }
-globalThis.document = { createElement: () => new Element() };
+globalThis.document = { createElement: tag => new Element(tag), body: new Element('body'), activeElement: null };
 
 function fixture(t, confirmation = true) {
   const sent = [];
@@ -88,7 +106,7 @@ test('confirmed reset expects automatic reboot only on success and never renders
     if (success) {
       assert.equal(f.reset.disabled, true);
       assert.ok(f.expectedReboots() > 0);
-      assert.match(f.status.textContent, /rebooting automatically/);
+      assert.match(f.status.textContent, /automatic reboot is expected/);
     } else {
       f.statusReply('failed', true, false);
       assert.equal(f.reset.disabled, false);
@@ -154,4 +172,66 @@ test('rejection before command execution does not offer reboot', (t) => {
   assert.equal(f.reboot, undefined);
   f.statusReply('idle', false, false);
   assert.equal(f.reboot, undefined);
+});
+
+test('real overlay Reload escapes successful mock reset without re-arming from pane callbacks', (t) => {
+  const sent = [];
+  const memory = new Map();
+  const app = new Element('main');
+  let pane;
+  let recovery;
+  let reloads = 0;
+  let closes = 0;
+  let now = 1000;
+  const render = createRebootOverlay(app, () => recovery.manualReload());
+  const sendPayload = request => { sent.push(request); return { ok: true }; };
+  recovery = createRebootRecovery({
+    sendPayload,
+    closeTransport() { closes++; recovery.onDisconnected(); pane.onConnectionChange(false); },
+    render,
+    onChange() { pane?.onRebootAvailabilityChange(); },
+    storage: { getItem: key => memory.get(key), setItem: (key, value) => memory.set(key, value),
+      removeItem: key => memory.delete(key) },
+    now: () => now,
+    schedule: () => 1, cancelTimer() {}, reload() { reloads++; }
+  });
+  pane = renderFactoryResetPane({ sendPayload, addLog() {}, rebootRecovery: recovery, confirm: () => true });
+  t.after(() => { pane.destroy(); recovery.destroy(); });
+  recovery.onConnected();
+  recovery.onMessage({ requestId: sent.at(-1).requestId, type: 'system.read_reboot_settings.result',
+    ok: true, final: true, parameters: { wait_timeout_seconds: 30,
+      boot_id: '11111111-1111-1111-1111-111111111111' } });
+  pane.onConnectionChange(true);
+  pane.onMessage({ requestId: sent.at(-1).requestId, type: 'factory_reset.read_status.result', ok: true,
+    parameters: { state: 'idle', can_reset: true, reboot_expected: false } });
+  pane.element.querySelector('#factory-reset-start').click();
+  const request = sent.at(-1);
+  const dialog = [...document.body.children.values()].at(-1);
+  const reloadButton = dialog.querySelector('button');
+  assert.equal(app.inert, true);
+  assert.equal(reloadButton.hidden, true);
+  reloadButton.click();
+  assert.equal(reloads, 0);
+  assert.equal(closes, 0);
+
+  const success = { requestId: request.requestId, type: 'factory_reset.reset.result', ok: true,
+    final: true, parameters: { reboot_expected: true } };
+  recovery.onMessage(success);
+  pane.onMessage(success);
+  assert.equal(closes, 1);
+  assert.equal(reloadButton.hidden, false);
+  assert.match(dialog.querySelector('h2').textContent, /Waiting/);
+  assert.equal(pane.element.querySelector('#factory-reset-start').disabled, true);
+  now += 31000;
+  render({ phase: 'waiting', timedOut: true });
+  assert.equal(reloadButton.hidden, false);
+  assert.equal(dialog.querySelector('h2').textContent, 'Reboot not confirmed');
+  reloadButton.click();
+  assert.equal(reloads, 1);
+  assert.equal(app.inert, false);
+  assert.equal(recovery.isActive(), false);
+  assert.equal(memory.has('everest_ui_reboot_recovery_v1'), false);
+  pane.onRebootAvailabilityChange();
+  assert.equal(recovery.isActive(), false);
+  assert.equal(sent.filter(item => item.action === 'reset').length, 1);
 });

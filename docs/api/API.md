@@ -239,8 +239,8 @@ Settings reads are available even while factory reset blocks other system-contro
 
 Send an explicit reboot request once and do not wait for an acknowledgement or final response before
 entering recovery. Any acknowledgement means scheduled, not completed, and may never arrive. The
-existing `firmware.reboot` endpoint and its preconditions remain available. A correlated rejection
-received before disconnection can end recovery and restore the pane. Never resend a reboot command
+existing `firmware.reboot` endpoint and its preconditions remain available. The browser releases its
+WebSocket after sending reboot; a rejection is not guaranteed to reach it. Never resend a reboot command
 because of disconnection, a missing acknowledgement, or a browser timeout.
 
 The shared browser overlay blocks interaction during recovery. It probes `/auth/status` with
@@ -251,11 +251,24 @@ HTTP 200 alone, or an unchanged boot ID cannot confirm reboot. Missing boot iden
 reload as the fallback. A proxy must forward the existing `/auth/*` and `/ws` endpoints to the device;
 it must not cache authentication status or substitute its own machine's boot identity.
 
+The WebSocket is closed when entering reboot waiting, after sending explicit reboot or receiving and
+acknowledging factory-reset success, releasing exclusive UI occupancy. It stays open during reset
+execution for progress and errors. `/auth/status` is informational: `uiBusy` does not mean that the HTTP
+request was rejected, and polling does not produce blocked-access logs. Actual WebSocket occupancy
+restrictions remain enforced.
+
 The configured wait period starts when reboot is requested, or when factory reset reports success or
-disconnects. Expiry does not cancel the operation or stop probing: it changes the message and offers
-manual Reload. Pending operation kind, baseline boot ID, policy, and wait start are kept in session
+disconnects. Expiry does not cancel the operation or stop probing: it changes the message to indicate
+that reboot is unconfirmed. Manual Reload is available immediately while waiting, but not during reset
+execution. Pending operation kind, baseline boot ID, policy, and wait start are kept in session
 storage, so an ordinary refresh resumes recovery without replaying any command. Explicit manual
-Reload clears that context. Automatic reload keeps it until the next authentication status succeeds;
+Reload clears that context, stops probes and reconnection, and dismisses an existing factory-reset
+reboot expectation for this boot in the same browser tab. Page navigation or repeated status replies
+cannot re-open the overlay. A different boot identity or new explicit maintenance operation clears
+dismissal; if identity is unavailable, dismissal lasts for the tab session. Reload never cancels or
+retries a command and does not clear the backend maintenance lock. If no reboot occurred, the existing
+authentication session can still be valid, so manual Reload need not prompt for login.
+Automatic reload keeps recovery context until the next authentication status succeeds;
 temporary startup failures resume recovery. After reboot, sessions are not restored: normal login is
 required, or initial setup if factory reset erased the credentials.
 

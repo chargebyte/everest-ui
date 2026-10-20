@@ -4,6 +4,7 @@
 import { buildRequest } from '../protocol/requestBuilder.js';
 
 const storageKey = 'everest_ui_reboot_recovery_v1';
+const dismissalKey = 'everest_ui_reboot_dismissal_v1';
 const uuid = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const validWait = (value) => Number.isInteger(value) && value > 0 && value <= 2147483;
 
@@ -29,6 +30,32 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
   let timer = null;
   let abort = null;
   let epoch = 0;
+  let waiting = false;
+  let leaving = false;
+  let transportClosed = false;
+  let dismissedBootId = null;
+  try {
+    const saved = JSON.parse(storage?.getItem(dismissalKey) || 'null');
+    if (saved?.version === 1 && typeof saved.bootId === 'string' &&
+        (saved.bootId === '' || uuid.test(saved.bootId))) dismissedBootId = saved.bootId;
+  } catch { /* Dismissal still works in memory when storage is unavailable. */ }
+
+  function dismiss(bootId) {
+    dismissedBootId = bootId;
+    try {
+      if (bootId === null) storage?.removeItem(dismissalKey);
+      else storage?.setItem(dismissalKey, JSON.stringify({ version: 1, bootId }));
+    } catch { /* Do not prevent manual reload when storage is unavailable. */ }
+  }
+
+  function stopTransport() {
+    connected = false;
+    settingsRequest = null;
+    cancelTimer(settingsTimer);
+    if (transportClosed) return;
+    transportClosed = true;
+    closeTransport();
+  }
 
   function persist() {
     try {
@@ -44,6 +71,7 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
   }
 
   function cancelProbe() {
+    waiting = false;
     epoch++;
     cancelTimer(timer);
     timer = null;
@@ -88,28 +116,32 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
   }
 
   function waitForReturn() {
-    if (!pending) return;
-    cancelProbe();
-    pending.phase = 'waiting';
-    if (pending.waitStarted === null) pending.waitStarted = now();
-    persist();
-    show();
-    timer = schedule(probe, 0);
+    if (!pending || leaving) return;
+    if (!waiting || pending.phase !== 'waiting') {
+      cancelProbe();
+      waiting = true;
+      pending.phase = 'waiting';
+      if (pending.waitStarted === null) pending.waitStarted = now();
+      persist();
+      show();
+      timer = schedule(probe, 0);
+    }
+    stopTransport();
   }
 
-  function canStart() { return connected && settings !== null && pending === null; }
+  function canStart() { return !leaving && connected && settings !== null && pending === null; }
 
   function begin(kind, requestId, phase) {
+    dismiss(null);
     recentFailure = null;
     pending = { version: 1, kind, requestId, phase, bootId: settings.boot_id,
       waitSeconds: settings.wait_timeout_seconds, waitStarted: null, disconnected: false };
     persist();
     show();
-    if (phase === 'waiting') waitForReturn();
   }
 
   function loadSettings() {
-    if (!connected || pending || settingsRequest !== null) return;
+    if (leaving || !connected || pending || settingsRequest !== null) return;
     const request = buildRequest('system', 'read_reboot_settings', {});
     const result = sendPayload(request);
     if (result.ok) settingsRequest = request.requestId;
@@ -120,6 +152,8 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
     canStart,
     isActive: () => pending !== null,
     onConnected() {
+      transportClosed = false;
+      if (leaving) { stopTransport(); return; }
       connected = true;
       settings = null;
       loadSettings();
@@ -129,16 +163,17 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
       connected = false;
       settingsRequest = null;
       cancelTimer(settingsTimer);
+      if (leaving) return true;
       if (!pending && recentFailure && now() <= recentFailure.expires) {
         pending = { ...recentFailure };
         delete pending.expires;
         recentFailure = null;
       }
       if (!pending) { onChange(); return false; }
-      if (pending.phase === 'returning') { closeTransport(); return true; }
+      if (pending.phase === 'returning') { stopTransport(); return true; }
       pending.disconnected = true;
+      persist();
       waitForReturn();
-      closeTransport();
       return true;
     },
     requestReboot(definition) {
@@ -146,6 +181,7 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
       const request = buildRequest(definition.group, definition.action, {});
       begin('reboot', request.requestId, 'waiting');
       if (!sendPayload(request, { expectResponse: false }).ok) { clear(); return false; }
+      waitForReturn();
       return true;
     },
     requestFactoryReset(request) {
@@ -156,16 +192,22 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
       return result;
     },
     expectFactoryReboot() {
-      if (canStart()) begin('factory_reset', -1, 'waiting');
+      if (canStart() && dismissedBootId === null) {
+        begin('factory_reset', -1, 'waiting');
+        waitForReturn();
+      }
     },
     onMessage(message) {
-      if (message.requestId === settingsRequest && message.final !== false) {
+      if (settingsRequest !== null && message.requestId === settingsRequest && message.final !== false) {
         settingsRequest = null;
         const values = message.parameters;
         if (message.ok && message.type === 'system.read_reboot_settings.result' &&
             validWait(values?.wait_timeout_seconds) && typeof values.boot_id === 'string' &&
             (values.boot_id === '' || uuid.test(values.boot_id))) {
           settings = values;
+          if (uuid.test(dismissedBootId) && uuid.test(values.boot_id) && values.boot_id !== dismissedBootId) {
+            dismiss(null);
+          }
         } else {
           settings = null;
           settingsTimer = schedule(loadSettings, 2000);
@@ -197,6 +239,7 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
       return false;
     },
     resume() {
+      if (leaving) return 'none';
       if (!pending) {
         try {
           const value = JSON.parse(storage?.getItem(storageKey) || 'null');
@@ -220,7 +263,16 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
       return true;
     },
     retryRecovery: waitForReturn,
-    manualReload() { clear(); reload(); },
+    manualReload() {
+      if (!pending || pending.phase === 'resetting') return false;
+      // Prevent pane notifications from re-arming recovery before navigation completes.
+      leaving = true;
+      dismiss(pending.bootId);
+      stopTransport();
+      clear();
+      reload();
+      return true;
+    },
     destroy() { cancelProbe(); cancelTimer(settingsTimer); }
   };
 }
@@ -259,13 +311,14 @@ export function createRebootOverlay(appRoot, onReload) {
       element.querySelector('section').focus();
     }
     const resetting = state.phase === 'resetting';
-    element.querySelector('h2').textContent = resetting ? 'Factory reset in progress' : 'Device rebooting';
+    element.querySelector('h2').textContent = resetting ? 'Factory reset in progress'
+      : state.timedOut ? 'Reboot not confirmed' : 'Waiting for device reboot';
     const message = resetting
       ? 'The device will reboot automatically after factory reset. You will need to log in again.'
       : state.timedOut
-        ? 'The device is taking longer than expected to return. Automatic checks will continue. You can also reload manually.'
-        : 'Waiting for the device to return. The UI will reload automatically. You will need to log in again.';
+        ? 'A reboot has not been confirmed. Automatic checks will continue. You can reload now to check the device. If it has not rebooted, your existing login may still be valid.'
+        : 'A reboot is expected. The UI will reload automatically after the device reboots. You can also reload now; this does not cancel or retry the operation.';
     if (element.querySelector('p').textContent !== message) element.querySelector('p').textContent = message;
-    element.querySelector('button').hidden = !state.timedOut;
+    element.querySelector('button').hidden = resetting;
   };
 }

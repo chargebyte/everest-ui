@@ -16,7 +16,7 @@ const newBoot = '22222222-2222-2222-2222-222222222222';
 const rebootAction = { group: 'firmware', action: 'reboot' };
 const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
 
-function fixture(t) {
+function fixture(t, hooks = {}) {
   let clock = 1000;
   let timerId = 0;
   const timers = new Map();
@@ -32,9 +32,10 @@ function fixture(t) {
   const controllers = [];
   function make() {
     const controller = createRebootRecovery({
-      sendPayload(payload, options) { sent.push({ payload, options }); return { ok: true }; },
-      closeTransport() { closes++; },
+      sendPayload(payload, options) { sent.push({ payload, options }); return { ok: hooks.sendOk !== false }; },
+      closeTransport() { closes++; hooks.onClose?.(controller); },
       render(view) { views.push(view); },
+      onChange() { hooks.onChange?.(controller); },
       readStatus(signal) { probes++; return read(signal); },
       storage: { getItem: key => memory.get(key), setItem: (key, value) => memory.set(key, value),
         removeItem: key => memory.delete(key) },
@@ -45,10 +46,10 @@ function fixture(t) {
   }
   const controller = make();
   t.after(() => controllers.forEach(item => item.destroy()));
-  function settings(seconds = 30, bootId = oldBoot) {
-    controller.onConnected();
+  function settings(seconds = 30, bootId = oldBoot, target = controller) {
+    target.onConnected();
     const request = sent.at(-1).payload;
-    controller.onMessage({ requestId: request.requestId, type: 'system.read_reboot_settings.result',
+    target.onMessage({ requestId: request.requestId, type: 'system.read_reboot_settings.result',
       ok: true, final: true, parameters: { wait_timeout_seconds: seconds, boot_id: bootId } });
   }
   async function advance(milliseconds) {
@@ -99,11 +100,11 @@ test('configured wait changes the fallback threshold and automatic probes contin
   await f.advance(10000);
   assert.ok(f.probes() > count);
   f.controller.manualReload();
-  assert.equal(f.memory.size, 0);
+  assert.equal(f.memory.has('everest_ui_reboot_recovery_v1'), false);
   assert.equal(f.reloads(), 1);
 });
 
-test('a received rejection restores controls and never retries a reboot', async (t) => {
+test('a received rejection clears recovery and never retries a reboot', async (t) => {
   const f = fixture(t);
   f.settings();
   f.controller.requestReboot(rebootAction);
@@ -111,6 +112,8 @@ test('a received rejection restores controls and never retries a reboot', async 
   f.controller.onMessage({ requestId: request.requestId, type: 'firmware.reboot.error', ok: false,
     final: true, parameters: { error: 'not_allowed' } });
   assert.equal(f.controller.isActive(), false);
+  assert.equal(f.controller.canStart(), false); // The waiting transport has already been closed.
+  f.settings();
   assert.equal(f.controller.canStart(), true);
   assert.equal(f.views.at(-1), null);
   await f.advance(60000);
@@ -123,6 +126,8 @@ test('reset has its own execution phase; the recovery clock starts at success or
   f.settings();
   const request = { requestId: 500, group: 'factory_reset', action: 'reset', parameters: { confirm: true } };
   assert.equal(f.controller.requestFactoryReset(request).ok, true);
+  assert.equal(f.closes(), 0);
+  assert.equal(f.controller.manualReload(), false);
   await f.advance(25000);
   assert.equal(f.probes(), 0);
   assert.equal(f.views.at(-1).phase, 'resetting');
@@ -130,10 +135,81 @@ test('reset has its own execution phase; the recovery clock starts at success or
   assert.equal(f.views.at(-1).phase, 'resetting');
   f.controller.onMessage({ requestId: 500, type: 'factory_reset.reset.result', final: true, ok: true,
     parameters: { reboot_expected: true } });
+  assert.equal(f.closes(), 1);
   await f.advance(29000);
   assert.equal(f.views.at(-1).timedOut, false);
   await f.advance(2000);
   assert.equal(f.views.at(-1).timedOut, true);
+});
+
+test('manual reload cannot re-arm recovery through pane callbacks, same-boot status or navigation', async (t) => {
+  const hooks = {};
+  const f = fixture(t, hooks);
+  f.settings();
+  f.controller.requestFactoryReset({ requestId: 504, group: 'factory_reset', action: 'reset' });
+  f.controller.onMessage({ requestId: 504, type: 'factory_reset.reset.result', ok: true, final: true,
+    parameters: { reboot_expected: true } });
+  hooks.onChange = controller => controller.expectFactoryReboot();
+  assert.equal(f.controller.manualReload(), true);
+  assert.equal(f.controller.isActive(), false);
+  assert.equal(f.reloads(), 1);
+  assert.equal(f.memory.has('everest_ui_reboot_recovery_v1'), false);
+  const count = f.probes();
+  await f.advance(60000);
+  assert.equal(f.probes(), count);
+
+  const resumed = f.make();
+  assert.equal(resumed.resume(), 'none');
+  f.settings(30, oldBoot, resumed);
+  resumed.expectFactoryReboot();
+  assert.equal(resumed.isActive(), false);
+  assert.equal(resumed.canStart(), true);
+  // The same persisted backend expectation is still suppressed when revisiting the pane.
+  resumed.expectFactoryReboot();
+  assert.equal(resumed.isActive(), false);
+  hooks.onChange = null;
+  assert.equal(resumed.requestReboot(rebootAction), true);
+  assert.equal(resumed.isActive(), true);
+  assert.equal(f.memory.has('everest_ui_reboot_dismissal_v1'), false);
+});
+
+test('a changed boot clears dismissal, but missing baseline identity retains it for the tab session', (t) => {
+  for (const baseline of [oldBoot, '']) {
+    const f = fixture(t);
+    f.settings(30, baseline);
+    f.controller.expectFactoryReboot();
+    f.controller.manualReload();
+    const resumed = f.make();
+    assert.equal(resumed.resume(), 'none');
+    f.settings(30, newBoot, resumed);
+    resumed.expectFactoryReboot();
+    assert.equal(resumed.isActive(), baseline !== '');
+  }
+});
+
+test('repeated disconnect callbacks close once and do not restart the probe or wait period', async (t) => {
+  const f = fixture(t, { onClose: controller => controller.onDisconnected() });
+  f.settings();
+  f.controller.requestReboot(rebootAction);
+  assert.equal(f.closes(), 1);
+  const waitStarted = f.views.at(-1).waitStarted;
+  await f.advance(10000);
+  f.controller.onDisconnected();
+  assert.equal(f.closes(), 1);
+  assert.equal(f.views.at(-1).waitStarted, waitStarted);
+  await f.advance(21000);
+  assert.equal(f.views.at(-1).timedOut, true);
+});
+
+test('a failed send does not close the transport or leave a recovery overlay', (t) => {
+  const hooks = {};
+  const f = fixture(t, hooks);
+  f.settings();
+  hooks.sendOk = false;
+  assert.equal(f.controller.requestReboot(rebootAction), false);
+  assert.equal(f.closes(), 0);
+  assert.equal(f.controller.isActive(), false);
+  assert.equal(f.controller.canStart(), true);
 });
 
 test('reset shutdown without a final response starts recovery; an explicit failure clears it', async (t) => {

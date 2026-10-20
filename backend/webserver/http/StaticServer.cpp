@@ -13,8 +13,6 @@
 
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QHostAddress>
-#include <QTextStream>
 #include <QTcpSocket>
 #include <QTimer>
 
@@ -59,14 +57,6 @@ QByteArray sessionCookieHeader(const QString &sessionId) {
 QByteArray clearSessionCookieHeader() {
     return QByteArray(AuthManager::kSessionCookieName) +
            QByteArrayLiteral("=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
-}
-
-QString formatPeerAddress(const QHostAddress &address, quint16 port) {
-    const QString addressText = address.toString();
-    if (address.protocol() == QAbstractSocket::IPv6Protocol) {
-        return QStringLiteral("[%1]:%2").arg(addressText).arg(port);
-    }
-    return QStringLiteral("%1:%2").arg(addressText).arg(port);
 }
 
 } // namespace
@@ -161,8 +151,7 @@ void StaticServer::handleRequest(QTcpSocket *socket, QTimer *headerTimer) {
 
     if (isAuthEndpoint(request.normalizedPath)) {
         socket->readAll();
-        response = handleAuthRequest(request,
-                                     formatPeerAddress(socket->peerAddress(), socket->peerPort()));
+        response = handleAuthRequest(request);
         sendResponseAndClose(socket, response);
         return;
     }
@@ -235,8 +224,7 @@ QString StaticServer::sessionIdFromRequest(const ParsedRequest &request) const {
     return QString::fromUtf8(request.cookies.value(QByteArray(AuthManager::kSessionCookieName)));
 }
 
-StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request,
-                                               const QString &peerAddress) {
+StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request) {
     if (!m_authManager) {
         return makeJsonResponse(500, QStringLiteral("Internal Server Error"),
                                 QJsonObject{{QStringLiteral("error"), QStringLiteral("auth_unavailable")}});
@@ -250,12 +238,6 @@ StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request,
 
         const bool authenticated = isAuthenticated(request);
         const bool uiBusy = authenticated && m_uiOccupancyTracker && m_uiOccupancyTracker->isBusy();
-        if (uiBusy) {
-            QTextStream(stdout) << "Blocked UI access from " << peerAddress
-                                << " while active UI session is held by "
-                                << m_uiOccupancyTracker->ownerPeerAddress() << "\n";
-        }
-
         return makeJsonResponse(200, QStringLiteral("OK"),
                                 QJsonObject{{QStringLiteral("setupRequired"),
                                              m_authManager->setupRequired()},
