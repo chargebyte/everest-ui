@@ -4,6 +4,7 @@
 
 #include "FirmwareUpdateRuntime.hpp"
 #include "RebootCommand.hpp"
+#include "LoginState.hpp"
 
 #include "FirmwareUpdate.hpp"
 #include "ProtocolSchema.hpp"
@@ -127,6 +128,11 @@ ModuleResponse FirmwareUpdateRuntime::handleRebootRequest(const ModuleRequest &r
 
     const QString rebootCommand =
         FirmwareUpdate::loadBackendConfigValue(QString::fromLatin1(kFirmwareRebootCommandConfigKey)).trimmed();
+    QString error;
+    if (!UiRuntime::blockLoginForReboot(QStringLiteral("reboot"), error)) {
+        response.parameters = {{QStringLiteral("error"), QStringLiteral("login_state_unavailable")}};
+        return response;
+    }
     m_rebootRequired = false;
     m_rebootPending = true;
     runDeferredRebootCommand(this, rebootCommand.isEmpty() ? QString::fromLatin1(kActionReboot) : rebootCommand);

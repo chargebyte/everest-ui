@@ -174,13 +174,13 @@ test('rejection before command execution does not offer reboot', (t) => {
   assert.equal(f.reboot, undefined);
 });
 
-test('real overlay Reload escapes successful mock reset without re-arming from pane callbacks', (t) => {
+test('real overlay retains reset completion and Reload switches locally to blocked access', (t) => {
   const sent = [];
   const memory = new Map();
   const app = new Element('main');
   let pane;
   let recovery;
-  let reloads = 0;
+  let available = 0;
   let closes = 0;
   let now = 1000;
   const render = createRebootOverlay(app, () => recovery.manualReload());
@@ -193,7 +193,7 @@ test('real overlay Reload escapes successful mock reset without re-arming from p
     storage: { getItem: key => memory.get(key), setItem: (key, value) => memory.set(key, value),
       removeItem: key => memory.delete(key) },
     now: () => now,
-    schedule: () => 1, cancelTimer() {}, reload() { reloads++; }
+    schedule: () => 1, cancelTimer() {}, onAvailable() { available++; }
   });
   pane = renderFactoryResetPane({ sendPayload, addLog() {}, rebootRecovery: recovery, confirm: () => true });
   t.after(() => { pane.destroy(); recovery.destroy(); });
@@ -211,7 +211,7 @@ test('real overlay Reload escapes successful mock reset without re-arming from p
   assert.equal(app.inert, true);
   assert.equal(reloadButton.hidden, true);
   reloadButton.click();
-  assert.equal(reloads, 0);
+  assert.equal(available, 0);
   assert.equal(closes, 0);
 
   const success = { requestId: request.requestId, type: 'factory_reset.reset.result', ok: true,
@@ -222,16 +222,21 @@ test('real overlay Reload escapes successful mock reset without re-arming from p
   assert.equal(reloadButton.hidden, false);
   assert.match(dialog.querySelector('h2').textContent, /Waiting/);
   assert.equal(pane.element.querySelector('#factory-reset-start').disabled, true);
-  now += 31000;
-  render({ phase: 'waiting', timedOut: true });
-  assert.equal(reloadButton.hidden, false);
-  assert.equal(dialog.querySelector('h2').textContent, 'Reboot not confirmed');
+  assert.match(dialog.querySelector('p').textContent, /Factory reset completed/);
   reloadButton.click();
-  assert.equal(reloads, 1);
+  assert.equal(available, 0);
+  assert.equal(app.inert, true);
+  assert.equal(recovery.isActive(), true);
+  assert.equal(memory.has('everest_ui_reboot_recovery_v1'), true);
+  assert.equal(reloadButton.hidden, true);
+  assert.equal(dialog.querySelector('h2').textContent, 'Login not allowed');
+  assert.match(dialog.querySelector('p').textContent, /Factory reset completed/);
+  assert.match(dialog.querySelector('p').textContent, /waiting for device reboot/);
+  pane.onRebootAvailabilityChange();
+  assert.equal(recovery.isActive(), true);
+  assert.equal(sent.filter(item => item.action === 'reset').length, 1);
+  recovery.observeStatus({ loginAllowed: true, loginDisabledReason: '', authenticated: false, setupRequired: false });
+  assert.equal(available, 1);
   assert.equal(app.inert, false);
   assert.equal(recovery.isActive(), false);
-  assert.equal(memory.has('everest_ui_reboot_recovery_v1'), false);
-  pane.onRebootAvailabilityChange();
-  assert.equal(recovery.isActive(), false);
-  assert.equal(sent.filter(item => item.action === 'reset').length, 1);
 });

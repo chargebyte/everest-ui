@@ -39,7 +39,15 @@ function getRebootRecovery() {
     rebootRecovery = createRebootRecovery({
       sendPayload: (...args) => currentAppContext?.transport?.sendPayload(...args) || { ok: false },
       closeTransport: () => currentAppContext?.transport?.close(),
-      render,
+      render(view) {
+        if (view) disposePasswordReset();
+        render(view);
+      },
+      onAvailable(status) {
+        currentAppContext?.state.page?.destroy?.();
+        currentAppContext = null;
+        displayAuthStatus(status).catch(() => getRebootRecovery().onLoginRestricted('login_state_unavailable'));
+      },
       onChange: () => currentAppContext?.state.page?.onRebootAvailabilityChange?.()
     });
   }
@@ -47,7 +55,6 @@ function getRebootRecovery() {
 }
 
 async function init() {
-  const appRoot = createAppRoot();
   const recovery = getRebootRecovery();
   if (recovery.resume() === 'waiting') return;
   let status;
@@ -55,12 +62,16 @@ async function init() {
     status = await readAuthStatus();
   } catch (error) {
     if (recovery.isActive()) { recovery.retryRecovery(); return; }
-    throw error;
-  }
-  if (recovery.isActive() && !recovery.acceptReturnedStatus(status)) {
-    recovery.retryRecovery();
+    recovery.onLoginRestricted('login_state_unavailable');
     return;
   }
+  if (recovery.observeStatus(status)) return;
+  await displayAuthStatus(status);
+}
+
+async function displayAuthStatus(status) {
+  const appRoot = createAppRoot();
+  if (getRebootRecovery().observeStatus(status)) return;
   const appTitle = normalizeAppTitle(status.appTitle);
   if (status.setupRequired) {
     renderAuthGate(appRoot, 'setup', appTitle);
@@ -212,6 +223,7 @@ function renderAuthGate(appRoot, mode, appTitle = 'EVerest WebUI', message = '',
       }
       await sendAuthRequest('/auth/login', { username, password });
       const status = await readAuthStatus();
+      if (getRebootRecovery().observeStatus(status)) return;
       const effectiveTitle = normalizeAppTitle(status.appTitle || appTitle);
       if (status.uiBusy) {
         renderBusyGate(appRoot, effectiveTitle);
@@ -219,6 +231,10 @@ function renderAuthGate(appRoot, mode, appTitle = 'EVerest WebUI', message = '',
       }
       await startAuthenticatedApp(appRoot, effectiveTitle);
     } catch (error) {
+      if (error.message === 'login_not_allowed') {
+        getRebootRecovery().onLoginRestricted(error.reason || 'login_state_unavailable');
+        return;
+      }
       errorNode.textContent = formatAuthError(error.message);
     }
   });
@@ -268,15 +284,19 @@ async function sendAuthRequest(path, payload) {
   }
 
   let error = `HTTP ${response.status}`;
+  let reason;
   try {
     const body = await response.json();
     if (typeof body.error === 'string' && body.error.trim() !== '') {
       error = body.error;
     }
+    if (typeof body.reason === 'string') reason = body.reason;
   } catch (_) {
     // Keep the HTTP status fallback.
   }
-  throw new Error(error);
+  const failure = new Error(error);
+  failure.reason = reason;
+  throw failure;
 }
 
 function createLayout(appRoot) {
@@ -307,6 +327,10 @@ function createAppTransport(appContext) {
       const expectedReboot = getRebootRecovery().onDisconnected();
       appContext.state.page?.onConnectionChange?.(false);
       if (expectedReboot) return;
+      if (event?.reason === 'waiting_for_reboot' || event?.reason === 'login_state_unavailable') {
+        getRebootRecovery().onLoginRestricted(event.reason);
+        return;
+      }
       if (event?.reason === 'credentials reset' || event?.reason === 'session expired') {
         appContext.transport?.close();
         init().catch(() => window.location.reload());

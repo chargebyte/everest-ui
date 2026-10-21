@@ -4,6 +4,9 @@
   "body": {
     "setupRequired": false,
     "authenticated": false,
+    "loginAllowed": true,
+    "loginDisabledReason": "",
+    "rebootOperation": "",
     "uiBusy": false,
     "bootId": "11111111-1111-1111-1111-111111111111",
     "passwordReset": {

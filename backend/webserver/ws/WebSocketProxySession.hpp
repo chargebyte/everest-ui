@@ -23,6 +23,7 @@ public:
 
 public slots:
     void invalidateCredentials();
+    void restrictLogin(const QString &reason);
 
 private:
     static constexpr int kMaxPendingMessages = 256;

@@ -26,6 +26,7 @@ public:
     QString createSession(const QString &username);
     bool validateSession(const QString &sessionId);
     void removeSession(const QString &sessionId);
+    void invalidateSessions();
 
 private:
     struct UserRecord {

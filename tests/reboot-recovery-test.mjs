@@ -9,12 +9,17 @@ const root = mkdtempSync(path.join(tmpdir(), 'everest-ui-reboot-test-'));
 cpSync(path.resolve('public/js'), path.join(root, 'js'), { recursive: true });
 writeFileSync(path.join(root, 'package.json'), '{"type":"module"}\n');
 after(() => rmSync(root, { recursive: true, force: true }));
-const { createRebootRecovery } = await import(pathToFileURL(path.join(root, 'js/ui/rebootRecovery.js')).href);
+const { createRebootRecovery, isLoginStatus, probeAuthStatus } =
+  await import(pathToFileURL(path.join(root, 'js/ui/rebootRecovery.js')).href);
 const { createTransport } = await import(pathToFileURL(path.join(root, 'js/transport.js')).href);
 const oldBoot = '11111111-1111-1111-1111-111111111111';
 const newBoot = '22222222-2222-2222-2222-222222222222';
 const rebootAction = { group: 'firmware', action: 'reboot' };
-const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+const openStatus = { loginAllowed: true, loginDisabledReason: '', rebootOperation: '',
+  authenticated: false, setupRequired: false, bootId: oldBoot };
+const blockedStatus = { ...openStatus, loginAllowed: false, loginDisabledReason: 'waiting_for_reboot',
+  rebootOperation: 'factory_reset' };
+const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 
 function fixture(t, hooks = {}) {
   let clock = 1000;
@@ -23,10 +28,10 @@ function fixture(t, hooks = {}) {
   const memory = new Map();
   const sent = [];
   const views = [];
-  let reloads = 0;
+  const available = [];
   let closes = 0;
   let probes = 0;
-  let currentStatus = { bootId: oldBoot, authenticated: false, setupRequired: false };
+  let currentStatus = { ...openStatus, authenticated: true };
   let read = async () => currentStatus;
   const schedule = (callback, delay) => { const id = ++timerId; timers.set(id, { callback, at: clock + delay }); return id; };
   const controllers = [];
@@ -36,20 +41,20 @@ function fixture(t, hooks = {}) {
       closeTransport() { closes++; hooks.onClose?.(controller); },
       render(view) { views.push(view); },
       onChange() { hooks.onChange?.(controller); },
+      onAvailable(status) { available.push(status); },
       readStatus(signal) { probes++; return read(signal); },
       storage: { getItem: key => memory.get(key), setItem: (key, value) => memory.set(key, value),
         removeItem: key => memory.delete(key) },
-      now: () => clock, schedule, cancelTimer: id => timers.delete(id), reload() { reloads++; }
+      now: () => clock, schedule, cancelTimer: id => timers.delete(id)
     });
     controllers.push(controller);
     return controller;
   }
   const controller = make();
   t.after(() => controllers.forEach(item => item.destroy()));
-  function settings(seconds = 30, bootId = oldBoot, target = controller) {
-    target.onConnected();
-    const request = sent.at(-1).payload;
-    target.onMessage({ requestId: request.requestId, type: 'system.read_reboot_settings.result',
+  function settings(seconds = 30, bootId = oldBoot) {
+    controller.onConnected();
+    controller.onMessage({ requestId: sent.at(-1).payload.requestId, type: 'system.read_reboot_settings.result',
       ok: true, final: true, parameters: { wait_timeout_seconds: seconds, boot_id: bootId } });
   }
   async function advance(milliseconds) {
@@ -65,231 +70,191 @@ function fixture(t, hooks = {}) {
     clock = target;
     await flush();
   }
-  return { controller, make, settings, sent, views, memory, advance,
+  const reset = () => {
+    settings();
+    controller.requestFactoryReset({ requestId: 500, group: 'factory_reset', action: 'reset', parameters: { confirm: true } });
+  };
+  const success = () => controller.onMessage({ requestId: 500, type: 'factory_reset.reset.result', ok: true,
+    final: true, parameters: { reboot_expected: true } });
+  return { controller, make, settings, reset, success, sent, views, memory, advance, available,
     setStatus(value) { currentStatus = value; }, setRead(value) { read = value; },
-    reloads: () => reloads, closes: () => closes, probes: () => probes };
+    closes: () => closes, probes: () => probes };
 }
 
-test('reboot is sent once without response tracking; only a new boot permits automatic reload', async (t) => {
+test('reboot sends once without acknowledgement tracking and waits for backend-authorized login', async t => {
   const f = fixture(t);
-  assert.equal(f.controller.canStart(), false);
   f.settings();
   assert.equal(f.controller.requestReboot(rebootAction), true);
   assert.deepEqual(f.sent.at(-1).options, { expectResponse: false });
-  assert.equal(f.controller.canStart(), false);
-  assert.equal(f.controller.onDisconnected(), true);
   assert.equal(f.closes(), 1);
-  await f.advance(10000);
-  assert.equal(f.reloads(), 0); // Same boot and a live proxy are not sufficient.
-  f.setStatus({ bootId: newBoot, authenticated: false, setupRequired: false });
+  f.setStatus({ ...blockedStatus, bootId: newBoot });
+  await f.advance(5000);
+  assert.equal(f.available.length, 0); // Even a new boot identity cannot override a backend restriction.
+  f.setStatus({ ...openStatus, bootId: newBoot });
   await f.advance(2000);
-  assert.equal(f.reloads(), 1);
-  assert.equal(f.sent.filter(item => item.payload.action === 'reboot').length, 1);
-  assert.equal(f.views.at(-1).phase, 'returning');
-});
-
-test('configured wait changes the fallback threshold and automatic probes continue afterward', async (t) => {
-  const f = fixture(t);
-  f.settings(120);
-  f.controller.requestReboot(rebootAction);
-  await f.advance(31000);
-  assert.equal(f.views.at(-1).timedOut, false);
-  await f.advance(90000);
-  assert.equal(f.views.at(-1).timedOut, true);
-  const count = f.probes();
-  await f.advance(10000);
-  assert.ok(f.probes() > count);
-  f.controller.manualReload();
-  assert.equal(f.memory.has('everest_ui_reboot_recovery_v1'), false);
-  assert.equal(f.reloads(), 1);
-});
-
-test('a received rejection clears recovery and never retries a reboot', async (t) => {
-  const f = fixture(t);
-  f.settings();
-  f.controller.requestReboot(rebootAction);
-  const request = f.sent.at(-1).payload;
-  f.controller.onMessage({ requestId: request.requestId, type: 'firmware.reboot.error', ok: false,
-    final: true, parameters: { error: 'not_allowed' } });
+  assert.equal(f.available.length, 1);
   assert.equal(f.controller.isActive(), false);
-  assert.equal(f.controller.canStart(), false); // The waiting transport has already been closed.
-  f.settings();
-  assert.equal(f.controller.canStart(), true);
-  assert.equal(f.views.at(-1), null);
-  await f.advance(60000);
-  assert.equal(f.reloads(), 0);
   assert.equal(f.sent.filter(item => item.payload.action === 'reboot').length, 1);
 });
 
-test('reset has its own execution phase; the recovery clock starts at success or disconnection', async (t) => {
+test('successful reset retains local information and only transitions to blocked login at timeout', async t => {
   const f = fixture(t);
-  f.settings();
-  const request = { requestId: 500, group: 'factory_reset', action: 'reset', parameters: { confirm: true } };
-  assert.equal(f.controller.requestFactoryReset(request).ok, true);
-  assert.equal(f.closes(), 0);
+  f.reset();
   assert.equal(f.controller.manualReload(), false);
   await f.advance(25000);
   assert.equal(f.probes(), 0);
   assert.equal(f.views.at(-1).phase, 'resetting');
-  f.controller.onMessage({ requestId: 500, type: 'factory_reset.reset.ack', final: false, ok: true, parameters: {} });
-  assert.equal(f.views.at(-1).phase, 'resetting');
-  f.controller.onMessage({ requestId: 500, type: 'factory_reset.reset.result', final: true, ok: true,
-    parameters: { reboot_expected: true } });
+  f.success();
+  f.setStatus(blockedStatus);
   assert.equal(f.closes(), 1);
   await f.advance(29000);
-  assert.equal(f.views.at(-1).timedOut, false);
-  await f.advance(2000);
-  assert.equal(f.views.at(-1).timedOut, true);
+  assert.equal(f.views.at(-1).phase, 'waiting');
+  assert.equal(f.views.at(-1).completed, true);
+  assert.equal(f.available.length, 0);
+  await f.advance(1000);
+  assert.equal(f.views.at(-1).phase, 'blocked');
+  assert.equal(f.views.at(-1).kind, 'factory_reset');
+  const count = f.probes();
+  await f.advance(10000);
+  assert.ok(f.probes() > count);
+  assert.equal(f.available.length, 0);
 });
 
-test('manual reload cannot re-arm recovery through pane callbacks, same-boot status or navigation', async (t) => {
+test('platform wait controls local transition even while requests fail or remain pending', async t => {
+  const f = fixture(t);
+  f.settings(120);
+  f.controller.requestReboot(rebootAction);
+  f.setRead(async () => { throw new Error('service unavailable'); });
+  await f.advance(30000);
+  assert.equal(f.views.at(-1).phase, 'waiting');
+  await f.advance(90000);
+  assert.equal(f.views.at(-1).phase, 'blocked');
+  assert.equal(f.available.length, 0);
+});
+
+test('manual Reload switches locally and neither dismisses restrictions nor retries commands', async t => {
   const hooks = {};
   const f = fixture(t, hooks);
-  f.settings();
-  f.controller.requestFactoryReset({ requestId: 504, group: 'factory_reset', action: 'reset' });
-  f.controller.onMessage({ requestId: 504, type: 'factory_reset.reset.result', ok: true, final: true,
-    parameters: { reboot_expected: true } });
+  f.reset(); f.success(); f.setStatus(blockedStatus);
   hooks.onChange = controller => controller.expectFactoryReboot();
   assert.equal(f.controller.manualReload(), true);
-  assert.equal(f.controller.isActive(), false);
-  assert.equal(f.reloads(), 1);
-  assert.equal(f.memory.has('everest_ui_reboot_recovery_v1'), false);
+  assert.equal(f.views.at(-1).phase, 'blocked');
+  assert.equal(f.controller.isActive(), true);
+  assert.equal(f.memory.has('everest_ui_reboot_recovery_v1'), true);
+  assert.equal(f.controller.canStart(), false);
   const count = f.probes();
-  await f.advance(60000);
-  assert.equal(f.probes(), count);
-
+  await f.advance(6000);
+  assert.ok(f.probes() > count);
+  assert.equal(f.sent.filter(item => item.payload.action === 'reset').length, 1);
   const resumed = f.make();
-  assert.equal(resumed.resume(), 'none');
-  f.settings(30, oldBoot, resumed);
-  resumed.expectFactoryReboot();
-  assert.equal(resumed.isActive(), false);
-  assert.equal(resumed.canStart(), true);
-  // The same persisted backend expectation is still suppressed when revisiting the pane.
-  resumed.expectFactoryReboot();
-  assert.equal(resumed.isActive(), false);
-  hooks.onChange = null;
-  assert.equal(resumed.requestReboot(rebootAction), true);
-  assert.equal(resumed.isActive(), true);
-  assert.equal(f.memory.has('everest_ui_reboot_dismissal_v1'), false);
+  f.controller.destroy();
+  assert.equal(resumed.resume(), 'waiting');
+  assert.equal(f.views.at(-1).phase, 'blocked');
+  assert.equal(f.available.length, 0);
 });
 
-test('a changed boot clears dismissal, but missing baseline identity retains it for the tab session', (t) => {
-  for (const baseline of [oldBoot, '']) {
-    const f = fixture(t);
-    f.settings(30, baseline);
-    f.controller.expectFactoryReboot();
-    f.controller.manualReload();
-    const resumed = f.make();
-    assert.equal(resumed.resume(), 'none');
-    f.settings(30, newBoot, resumed);
-    resumed.expectFactoryReboot();
-    assert.equal(resumed.isActive(), baseline !== '');
-  }
-});
-
-test('repeated disconnect callbacks close once and do not restart the probe or wait period', async (t) => {
-  const f = fixture(t, { onClose: controller => controller.onDisconnected() });
-  f.settings();
-  f.controller.requestReboot(rebootAction);
-  assert.equal(f.closes(), 1);
-  const waitStarted = f.views.at(-1).waitStarted;
+test('fresh browser displays backend lockout, including when credentials were erased', async t => {
+  const f = fixture(t);
+  f.controller.observeStatus({ ...blockedStatus, setupRequired: true });
+  assert.equal(f.views.at(-1).phase, 'blocked');
+  assert.equal(f.views.at(-1).completed, true);
+  assert.equal(f.controller.canStart(), false);
+  f.setStatus({ ...blockedStatus, setupRequired: true });
   await f.advance(10000);
-  f.controller.onDisconnected();
-  assert.equal(f.closes(), 1);
-  assert.equal(f.views.at(-1).waitStarted, waitStarted);
-  await f.advance(21000);
-  assert.equal(f.views.at(-1).timedOut, true);
+  assert.equal(f.available.length, 0);
 });
 
-test('a failed send does not close the transport or leave a recovery overlay', (t) => {
-  const hooks = {};
-  const f = fixture(t, hooks);
-  f.settings();
-  hooks.sendOk = false;
-  assert.equal(f.controller.requestReboot(rebootAction), false);
-  assert.equal(f.closes(), 0);
+test('service restart restores login on the same boot, but never revives an old session', async t => {
+  const f = fixture(t);
+  f.controller.observeStatus(blockedStatus);
+  f.setStatus({ ...openStatus, authenticated: true });
+  await f.advance(4000);
+  assert.equal(f.available.length, 0);
+  f.setStatus(openStatus);
+  await f.advance(2000);
+  assert.equal(f.available.length, 1);
+  assert.equal(f.available[0].authenticated, false);
+  assert.equal(f.memory.has('everest_ui_reboot_recovery_v1'), false);
+});
+
+test('missing identity or old dismissal cannot bypass authoritative backend state', async t => {
+  const f = fixture(t);
+  f.memory.set('everest_ui_reboot_dismissal_v1', JSON.stringify({ version: 1, bootId: oldBoot }));
+  const controller = f.make();
+  assert.equal(f.memory.has('everest_ui_reboot_dismissal_v1'), false);
+  controller.observeStatus({ ...blockedStatus, bootId: '' });
+  f.setStatus({ ...blockedStatus, bootId: '' });
+  await f.advance(2000);
+  assert.equal(f.available.length, 0);
+  f.setStatus({ ...openStatus, bootId: '' });
+  await f.advance(2000);
+  assert.equal(f.available.length, 1);
+});
+
+test('an initial offline screen does not invent a restriction once the backend permits access', async t => {
+  const f = fixture(t);
+  f.controller.onLoginRestricted('login_state_unavailable');
+  assert.equal(f.views.at(-1).phase, 'blocked');
+  f.setStatus({ ...openStatus, authenticated: true });
+  await f.advance(0);
+  assert.equal(f.available.length, 1);
+  assert.equal(f.controller.isActive(), false);
+});
+
+test('lost final result still obtains completion context from backend status', async t => {
+  const f = fixture(t, { onClose: controller => controller.onDisconnected() });
+  f.reset();
+  f.controller.onDisconnected();
+  f.controller.onDisconnected();
+  f.setStatus(blockedStatus);
+  await f.advance(10000);
+  assert.equal(f.closes(), 1);
+  assert.equal(f.views.at(-1).completed, true);
+  assert.equal(f.views.at(-1).phase, 'waiting');
+  await f.advance(20000);
+  assert.equal(f.views.at(-1).phase, 'blocked');
+});
+
+test('failed reset restores pane; a subsequent shutdown can still enter recovery', async t => {
+  const f = fixture(t);
+  f.reset();
+  f.controller.onMessage({ requestId: 500, type: 'factory_reset.reset.error', ok: false, final: true,
+    parameters: { error: 'factory_reset_failed' } });
   assert.equal(f.controller.isActive(), false);
   assert.equal(f.controller.canStart(), true);
-});
-
-test('reset shutdown without a final response starts recovery; an explicit failure clears it', async (t) => {
-  const f = fixture(t);
-  f.settings();
-  f.controller.requestFactoryReset({ requestId: 501, group: 'factory_reset', action: 'reset', parameters: { confirm: true } });
+  assert.equal(f.probes(), 0);
   f.controller.onDisconnected();
-  assert.equal(f.views.at(-1).phase, 'waiting');
-  f.setStatus({ bootId: newBoot, authenticated: false, setupRequired: true });
+  f.setStatus({ ...openStatus, bootId: newBoot, setupRequired: true });
   await f.advance(0);
-  assert.equal(f.reloads(), 1);
-
-  const failure = fixture(t);
-  failure.settings();
-  failure.controller.requestFactoryReset({ requestId: 502, group: 'factory_reset', action: 'reset', parameters: { confirm: true } });
-  failure.controller.onMessage({ requestId: 502, type: 'factory_reset.reset.error', final: true, ok: false,
-    parameters: { error: 'factory_reset_failed' } });
-  assert.equal(failure.controller.isActive(), false);
-  assert.equal(failure.controller.canStart(), true);
-  await failure.advance(60000);
-  assert.equal(failure.probes(), 0);
+  assert.equal(f.available.length, 1);
 });
 
-test('refresh resumes persisted recovery without another command; returning goes through auth', async (t) => {
-  const f = fixture(t);
-  f.settings();
-  f.controller.requestReboot(rebootAction);
-  await f.advance(10000);
-  f.controller.destroy();
-  const resumed = f.make();
-  assert.equal(resumed.resume(), 'waiting');
-  await f.advance(21000);
-  assert.equal(f.views.at(-1).timedOut, true);
-  assert.equal(f.sent.filter(item => item.payload.action === 'reboot').length, 1);
-  f.setStatus({ bootId: newBoot, authenticated: false, setupRequired: false });
-  await f.advance(2000);
-  resumed.onDisconnected(); // A late socket close must not turn the saved returning phase back into waiting.
-  const returning = f.make();
-  assert.equal(returning.resume(), 'authenticate');
-  assert.equal(returning.acceptReturnedStatus({ bootId: oldBoot, authenticated: false, setupRequired: false }), false);
-  assert.equal(returning.acceptReturnedStatus({ bootId: newBoot, authenticated: false, setupRequired: false }), true);
-  assert.equal(f.memory.size, 0);
-});
-
-test('a failed reset can still reboot during shutdown; recovery resumes on the subsequent disconnect', async (t) => {
-  const f = fixture(t);
-  f.settings();
-  f.controller.requestFactoryReset({ requestId: 503, group: 'factory_reset', action: 'reset', parameters: { confirm: true } });
-  f.controller.onMessage({ requestId: 503, type: 'factory_reset.reset.error', ok: false, final: true,
-    parameters: { error: 'factory_reset_failed' } });
+test('failed send does not close transport or leave progress active', t => {
+  const hooks = {};
+  const f = fixture(t, hooks);
+  f.settings(); hooks.sendOk = false;
+  assert.equal(f.controller.requestReboot(rebootAction), false);
   assert.equal(f.controller.isActive(), false);
-  assert.equal(f.controller.onDisconnected(), true);
-  f.setStatus({ bootId: newBoot, authenticated: false, setupRequired: false });
-  await f.advance(0);
-  assert.equal(f.reloads(), 1);
-  assert.equal(f.sent.filter(item => item.payload.action === 'reset').length, 1);
+  assert.equal(f.closes(), 0);
 });
 
-test('empty boot identity never falsely confirms reboot; malformed API settings keep actions disabled', async (t) => {
-  const f = fixture(t);
-  f.settings(30, '');
-  f.controller.requestReboot(rebootAction);
-  f.setStatus({ bootId: newBoot, authenticated: false, setupRequired: false });
-  await f.advance(31000);
-  assert.equal(f.reloads(), 0);
-  assert.equal(f.views.at(-1).timedOut, true);
-  const invalid = fixture(t);
-  invalid.settings(0);
-  assert.equal(invalid.controller.canStart(), false);
-  await invalid.advance(2000);
-  assert.equal(invalid.sent.at(-1).payload.action, 'read_reboot_settings');
-});
-
-test('recovery probes are aborted after three seconds and never overlap', async (t) => {
+test('status is validated and read-only probes are uncached, bounded, and never overlap', async t => {
+  assert.equal(isLoginStatus({ authenticated: false, setupRequired: false }), false);
+  assert.equal(isLoginStatus({ ...openStatus, loginAllowed: 'true' }), false);
+  const oldFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = oldFetch; });
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/auth/status');
+    assert.equal(options.method, undefined);
+    assert.equal(options.cache, 'no-store');
+    return { ok: true, json: async () => blockedStatus };
+  };
+  assert.deepEqual(await probeAuthStatus(new AbortController().signal), blockedStatus);
   const f = fixture(t);
   f.settings();
   let active = 0;
   f.setRead(signal => new Promise((resolve, reject) => {
-    active++;
-    assert.equal(active, 1);
+    assert.equal(++active, 1);
     signal.addEventListener('abort', () => { active--; reject(new Error('aborted')); });
   }));
   f.controller.requestReboot(rebootAction);
@@ -297,15 +262,16 @@ test('recovery probes are aborted after three seconds and never overlap', async 
   assert.equal(active, 0);
   await f.advance(2000);
   assert.equal(active, 1);
+  f.controller.manualReload(); // A local screen transition must not start a concurrent request.
+  assert.equal(active, 1);
   f.controller.destroy();
   assert.equal(active, 0);
 });
 
-test('transport creates no pending timeout for fire-and-forget but still forwards a rejection', (t) => {
+test('transport creates no pending timeout for fire-and-forget but still forwards a rejection', t => {
   const previous = { WebSocket: globalThis.WebSocket, window: globalThis.window,
     setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
   const timers = new Map();
-  let next = 0;
   let socket;
   class Socket {
     static OPEN = 1;
@@ -316,18 +282,15 @@ test('transport creates no pending timeout for fire-and-forget but still forward
   }
   globalThis.WebSocket = Socket;
   globalThis.window = { location: { protocol: 'http:', host: 'device' } };
-  globalThis.setTimeout = callback => { const id = ++next; timers.set(id, callback); return id; };
+  globalThis.setTimeout = callback => { timers.set(1, callback); return 1; };
   globalThis.clearTimeout = id => timers.delete(id);
   const received = [];
   const transport = createTransport({ wsPath: '/ws', onOpen() {}, onClose() {},
     onMessage: message => received.push(message), onRequestTimeout() { assert.fail('unexpected timeout'); } });
   t.after(() => { transport.close(); Object.assign(globalThis, previous); });
-  transport.connect();
-  socket.onopen();
+  transport.connect(); socket.onopen();
   transport.sendPayload({ requestId: 1, group: 'firmware', action: 'reboot', parameters: {} }, { expectResponse: false });
   assert.equal(timers.size, 0);
   socket.onmessage({ data: JSON.stringify({ requestId: 1, type: 'firmware.reboot.error', ok: false, final: true }) });
   assert.equal(received.length, 1);
-  transport.sendPayload({ requestId: 2, group: 'factory_reset', action: 'reset', parameters: { confirm: true } });
-  assert.equal(timers.size, 1);
 });

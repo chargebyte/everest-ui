@@ -118,7 +118,7 @@ The following existing consumer semantics remain unchanged:
 | `factory_reset_command` | Empty or absent restores `/usr/sbin/factory-reset --force --reboot`; clearing it does not disable reset. Existing local overrides without `--reboot` must be updated explicitly. |
 | `factory_reset_timeout_seconds` | Empty, absent, invalid, or non-positive restores the 20-second execution timeout. |
 | `factory_reset_require_unplugged` | Only case-insensitive `false` bypasses RPC/EVSE discovery and the Unplugged guard; empty, absent, masked, or invalid enforces it. |
-| `reboot_wait_timeout_seconds` | First valid matching platform override, then base setting, then 30 seconds. Empty/invalid/non-positive values are skipped. The browser fetches this through the API; it is not a frontend setting. This controls the unconfirmed-reboot warning, not Reload availability. Reload is available immediately while waiting, and probing continues after the wait period. |
+| `reboot_wait_timeout_seconds` | First valid matching platform override, then base setting, then 30 seconds. Empty/invalid/non-positive values are skipped. The browser fetches this through the API; it is not a frontend setting. Controls the local transition from reboot progress to blocked login; probing continues. Does not clear the backend login restriction. Reload makes this transition immediately without a network reload. |
 | `ssh_control_method` | Empty or absent selects `ssh-autostart`; this chooses a control mechanism, not SSH enablement. |
 | `app_title` | Empty or absent restores automatic title lookup, not a blank title. |
 | `allow_origin` | Empty or absent disables the additional configured-origin check; authentication is unchanged. |

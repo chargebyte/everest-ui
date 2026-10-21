@@ -61,6 +61,12 @@ int main(int argc, char *argv[]) {
                          if (!client) {
                              return;
                          }
+                         const auto login = server.refreshLoginState();
+                         if (!login.allowed) {
+                             client->close(QWebSocketProtocol::CloseCodePolicyViolated, login.reason);
+                             QObject::connect(client, &QWebSocket::disconnected, client, &QObject::deleteLater);
+                             return;
+                         }
                          // Revalidate after upgrade: a reset may have invalidated the cookie
                          // while the WebSocket handshake was in flight.
                          QString session;
@@ -85,6 +91,8 @@ int main(int argc, char *argv[]) {
                                                    &uiOccupancyTracker, client);
                          QObject::connect(&server, &StaticServer::credentialsReset,
                                           proxy, &WebSocketProxySession::invalidateCredentials);
+                         QObject::connect(&server, &StaticServer::loginRestricted,
+                                          proxy, &WebSocketProxySession::restrictLogin);
                      });
 
     if (!server.listen(cfg.bindAddress, cfg.port)) {

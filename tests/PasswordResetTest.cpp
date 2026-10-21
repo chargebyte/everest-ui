@@ -6,6 +6,7 @@
 #include "ServerConfig.hpp"
 #include "UiOccupancyTracker.hpp"
 #include "WebSocketProxySession.hpp"
+#include "LoginState.hpp"
 #include <QWebSocket>
 #include <QWebSocketServer>
 #include <QtTest>
@@ -71,6 +72,8 @@ private slots:
         oldRuntime = qgetenv("RUNTIME_DIRECTORY");
         qputenv("RUNTIME_DIRECTORY", dir.path().toUtf8());
         for (const auto &name : QDir(dir.path()).entryList(QDir::Files)) QFile::remove(dir.path() + '/' + name);
+        QString error;
+        QVERIFY2(UiRuntime::initializeLoginState(error), qPrintable(error));
         now = 100000;
         markerValue();
     }
@@ -281,6 +284,79 @@ private slots:
         QTRY_COMPARE(closed.count(), 1);
         QCOMPARE(client.closeReason(), QString("credentials reset"));
         QCOMPARE(forwarded.count(), 1);
+    }
+    void rebootRestrictionInvalidatesSessionsAndBlocksAuthAndApplicationAccess() {
+        AuthManager auth(authPath());
+        user(auth);
+        const auto session = auth.createSession("alice");
+        ServerConfig cfg;
+        cfg.passwordResetBootStatusPath = marker();
+        cfg.maxRequestBytes = 8192;
+        cfg.normalizedWsPath = "/ws";
+        UiOccupancyTracker occupancy;
+        StaticServer server(cfg, &auth, nullptr, &occupancy);
+        QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+        QSignalSpy restricted(&server, &StaticServer::loginRestricted);
+        QString error;
+        QVERIFY(UiRuntime::blockLoginForReboot(QStringLiteral("factory_reset"), error));
+        QTRY_COMPARE(restricted.count(), 1);
+        QVERIFY(!auth.validateSession(session));
+        QVERIFY(auth.authenticate("alice", "password1")); // Credentials are retained.
+        const QByteArray cookie = "Cookie: everest_ui_session=" + session.toUtf8() + "\r\n";
+        const auto status = request(server, "/auth/status", {}, cookie);
+        QVERIFY(status.startsWith("HTTP/1.1 200"));
+        QVERIFY(status.contains("\"authenticated\":false"));
+        QVERIFY(status.contains("\"loginAllowed\":false"));
+        QVERIFY(status.contains("\"loginDisabledReason\":\"waiting_for_reboot\""));
+        QVERIFY(status.contains("\"rebootOperation\":\"factory_reset\""));
+        QVERIFY(status.contains("Max-Age=0"));
+        for (const auto& path : {QByteArray("/auth/login"), QByteArray("/auth/setup"), QByteArray("/auth/reset")}) {
+            const auto response = request(server, path, "{\"username\":\"alice\",\"password\":\"password1\",\"confirm\":true}",
+                                          cookie + "Content-Type: application/json\r\n");
+            QVERIFY2(response.startsWith("HTTP/1.1 503"), response.constData());
+            QVERIFY(response.contains("\"error\":\"login_not_allowed\""));
+        }
+        QVERIFY(request(server, "/config/parameter_catalog.json", {}, cookie).startsWith("HTTP/1.1 503"));
+        QVERIFY(request(server, "/ws", {}, cookie +
+                        "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n"
+                        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n").startsWith("HTTP/1.1 503"));
+        QVERIFY(UiRuntime::initializeLoginState(error)); // Launcher restart clears the restriction, never old sessions.
+        const auto restarted = request(server, "/auth/status", {}, cookie);
+        QVERIFY(restarted.contains("\"loginAllowed\":true"));
+        QVERIFY(restarted.contains("\"authenticated\":false"));
+        QVERIFY(QFile::remove(UiRuntime::loginStatePath()));
+        const auto missing = request(server, "/auth/status", {}, cookie);
+        QVERIFY(missing.contains("\"loginDisabledReason\":\"login_state_unavailable\""));
+        QVERIFY(missing.contains("\"loginAllowed\":false"));
+    }
+    void rebootRestrictionClosesExistingWebSocket() {
+        AuthManager auth(authPath());
+        user(auth);
+        const auto session = auth.createSession("alice");
+        ServerConfig cfg;
+        cfg.passwordResetBootStatusPath = marker();
+        UiOccupancyTracker occupancy;
+        StaticServer server(cfg, &auth, nullptr, &occupancy);
+        QWebSocketServer frontend("test", QWebSocketServer::NonSecureMode);
+        QWebSocketServer backend("backend", QWebSocketServer::NonSecureMode);
+        QVERIFY(frontend.listen(QHostAddress::LocalHost, 0));
+        QVERIFY(backend.listen(QHostAddress::LocalHost, 0));
+        connect(&frontend, &QWebSocketServer::newConnection, this, [&] {
+            auto *peer = frontend.nextPendingConnection();
+            auto *proxy = new WebSocketProxySession(peer,
+                QUrl(QString("ws://127.0.0.1:%1").arg(backend.serverPort())), &occupancy, peer);
+            connect(&server, &StaticServer::loginRestricted, proxy, &WebSocketProxySession::restrictLogin);
+        });
+        QWebSocket browser;
+        QSignalSpy closed(&browser, &QWebSocket::disconnected);
+        browser.open(QUrl(QString("ws://127.0.0.1:%1").arg(frontend.serverPort())));
+        QTRY_VERIFY(occupancy.isBusy());
+        QString error;
+        QVERIFY(UiRuntime::blockLoginForReboot(QStringLiteral("reboot"), error));
+        QTRY_COMPARE(closed.count(), 1);
+        QCOMPARE(browser.closeReason(), QStringLiteral("waiting_for_reboot"));
+        QVERIFY(!occupancy.isBusy());
+        QVERIFY(!auth.validateSession(session));
     }
     void authStatusIsInformationalWhileUiOccupied() {
         AuthManager auth(authPath());

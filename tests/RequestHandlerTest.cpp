@@ -6,6 +6,7 @@
 
 #include "ProtocolSchema.hpp"
 #include "ResponseBuilder.hpp"
+#include "LoginState.hpp"
 
 #include <QJsonDocument>
 #include <QSignalSpy>
@@ -14,6 +15,7 @@
 #include <QHostAddress>
 #include <QWebSocket>
 #include <QWebSocketServer>
+#include <QTemporaryDir>
 
 namespace {
 bool waitForSignal(QSignalSpy &spy, int timeoutMs) {
@@ -23,9 +25,13 @@ bool waitForSignal(QSignalSpy &spy, int timeoutMs) {
 
 class RequestHandlerTest final : public QObject {
     Q_OBJECT
+    QTemporaryDir m_runtimeDirectory;
+    QByteArray m_previousRuntime;
 
 private slots:
     void initTestCase() {
+        m_previousRuntime = qgetenv("RUNTIME_DIRECTORY");
+        qputenv("RUNTIME_DIRECTORY", m_runtimeDirectory.path().toUtf8());
         qRegisterMetaType<ModuleRequest>("ModuleRequest");
         QVERIFY(m_server.listen(QHostAddress::LocalHost));
         connect(&m_server, &QWebSocketServer::newConnection, this, [this]() {
@@ -38,6 +44,31 @@ private slots:
 
     void cleanup() {
         m_handler.setSocket(nullptr);
+    }
+
+    void init() {
+        QString error;
+        QVERIFY2(UiRuntime::initializeLoginState(error), qPrintable(error));
+    }
+
+    void cleanupTestCase() {
+        if (m_previousRuntime.isNull()) qunsetenv("RUNTIME_DIRECTORY");
+        else qputenv("RUNTIME_DIRECTORY", m_previousRuntime);
+    }
+
+    void restrictedLoginCannotDispatchApplicationRequests() {
+        QWebSocket client;
+        connectClient(client);
+        QSignalSpy requests(&m_handler, &RequestHandler::systemControlEnqueueRequested);
+        QSignalSpy pcap(&m_handler, &RequestHandler::pcapEnqueueRequested);
+        QSignalSpy closed(&client, &QWebSocket::disconnected);
+        QString error;
+        QVERIFY(UiRuntime::blockLoginForReboot(QStringLiteral("factory_reset"), error));
+        sendRequest(client, 1);
+        QVERIFY(waitForSignal(closed, 1000));
+        QCOMPARE(requests.count(), 0);
+        QCOMPARE(pcap.count(), 0);
+        QCOMPARE(client.closeReason(), QStringLiteral("waiting_for_reboot"));
     }
 
     void lateResponseDoesNotReachNextSession() {

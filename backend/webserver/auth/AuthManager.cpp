@@ -109,6 +109,10 @@ bool AuthManager::resetUser(QString &errorMessage) {
     return true;
 }
 
+void AuthManager::invalidateSessions() {
+    m_sessions.clear();
+}
+
 QString AuthManager::createSession(const QString &username) {
     if (!m_loaded || !m_hasUser || username.trimmed().toLower() != m_user.username) {
         return QString();

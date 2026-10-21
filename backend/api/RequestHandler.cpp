@@ -4,6 +4,7 @@
 
 #include "RequestHandler.hpp"
 
+#include "LoginState.hpp"
 #include "ProtocolSchema.hpp"
 #include "ResponseBuilder.hpp"
 
@@ -11,6 +12,7 @@
 #include <QDataStream>
 #include <QJsonDocument>
 #include <QWebSocket>
+#include <QWebSocketProtocol>
 
 namespace {
 bool isAck(const QJsonObject &obj) {
@@ -74,6 +76,11 @@ void RequestHandler::handleTextMessage(const QString &message) {
     }
 
     const QJsonObject obj = doc.object();
+    const auto login = UiRuntime::readLoginState();
+    if (!login.allowed && !isAck(obj)) {
+        if (m_socket) m_socket->close(QWebSocketProtocol::CloseCodePolicyViolated, login.reason);
+        return;
+    }
     if (isPcapChunkAck(obj)) {
         handlePcapChunkAck(obj);
         return;

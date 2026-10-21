@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 chargebyte GmbH
 #include "FactoryResetRuntime.hpp"
+#include "LoginState.hpp"
 
 #include <QFile>
 #include <QJsonDocument>
@@ -17,6 +18,7 @@ private:
     QList<int> m_checked;
     bool m_unplugged = true;
     int m_loads = 0;
+    QByteArray m_previousRuntime;
 
     QString script(const QByteArray& body) {
         const auto path = m_dir.filePath(QStringLiteral("fake-reset"));
@@ -50,11 +52,20 @@ private:
 
 private slots:
     void initTestCase() {
+        m_previousRuntime = qgetenv("RUNTIME_DIRECTORY");
+        qputenv("RUNTIME_DIRECTORY", m_dir.path().toUtf8());
         qRegisterMetaType<ModuleResponse>();
+    }
+
+    void cleanupTestCase() {
+        if (m_previousRuntime.isNull()) qunsetenv("RUNTIME_DIRECTORY");
+        else qputenv("RUNTIME_DIRECTORY", m_previousRuntime);
     }
 
     void init() {
         QVERIFY(m_dir.isValid());
+        QString error;
+        QVERIFY2(UiRuntime::initializeLoginState(error), qPrintable(error));
         m_config = {{"factory_reset_command", script("exit 0\n")}};
         m_effective = QJsonDocument::fromJson(R"({"active_modules":{"evse":{"module":"EvseManager"}}})").object();
         m_unplugged = true;
@@ -157,6 +168,10 @@ private slots:
         const auto final = last(responses);
         QVERIFY(final.final);
         QCOMPARE(final.success, success);
+        const auto login = UiRuntime::readLoginState();
+        QCOMPARE(login.allowed, !success);
+        QCOMPARE(login.reason, success ? QStringLiteral("waiting_for_reboot") : QString());
+        QCOMPARE(login.operation, success ? QStringLiteral("factory_reset") : QString());
         QCOMPARE(final.parameters.value("reboot_expected").toBool(), success);
         QCOMPARE(final.parameters.size(), 1);
         if (!success)

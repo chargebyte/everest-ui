@@ -5,6 +5,7 @@
 #include "SystemControlHandler.hpp"
 #include "BackendConfig.hpp"
 #include "EverestServiceControl.hpp"
+#include "LoginState.hpp"
 #include "ProtocolSchema.hpp"
 #include "RebootSettings.hpp"
 #include "RpcApiClient.hpp"
@@ -48,6 +49,7 @@ SystemControl::SystemControl(RpcApiClient* rpcApiClient, QObject* parent) :
 }
 
 void SystemControl::enqueueRequest(const ModuleRequest& request) {
+    if (!UiRuntime::readLoginState().allowed) return;
     if (request.group == ModuleGroup::System && request.action == QLatin1String(kActionReadRebootSettings)) {
         emitResponse(handleSystemRequest(request));
         return;
@@ -103,6 +105,11 @@ void SystemControl::enqueueRequest(const ModuleRequest& request) {
 
 void SystemControl::processQueue() {
     if (m_pendingRequest.has_value()) {
+        return;
+    }
+
+    if (!UiRuntime::readLoginState().allowed) {
+        m_queue.clear();
         return;
     }
 

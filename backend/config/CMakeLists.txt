@@ -1,4 +1,4 @@
-add_library(everest_ui_config STATIC LayeredConfig.cpp)
+add_library(everest_ui_config STATIC LayeredConfig.cpp LoginState.cpp)
 target_include_directories(everest_ui_config PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" PRIVATE "${CMAKE_BINARY_DIR}")
 target_link_libraries(everest_ui_config PUBLIC ${QT_PACKAGE_NAME}::Core)
 

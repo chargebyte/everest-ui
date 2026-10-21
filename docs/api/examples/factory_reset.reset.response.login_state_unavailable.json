@@ -1,0 +1,8 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "factory_reset.reset.error",
+  "parameters": { "error": "login_state_unavailable", "reboot_expected": true },
+  "responseId": "r-2"
+}

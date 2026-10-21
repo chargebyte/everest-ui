@@ -5,9 +5,9 @@
 #include "StaticServer.hpp"
 #include "AppTitleResolver.hpp"
 #include "AuthManager.hpp"
+#include "BootIdentity.hpp"
 #include "RequestParsing.hpp"
 #include "RequestSecurity.hpp"
-#include "BootIdentity.hpp"
 #include "StaticContent.hpp"
 #include "UiOccupancyTracker.hpp"
 
@@ -76,7 +76,28 @@ StaticServer::StaticServer(const ServerConfig &cfg,
       m_wsPath(cfg.normalizedWsPath.toUtf8()),
       m_maxRequestBytes(cfg.maxRequestBytes),
       m_enforceOrigin(cfg.enforceOrigin),
-      m_allowOriginUrl(cfg.allowOriginUrl) { m_passwordReset.initialize(); }
+      m_allowOriginUrl(cfg.allowOriginUrl) {
+    m_passwordReset.initialize();
+    auto *loginTimer = new QTimer(this);
+    loginTimer->setInterval(250);
+    connect(loginTimer, &QTimer::timeout, this, [this]() { refreshLoginState(); });
+    loginTimer->start();
+    refreshLoginState();
+}
+
+UiRuntime::LoginState StaticServer::refreshLoginState() {
+    const auto state = UiRuntime::readLoginState();
+    if (!state.allowed) {
+        if (m_authManager) m_authManager->invalidateSessions();
+        if (m_loginRestriction != state.reason) {
+            m_loginRestriction = state.reason;
+            emit loginRestricted(state.reason);
+        }
+    } else {
+        m_loginRestriction.clear();
+    }
+    return state;
+}
 
 
 void StaticServer::incomingConnection(qintptr handle) {
@@ -156,6 +177,15 @@ void StaticServer::handleRequest(QTcpSocket *socket, QTimer *headerTimer) {
         return;
     }
 
+    const auto login = refreshLoginState();
+    if (!login.allowed && !isPublicFrontendAsset(request)) {
+        response = makeJsonResponse(503, QStringLiteral("Service Unavailable"),
+                                    {{"error", "login_not_allowed"}, {"reason", login.reason}});
+        response.headers.append({"Set-Cookie", clearSessionCookieHeader()});
+        sendResponseAndClose(socket, response);
+        return;
+    }
+
     // WebSocket-upgrade flow, Step 1:
     // Detect browser intent to upgrade this HTTP connection to WebSocket
     // ("GET /ws" + Upgrade headers). If detected, hand off this same TCP socket
@@ -213,6 +243,7 @@ bool StaticServer::isPublicFrontendAsset(const ParsedRequest &request) const {
 }
 
 bool StaticServer::isAuthenticated(const ParsedRequest &request) {
+    if (!refreshLoginState().allowed) return false;
     if (!m_authManager || !m_authManager->hasUser()) {
         return false;
     }
@@ -236,25 +267,40 @@ StaticResponse StaticServer::handleAuthRequest(const ParsedRequest &request) {
                                     QByteArrayLiteral("Method Not Allowed"));
         }
 
-        const bool authenticated = isAuthenticated(request);
+        const auto login = refreshLoginState();
+        const bool authenticated = login.allowed && isAuthenticated(request);
         const bool uiBusy = authenticated && m_uiOccupancyTracker && m_uiOccupancyTracker->isBusy();
-        return makeJsonResponse(200, QStringLiteral("OK"),
+        auto response = makeJsonResponse(200, QStringLiteral("OK"),
                                 QJsonObject{{QStringLiteral("setupRequired"),
                                              m_authManager->setupRequired()},
                                             {QStringLiteral("authenticated"),
                                              authenticated},
+                                            {QStringLiteral("loginAllowed"), login.allowed},
+                                            {QStringLiteral("loginDisabledReason"), login.reason},
+                                            {QStringLiteral("rebootOperation"), login.operation},
                                             {QStringLiteral("uiBusy"), uiBusy},
                                             {QStringLiteral("bootId"), UiRuntime::deviceBootId()},
-                                            {QStringLiteral("passwordReset"), m_passwordReset.status(m_authManager->hasUser())},
+                                            {QStringLiteral("passwordReset"), login.allowed ? m_passwordReset.status(m_authManager->hasUser())
+                                                : QJsonObject{{"available", false}, {"reason", login.reason}}},
                                             {QStringLiteral("appTitle"),
-                                             m_appTitleResolver
+                                             login.allowed && m_appTitleResolver
                                                  ? m_appTitleResolver->title()
                                                  : QStringLiteral("EVerest WebUI")}});
+        if (!login.allowed) response.headers.append({"Set-Cookie", clearSessionCookieHeader()});
+        return response;
     }
 
     if (request.method != "POST") {
         return makeTextResponse(405, QStringLiteral("Method Not Allowed"),
                                 QByteArrayLiteral("Method Not Allowed"));
+    }
+
+    const auto login = refreshLoginState();
+    if (!login.allowed && request.normalizedPath != "/auth/logout") {
+        auto response = makeJsonResponse(503, QStringLiteral("Service Unavailable"),
+                                         {{"error", "login_not_allowed"}, {"reason", login.reason}});
+        response.headers.append({"Set-Cookie", clearSessionCookieHeader()});
+        return response;
     }
 
     if (request.normalizedPath == "/auth/reset" || request.normalizedPath == "/auth/setup") {

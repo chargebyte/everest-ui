@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "headers": {
+    "Cache-Control": "no-store",
+    "Set-Cookie": "everest_ui_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"
+  },
+  "body": {
+    "setupRequired": false,
+    "authenticated": false,
+    "loginAllowed": false,
+    "loginDisabledReason": "waiting_for_reboot",
+    "rebootOperation": "reboot",
+    "uiBusy": false,
+    "bootId": "11111111-1111-1111-1111-111111111111",
+    "passwordReset": { "available": false, "reason": "waiting_for_reboot" },
+    "appTitle": "EVerest WebUI"
+  }
+}

@@ -4,9 +4,12 @@
 import { buildRequest } from '../protocol/requestBuilder.js';
 
 const storageKey = 'everest_ui_reboot_recovery_v1';
-const dismissalKey = 'everest_ui_reboot_dismissal_v1';
 const uuid = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const validWait = (value) => Number.isInteger(value) && value > 0 && value <= 2147483;
+const validWait = value => Number.isInteger(value) && value > 0 && value <= 2147483;
+export const isLoginStatus = status => typeof status?.loginAllowed === 'boolean' &&
+  typeof status.loginDisabledReason === 'string' && typeof status.authenticated === 'boolean' &&
+  typeof status.setupRequired === 'boolean' && (status.loginAllowed
+    ? status.loginDisabledReason === '' : status.loginDisabledReason !== '');
 
 function browserStorage() {
   try { return globalThis.sessionStorage; } catch { return null; }
@@ -15,12 +18,14 @@ function browserStorage() {
 export async function probeAuthStatus(signal) {
   const response = await fetch('/auth/status', { cache: 'no-store', credentials: 'same-origin', signal });
   if (!response.ok) throw new Error(`Auth status failed: HTTP ${response.status}`);
-  return response.json();
+  const status = await response.json();
+  if (!isLoginStatus(status)) throw new Error('Invalid authentication status');
+  return status;
 }
 
 export function createRebootRecovery({ sendPayload, closeTransport, render = () => {}, onChange = () => {},
-  readStatus = probeAuthStatus, storage = browserStorage(), now = Date.now,
-  schedule = setTimeout, cancelTimer = clearTimeout, reload = () => window.location.reload() }) {
+  onAvailable = () => {}, readStatus = probeAuthStatus, storage = browserStorage(), now = Date.now,
+  schedule = setTimeout, cancelTimer = clearTimeout }) {
   let settings = null;
   let settingsRequest = null;
   let settingsTimer = null;
@@ -28,24 +33,24 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
   let pending = null;
   let recentFailure = null;
   let timer = null;
+  let deadlineTimer = null;
   let abort = null;
   let epoch = 0;
-  let waiting = false;
-  let leaving = false;
+  let polling = false;
   let transportClosed = false;
-  let dismissedBootId = null;
-  try {
-    const saved = JSON.parse(storage?.getItem(dismissalKey) || 'null');
-    if (saved?.version === 1 && typeof saved.bootId === 'string' &&
-        (saved.bootId === '' || uuid.test(saved.bootId))) dismissedBootId = saved.bootId;
-  } catch { /* Dismissal still works in memory when storage is unavailable. */ }
+  // Discard the old presentation-only dismissal; it must never override backend restrictions.
+  try { storage?.removeItem('everest_ui_reboot_dismissal_v1'); } catch { /* Optional storage. */ }
 
-  function dismiss(bootId) {
-    dismissedBootId = bootId;
+  function persist() {
     try {
-      if (bootId === null) storage?.removeItem(dismissalKey);
-      else storage?.setItem(dismissalKey, JSON.stringify({ version: 1, bootId }));
-    } catch { /* Do not prevent manual reload when storage is unavailable. */ }
+      if (pending) storage?.setItem(storageKey, JSON.stringify(pending));
+      else storage?.removeItem(storageKey);
+    } catch { /* In-memory progress remains available. */ }
+  }
+
+  function show() {
+    render(pending ? { ...pending } : null);
+    onChange();
   }
 
   function stopTransport() {
@@ -57,24 +62,12 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
     closeTransport();
   }
 
-  function persist() {
-    try {
-      if (pending) storage?.setItem(storageKey, JSON.stringify(pending));
-      else storage?.removeItem(storageKey);
-    } catch { /* In-memory recovery still works when browser storage is unavailable. */ }
-  }
-
-  function show() {
-    render(pending ? { ...pending, timedOut: pending.waitStarted !== null &&
-      now() >= pending.waitStarted + pending.waitSeconds * 1000 } : null);
-    onChange();
-  }
-
   function cancelProbe() {
-    waiting = false;
+    polling = false;
     epoch++;
     cancelTimer(timer);
-    timer = null;
+    cancelTimer(deadlineTimer);
+    timer = deadlineTimer = null;
     abort?.abort();
     abort = null;
   }
@@ -87,8 +80,46 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
     show();
   }
 
+  function blockedScreen() {
+    if (!pending || pending.phase === 'resetting') return false;
+    pending.phase = 'blocked';
+    persist();
+    show();
+    return true;
+  }
+
+  function observeStatus(status) {
+    if (!isLoginStatus(status)) return false;
+    if (!status.loginAllowed) {
+      if (!pending) {
+        pending = { version: 1, kind: status.rebootOperation === 'factory_reset' ? 'factory_reset' : 'reboot',
+          requestId: -1, phase: 'blocked', bootId: status.bootId || '', waitSeconds: 30, waitStarted: now() };
+      }
+      pending.loginBlocked = true;
+      pending.reason = status.loginDisabledReason;
+      if (status.rebootOperation === 'factory_reset') {
+        pending.kind = 'factory_reset';
+        pending.completed = status.loginDisabledReason === 'waiting_for_reboot';
+      }
+      if (pending.phase === 'resetting') pending.phase = 'waiting';
+      persist();
+      waitForReturn();
+      show();
+      return true;
+    }
+    if (!pending) return false;
+    // The backend, not the browser's boot heuristic, authorizes return after reboot or service restart.
+    if (!status.authenticated || (pending.reason === 'login_state_unavailable' && !pending.completed)) {
+      stopTransport();
+      clear();
+      onAvailable(status);
+      return true;
+    }
+    return false;
+  }
+
   async function probe() {
-    if (!pending || pending.phase !== 'waiting') return;
+    if (!pending || pending.phase === 'resetting') return;
     const generation = epoch;
     const controller = new AbortController();
     abort = controller;
@@ -96,43 +127,37 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
     try {
       const status = await readStatus(controller.signal);
       if (generation !== epoch || !pending) return;
-      if (uuid.test(pending.bootId) && uuid.test(status.bootId) && status.bootId !== pending.bootId &&
-          typeof status.setupRequired === 'boolean' && status.authenticated === false) {
-        pending.phase = 'returning';
-        persist();
-        show();
-        reload();
-        return;
-      }
-    } catch { /* Network failures are expected while the device is rebooting. */ }
+      observeStatus(status);
+    } catch { /* Preserve local progress while the device or web service is unavailable. */ }
     finally {
       cancelTimer(timeout);
       if (abort === controller) abort = null;
     }
-    if (generation === epoch && pending?.phase === 'waiting') {
-      show();
-      timer = schedule(probe, 2000);
-    }
+    if (generation === epoch && pending) timer = schedule(probe, 2000);
   }
 
   function waitForReturn() {
-    if (!pending || leaving) return;
-    if (!waiting || pending.phase !== 'waiting') {
-      cancelProbe();
-      waiting = true;
-      pending.phase = 'waiting';
-      if (pending.waitStarted === null) pending.waitStarted = now();
-      persist();
-      show();
+    if (!pending) return;
+    if (pending.phase === 'resetting') pending.phase = 'waiting';
+    if (pending.waitStarted === null) pending.waitStarted = now();
+    if (pending.phase === 'waiting' && now() >= pending.waitStarted + pending.waitSeconds * 1000) {
+      pending.phase = 'blocked';
+    }
+    persist();
+    if (!polling) {
+      polling = true;
+      if (pending.phase === 'waiting') {
+        deadlineTimer = schedule(blockedScreen, Math.max(0, pending.waitStarted + pending.waitSeconds * 1000 - now()));
+      }
       timer = schedule(probe, 0);
     }
     stopTransport();
+    show();
   }
 
-  function canStart() { return !leaving && connected && settings !== null && pending === null; }
+  function canStart() { return connected && settings !== null && pending === null; }
 
   function begin(kind, requestId, phase) {
-    dismiss(null);
     recentFailure = null;
     pending = { version: 1, kind, requestId, phase, bootId: settings.boot_id,
       waitSeconds: settings.wait_timeout_seconds, waitStarted: null, disconnected: false };
@@ -141,19 +166,22 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
   }
 
   function loadSettings() {
-    if (leaving || !connected || pending || settingsRequest !== null) return;
+    if (!connected || pending || settingsRequest !== null) return;
     const request = buildRequest('system', 'read_reboot_settings', {});
-    const result = sendPayload(request);
-    if (result.ok) settingsRequest = request.requestId;
+    if (sendPayload(request).ok) settingsRequest = request.requestId;
     else settingsTimer = schedule(loadSettings, 2000);
   }
 
   return {
     canStart,
     isActive: () => pending !== null,
+    observeStatus,
+    onLoginRestricted(reason) {
+      observeStatus({ loginAllowed: false, loginDisabledReason: reason, authenticated: false, setupRequired: false });
+    },
     onConnected() {
       transportClosed = false;
-      if (leaving) { stopTransport(); return; }
+      if (pending) { stopTransport(); return; }
       connected = true;
       settings = null;
       loadSettings();
@@ -163,16 +191,13 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
       connected = false;
       settingsRequest = null;
       cancelTimer(settingsTimer);
-      if (leaving) return true;
       if (!pending && recentFailure && now() <= recentFailure.expires) {
         pending = { ...recentFailure };
         delete pending.expires;
         recentFailure = null;
       }
       if (!pending) { onChange(); return false; }
-      if (pending.phase === 'returning') { stopTransport(); return true; }
       pending.disconnected = true;
-      persist();
       waitForReturn();
       return true;
     },
@@ -192,10 +217,7 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
       return result;
     },
     expectFactoryReboot() {
-      if (canStart() && dismissedBootId === null) {
-        begin('factory_reset', -1, 'waiting');
-        waitForReturn();
-      }
+      if (canStart()) { begin('factory_reset', -1, 'waiting'); waitForReturn(); }
     },
     onMessage(message) {
       if (settingsRequest !== null && message.requestId === settingsRequest && message.final !== false) {
@@ -203,26 +225,20 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
         const values = message.parameters;
         if (message.ok && message.type === 'system.read_reboot_settings.result' &&
             validWait(values?.wait_timeout_seconds) && typeof values.boot_id === 'string' &&
-            (values.boot_id === '' || uuid.test(values.boot_id))) {
-          settings = values;
-          if (uuid.test(dismissedBootId) && uuid.test(values.boot_id) && values.boot_id !== dismissedBootId) {
-            dismiss(null);
-          }
-        } else {
-          settings = null;
-          settingsTimer = schedule(loadSettings, 2000);
-        }
+            (values.boot_id === '' || uuid.test(values.boot_id))) settings = values;
+        else { settings = null; settingsTimer = schedule(loadSettings, 2000); }
         onChange();
         return true;
       }
       if (!pending || String(message.requestId) !== String(pending.requestId) || message.final === false) return false;
-      if (!message.ok && !pending.disconnected) {
+      if (message.parameters?.reboot_expected === true) {
+        pending.completed = true;
+        waitForReturn();
+      } else if (!message.ok && !pending.disconnected && !pending.loginBlocked) {
         const failure = pending.kind === 'factory_reset' && message.parameters?.error === 'factory_reset_failed'
           ? { ...pending, expires: now() + pending.waitSeconds * 1000 } : null;
         clear();
         recentFailure = failure;
-      } else if (pending.kind === 'factory_reset' && message.parameters?.reboot_expected === true) {
-        waitForReturn();
       }
       return false;
     },
@@ -232,47 +248,27 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
         settingsTimer = schedule(loadSettings, 2000);
         return true;
       }
-      if (pending && String(requestId) === String(pending.requestId)) {
-        if (pending.phase !== 'returning') waitForReturn();
-        return true;
-      }
+      if (pending && String(requestId) === String(pending.requestId)) { waitForReturn(); return true; }
       return false;
     },
     resume() {
-      if (leaving) return 'none';
       if (!pending) {
         try {
           const value = JSON.parse(storage?.getItem(storageKey) || 'null');
           if (value?.version === 1 && ['reboot', 'factory_reset'].includes(value.kind) &&
-              ['resetting', 'waiting', 'returning'].includes(value.phase) && validWait(value.waitSeconds) &&
+              ['resetting', 'waiting', 'blocked', 'returning'].includes(value.phase) && validWait(value.waitSeconds) &&
               typeof value.bootId === 'string' && (value.bootId === '' || uuid.test(value.bootId)) &&
               (value.waitStarted === null || (Number.isFinite(value.waitStarted) && value.waitStarted >= 0)) &&
               Number.isFinite(value.requestId)) pending = value;
-        } catch { /* Ignore malformed or inaccessible saved state. */ }
+        } catch { /* Saved operation context conveys progress, never authorization. */ }
       }
       if (!pending) return 'none';
-      if (pending.phase === 'returning') { show(); return 'authenticate'; }
+      if (pending.phase === 'returning') pending.phase = 'waiting';
       waitForReturn();
       return 'waiting';
     },
-    acceptReturnedStatus(status) {
-      if (!pending || pending.phase !== 'returning' || !uuid.test(pending.bootId) ||
-          !uuid.test(status.bootId) || status.bootId === pending.bootId || status.authenticated !== false ||
-          typeof status.setupRequired !== 'boolean') return false;
-      clear();
-      return true;
-    },
     retryRecovery: waitForReturn,
-    manualReload() {
-      if (!pending || pending.phase === 'resetting') return false;
-      // Prevent pane notifications from re-arming recovery before navigation completes.
-      leaving = true;
-      dismiss(pending.bootId);
-      stopTransport();
-      clear();
-      reload();
-      return true;
-    },
+    manualReload: blockedScreen,
     destroy() { cancelProbe(); cancelTimer(settingsTimer); }
   };
 }
@@ -280,10 +276,9 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
 export function createRebootOverlay(appRoot, onReload) {
   let element = null;
   let previousFocus = null;
-  return (state) => {
+  return state => {
     if (!state) {
-      element?.remove();
-      element = null;
+      element?.remove(); element = null;
       appRoot.inert = false;
       previousFocus?.focus?.();
       return;
@@ -301,7 +296,7 @@ export function createRebootOverlay(appRoot, onReload) {
       document.body.appendChild(element);
       appRoot.inert = true;
       element.querySelector('button').addEventListener('click', onReload);
-      element.addEventListener('keydown', (event) => {
+      element.addEventListener('keydown', event => {
         if (event.key === 'Tab') {
           event.preventDefault();
           const button = element.querySelector('button');
@@ -311,14 +306,19 @@ export function createRebootOverlay(appRoot, onReload) {
       element.querySelector('section').focus();
     }
     const resetting = state.phase === 'resetting';
+    const blocked = state.phase === 'blocked';
+    element.className = `reboot-recovery-overlay${blocked ? ' reboot-login-blocked' : ''}`;
     element.querySelector('h2').textContent = resetting ? 'Factory reset in progress'
-      : state.timedOut ? 'Reboot not confirmed' : 'Waiting for device reboot';
+      : blocked ? 'Login not allowed' : 'Waiting for device reboot';
+    const context = state.kind === 'factory_reset' && state.completed
+      ? 'Factory reset completed. ' : '';
     const message = resetting
       ? 'The device will reboot automatically after factory reset. You will need to log in again.'
-      : state.timedOut
-        ? 'A reboot has not been confirmed. Automatic checks will continue. You can reload now to check the device. If it has not rebooted, your existing login may still be valid.'
-        : 'A reboot is expected. The UI will reload automatically after the device reboots. You can also reload now; this does not cancel or retry the operation.';
+      : blocked
+        ? `${context}${state.reason && state.reason !== 'waiting_for_reboot'
+          ? 'Login is temporarily unavailable. Waiting for backend status.' : 'Login not allowed: waiting for device reboot.'} Automatic checks will continue.`
+        : `${context}Waiting for the device to reboot. You will need to log in again.`;
     if (element.querySelector('p').textContent !== message) element.querySelector('p').textContent = message;
-    element.querySelector('button').hidden = resetting;
+    element.querySelector('button').hidden = resetting || blocked;
   };
 }

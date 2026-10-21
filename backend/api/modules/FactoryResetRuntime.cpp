@@ -3,6 +3,7 @@
 #include "FactoryResetRuntime.hpp"
 
 #include "ConsoleConnector.hpp"
+#include "LoginState.hpp"
 #include "ProtocolSchema.hpp"
 
 #include <QDebug>
@@ -195,8 +196,13 @@ void FactoryResetRuntime::finish(bool success, bool attempted) {
     QJsonObject parameters;
     if (success) {
         parameters.insert(QStringLiteral("reboot_expected"), true);
+        QString error;
+        if (!UiRuntime::blockLoginForReboot(QStringLiteral("factory_reset"), error)) {
+            parameters.insert(QStringLiteral("error"), QStringLiteral("login_state_unavailable"));
+            success = false;
+        }
     }
-    if (!success) {
+    if (!success && !parameters.contains(QStringLiteral("error"))) {
         parameters.insert(QStringLiteral("error"), attempted ? QStringLiteral("factory_reset_failed")
                                                              : QStringLiteral("factory_reset_not_allowed"));
     }

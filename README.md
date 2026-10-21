@@ -176,9 +176,10 @@ listed; for example, `available_features=network`. Other feature names are reser
 ## Reboot Recovery
 
 Reboot requests are sent once, without waiting for an API acknowledgement: the API is terminated by
-the reboot as well. A blocking overlay shows progress and automatically checks for the device's return.
-After a new Linux boot is confirmed, the UI reloads to login. Factory reset may instead require initial
-user setup if it removes the stored credentials. No reset or reboot command is automatically repeated.
+the reboot as well. A blocking overlay keeps progress visible locally and checks for the device's return.
+Successful factory reset and accepted explicit reboot requests invalidate all sessions and block new
+login in the backend. Firmware-update completion alone does not block login until reboot is requested.
+No reset or reboot command is automatically repeated.
 
 The backend supplies the wait period through `system.read_reboot_settings`, not `frontend.conf`:
 
@@ -189,26 +190,29 @@ reboot_wait_timeout_seconds.chargebyte,imx6ull-tarragon-master=120
 ```
 
 Compatible strings come from `/proc/device-tree/compatible`; the first valid matching override wins,
-then the base setting, then the 30-second fallback. **Reload** is available immediately while waiting
-for reboot, but not while factory reset is still executing. After the configured period, the overlay
-warns that reboot has not been confirmed; automatic checks continue. Clicking Reload stops recovery
-and reloads manually, without cancelling or retrying the backend operation. A dismissed factory-reset
-reboot expectation stays dismissed for this boot in this browser tab, including after page navigation
-or reload. If no boot identity is available, dismissal lasts for the tab session. A new boot or explicit
-maintenance operation clears it. The backend maintenance lock is not cleared by Reload.
-Ordinary refreshes during recovery preserve the pending wait in session storage. When recovery is confirmed, a
-temporary authentication-service failure after automatic reload resumes the checks rather than showing
-an offline page. If browser storage is unavailable, recovery can only survive within the current page.
+then the base setting, then the 30-second fallback. The waiting overlay retains factory-reset completion
+information even when the session or WebSocket is closed. After the configured wait it changes locally
+to **Login not allowed: waiting for device reboot.** **Reload** makes this local transition immediately;
+it does not clear the backend restriction, retry the operation, or navigate to an unavailable service.
+Underlying pages remain inaccessible. Checks continue from the blocked-access screen. Browser refresh
+uses saved operation context if the web service is temporarily unreachable; that context never grants access.
 
-Recovery probes `/auth/status` every two seconds with a three-second request limit. It requires a
-changed `bootId` and a valid unauthenticated status response; a live proxy or static page is not proof
-of reboot. A generic webserver/proxy must forward `/auth/*` and `/ws` to the device and must not cache
-authentication responses. Missing boot identity prevents automatic confirmation; manual reload remains
-available. The UI releases its WebSocket when waiting for reboot, so it does not retain the exclusive UI
-slot. Informational status polls do not log blocked-access messages. If no reboot occurs, manually
-reloading can return to the existing authenticated session; a login is required only after a real reboot
-(or session expiry). Factory-reset failures reported before disconnection are displayed rather than
-treated as reboot.
+Recovery probes `/auth/status` every two seconds with a three-second request limit. Only the backend's
+`loginAllowed` status permits normal login/setup again; Linux boot identity is informational, not permission
+to bypass the restriction. A real reboot or `systemctl restart everest-ui.service` removes the restriction,
+but old sessions remain invalid. Factory reset may require initial setup if it removes credentials.
+The browser only presents this state; the API and webserver enforce it for every client, including clients
+without JavaScript. A proxy must forward `/auth/*` and `/ws` and must not cache authentication status.
+Informational status polls do not log blocked-access messages. Failed factory reset does not activate
+this login block. A reboot command that fails after acceptance leaves login blocked until service restart
+or device reboot.
+
+The launcher initializes `/run/everest-ui/login-state.json` (or the directory in `RUNTIME_DIRECTORY`)
+before starting its children, with directory mode `0700` and file mode `0600`. Only this login state is
+reset on service startup; password-recovery allowance state is preserved. Missing, unreadable, malformed,
+or symlinked login state disables login with `login_state_unavailable`. When running helpers manually,
+start them through the launcher so runtime state is initialized. Restarting just the browser or a helper
+does not clear it. No browser unlock action is provided.
 
 ## Factory Reset
 
@@ -242,8 +246,8 @@ receives only generic failure. The Controller Firmware Reboot button continues t
 `firmware_reboot_command` (default `reboot`), independently of the reset tool's automatic reboot.
 
 Browser disconnects do not cancel reset. A successful command response reports `reboot_expected`,
-not reboot completion. Backend operation state lasts only for the API process lifetime; browser recovery
-uses the Linux boot ID instead. See [Factory Reset API](docs/api/API.md#factory-reset) for wire messages.
+not reboot completion. The shared backend login restriction remains active across browser reloads and
+is cleared on launcher/service restart or device reboot. See [Factory Reset API](docs/api/API.md#factory-reset) for wire messages.
 Existing local command overrides remain authoritative: update an override without `--reboot` to opt
 into the new default behavior, otherwise automatic reboot may never occur.
 
@@ -328,8 +332,9 @@ stop/start operations. The `everest-ui` launcher passes `RUNTIME_DIRECTORY` to `
 its actual value determines the directory for `password-reset-state.json` and
 `password-reset.lock`, both mode `0600`. A non-blocking `flock` serializes
 initialization and reset. Missing or unusable runtime environment disables reset
-but leaves ordinary login available. Manual starts do not create a fallback
-directory. Tests can supply an existing temporary directory through the variable.
+but does not itself disable ordinary login (the separate reboot login restriction still applies).
+Password recovery does not infer a fallback directory from login state. Tests can supply an existing
+temporary directory through the variable.
 Do not remove the state or lock file during a boot. `/run` is cleared on device
 reboot; the stored Linux boot ID is also checked.
 
