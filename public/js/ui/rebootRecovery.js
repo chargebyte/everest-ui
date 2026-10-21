@@ -6,6 +6,7 @@ import { buildRequest } from '../protocol/requestBuilder.js';
 const storageKey = 'everest_ui_reboot_recovery_v1';
 const uuid = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const validWait = value => Number.isInteger(value) && value > 0 && value <= 2147483;
+const confirmed = state => state.operationAccepted === true || state.restrictionObserved === true;
 export const isLoginStatus = status => typeof status?.loginAllowed === 'boolean' &&
   typeof status.loginDisabledReason === 'string' && typeof status.authenticated === 'boolean' &&
   typeof status.setupRequired === 'boolean' && (status.loginAllowed
@@ -38,6 +39,7 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
   let epoch = 0;
   let polling = false;
   let transportClosed = false;
+  let probeAgain = false;
   // Discard the old presentation-only dismissal; it must never override backend restrictions.
   try { storage?.removeItem('everest_ui_reboot_dismissal_v1'); } catch { /* Optional storage. */ }
 
@@ -70,6 +72,7 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
     timer = deadlineTimer = null;
     abort?.abort();
     abort = null;
+    probeAgain = false;
   }
 
   function clear() {
@@ -80,39 +83,49 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
     show();
   }
 
-  function blockedScreen() {
+  function outcomeScreen() {
     if (!pending || pending.phase === 'resetting') return false;
-    pending.phase = 'blocked';
+    pending.phase = confirmed(pending) ? 'blocked' : 'unconfirmed';
     persist();
     show();
     return true;
   }
 
-  function observeStatus(status) {
+  function observeStatus(status, { probeStartedAt = null } = {}) {
     if (!isLoginStatus(status)) return false;
     if (!status.loginAllowed) {
       if (!pending) {
         pending = { version: 1, kind: status.rebootOperation === 'factory_reset' ? 'factory_reset' : 'reboot',
           requestId: -1, phase: 'blocked', bootId: status.bootId || '', waitSeconds: 30, waitStarted: now() };
       }
-      pending.loginBlocked = true;
+      pending.restrictionObserved = true;
       pending.reason = status.loginDisabledReason;
+      if (status.loginDisabledReason === 'waiting_for_reboot') pending.operationAccepted = true;
       if (status.rebootOperation === 'factory_reset') {
         pending.kind = 'factory_reset';
         pending.completed = status.loginDisabledReason === 'waiting_for_reboot';
       }
       if (pending.phase === 'resetting') pending.phase = 'waiting';
+      if (pending.phase === 'unconfirmed') pending.phase = 'blocked';
       persist();
       waitForReturn();
       show();
       return true;
     }
     if (!pending) return false;
-    // The backend, not the browser's boot heuristic, authorizes return after reboot or service restart.
-    if (!status.authenticated || (pending.reason === 'login_state_unavailable' && !pending.completed)) {
+    const freshAfterDeadline = probeStartedAt !== null && pending.waitStarted !== null &&
+      probeStartedAt >= pending.waitStarted + pending.waitSeconds * 1000;
+    const freshAfterRejection = probeStartedAt !== null && pending.rejected === true &&
+      probeStartedAt >= pending.rejectionObservedAt;
+    const unconfirmedReturn = !confirmed(pending) &&
+      (pending.statusCheckOnly === true || freshAfterDeadline || freshAfterRejection);
+    // A real restriction requires session invalidation. An unaccepted request must not trap a valid session.
+    if (!status.authenticated || unconfirmedReturn) {
+      const notice = status.authenticated && !pending.statusCheckOnly
+        ? pending.knownFailure ? 'factory_reset_failed' : 'reboot_not_confirmed' : undefined;
       stopTransport();
       clear();
-      onAvailable(status);
+      onAvailable(status, { notice });
       return true;
     }
     return false;
@@ -121,19 +134,30 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
   async function probe() {
     if (!pending || pending.phase === 'resetting') return;
     const generation = epoch;
+    const probeStartedAt = now();
+    timer = null;
     const controller = new AbortController();
     abort = controller;
     const timeout = schedule(() => controller.abort(), 3000);
     try {
       const status = await readStatus(controller.signal);
       if (generation !== epoch || !pending) return;
-      observeStatus(status);
+      observeStatus(status, { probeStartedAt });
     } catch { /* Preserve local progress while the device or web service is unavailable. */ }
     finally {
       cancelTimer(timeout);
       if (abort === controller) abort = null;
     }
-    if (generation === epoch && pending) timer = schedule(probe, 2000);
+    if (generation === epoch && pending) {
+      timer = schedule(probe, probeAgain ? 0 : 2000);
+      probeAgain = false;
+    }
+  }
+
+  function checkImmediately() {
+    if (abort) { probeAgain = true; return; }
+    cancelTimer(timer);
+    timer = schedule(probe, 0);
   }
 
   function waitForReturn() {
@@ -141,13 +165,13 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
     if (pending.phase === 'resetting') pending.phase = 'waiting';
     if (pending.waitStarted === null) pending.waitStarted = now();
     if (pending.phase === 'waiting' && now() >= pending.waitStarted + pending.waitSeconds * 1000) {
-      pending.phase = 'blocked';
+      pending.phase = confirmed(pending) ? 'blocked' : 'unconfirmed';
     }
     persist();
     if (!polling) {
       polling = true;
       if (pending.phase === 'waiting') {
-        deadlineTimer = schedule(blockedScreen, Math.max(0, pending.waitStarted + pending.waitSeconds * 1000 - now()));
+        deadlineTimer = schedule(outcomeScreen, Math.max(0, pending.waitStarted + pending.waitSeconds * 1000 - now()));
       }
       timer = schedule(probe, 0);
     }
@@ -160,7 +184,8 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
   function begin(kind, requestId, phase) {
     recentFailure = null;
     pending = { version: 1, kind, requestId, phase, bootId: settings.boot_id,
-      waitSeconds: settings.wait_timeout_seconds, waitStarted: null, disconnected: false };
+      waitSeconds: settings.wait_timeout_seconds, waitStarted: null, disconnected: false,
+      operationAccepted: false, restrictionObserved: false };
     persist();
     show();
   }
@@ -178,6 +203,14 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
     observeStatus,
     onLoginRestricted(reason) {
       observeStatus({ loginAllowed: false, loginDisabledReason: reason, authenticated: false, setupRequired: false });
+    },
+    onStatusUnavailable() {
+      if (!pending) {
+        pending = { version: 1, kind: 'reboot', requestId: -1, phase: 'unconfirmed', bootId: '',
+          waitSeconds: 30, waitStarted: now(), statusCheckOnly: true,
+          operationAccepted: false, restrictionObserved: false };
+      }
+      waitForReturn();
     },
     onConnected() {
       transportClosed = false;
@@ -217,7 +250,12 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
       return result;
     },
     expectFactoryReboot() {
-      if (canStart()) { begin('factory_reset', -1, 'waiting'); waitForReturn(); }
+      if (canStart()) {
+        begin('factory_reset', -1, 'waiting');
+        pending.operationAccepted = true;
+        pending.completed = true;
+        waitForReturn();
+      }
     },
     onMessage(message) {
       if (settingsRequest !== null && message.requestId === settingsRequest && message.final !== false) {
@@ -232,13 +270,22 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
       }
       if (!pending || String(message.requestId) !== String(pending.requestId) || message.final === false) return false;
       if (message.parameters?.reboot_expected === true) {
-        pending.completed = true;
+        pending.operationAccepted = true;
+        pending.completed = pending.kind === 'factory_reset';
+        if (pending.phase === 'unconfirmed') pending.phase = 'blocked';
         waitForReturn();
-      } else if (!message.ok && !pending.disconnected && !pending.loginBlocked) {
-        const failure = pending.kind === 'factory_reset' && message.parameters?.error === 'factory_reset_failed'
-          ? { ...pending, expires: now() + pending.waitSeconds * 1000 } : null;
-        clear();
-        recentFailure = failure;
+      } else if (!message.ok && !confirmed(pending)) {
+        pending.knownFailure = pending.kind === 'factory_reset' && message.parameters?.error === 'factory_reset_failed';
+        if (pending.phase === 'resetting' && !pending.disconnected) {
+          const failure = pending.knownFailure ? { ...pending, expires: now() + pending.waitSeconds * 1000 } : null;
+          clear();
+          recentFailure = failure;
+        } else {
+          pending.rejected = true;
+          pending.rejectionObservedAt = now();
+          waitForReturn();
+          checkImmediately();
+        }
       }
       return false;
     },
@@ -256,19 +303,25 @@ export function createRebootRecovery({ sendPayload, closeTransport, render = () 
         try {
           const value = JSON.parse(storage?.getItem(storageKey) || 'null');
           if (value?.version === 1 && ['reboot', 'factory_reset'].includes(value.kind) &&
-              ['resetting', 'waiting', 'blocked', 'returning'].includes(value.phase) && validWait(value.waitSeconds) &&
+              ['resetting', 'waiting', 'blocked', 'unconfirmed', 'returning'].includes(value.phase) && validWait(value.waitSeconds) &&
               typeof value.bootId === 'string' && (value.bootId === '' || uuid.test(value.bootId)) &&
               (value.waitStarted === null || (Number.isFinite(value.waitStarted) && value.waitStarted >= 0)) &&
-              Number.isFinite(value.requestId)) pending = value;
+              Number.isFinite(value.requestId)) {
+            pending = value;
+            // Preserve evidence from older saved contexts conservatively, without treating a request as acceptance.
+            pending.operationAccepted = value.operationAccepted === true || value.completed === true;
+            pending.restrictionObserved = value.restrictionObserved === true || value.loginBlocked === true;
+          }
         } catch { /* Saved operation context conveys progress, never authorization. */ }
       }
       if (!pending) return 'none';
       if (pending.phase === 'returning') pending.phase = 'waiting';
+      if (pending.phase === 'blocked' && !confirmed(pending)) pending.phase = 'unconfirmed';
       waitForReturn();
       return 'waiting';
     },
     retryRecovery: waitForReturn,
-    manualReload: blockedScreen,
+    manualReload: outcomeScreen,
     destroy() { cancelProbe(); cancelTimer(settingsTimer); }
   };
 }
@@ -307,18 +360,43 @@ export function createRebootOverlay(appRoot, onReload) {
     }
     const resetting = state.phase === 'resetting';
     const blocked = state.phase === 'blocked';
+    const unconfirmed = state.phase === 'unconfirmed';
+    const failedAvailability = state.knownFailure && !confirmed(state);
     element.className = `reboot-recovery-overlay${blocked ? ' reboot-login-blocked' : ''}`;
-    element.querySelector('h2').textContent = resetting ? 'Factory reset in progress'
-      : blocked ? 'Login not allowed' : 'Waiting for device reboot';
     const context = state.kind === 'factory_reset' && state.completed
       ? 'Factory reset completed. ' : '';
-    const message = resetting
-      ? 'The device will reboot automatically after factory reset. You will need to log in again.'
-      : blocked
-        ? `${context}${state.reason && state.reason !== 'waiting_for_reboot'
-          ? 'Login is temporarily unavailable. Waiting for backend status.' : 'Login not allowed: waiting for device reboot.'} Automatic checks will continue.`
-        : `${context}Waiting for the device to reboot. You will need to log in again.`;
+    let title = 'Waiting for device reboot';
+    let message = `${context}Waiting for the device to reboot. You will need to log in again.`;
+    if (resetting) {
+      title = 'Factory reset in progress';
+      message = 'The device will reboot automatically after factory reset. You will need to log in again.';
+    } else if (blocked) {
+      title = 'Login not allowed';
+      message = `${context}${state.reason && state.reason !== 'waiting_for_reboot'
+        ? 'Login is temporarily unavailable. Waiting for backend status.' : 'Login not allowed: waiting for device reboot.'} Automatic checks will continue.`;
+    } else if (failedAvailability) {
+      title = 'Checking device availability';
+      message = 'Factory reset failed. Checking device availability.';
+    } else if (unconfirmed) {
+      title = state.statusCheckOnly ? 'Checking device availability' : 'Reboot not confirmed';
+      message = `Unable to confirm ${state.statusCheckOnly ? 'device status' : 'reboot'}. Checking device availability.`;
+    }
+    element.querySelector('h2').textContent = title;
     if (element.querySelector('p').textContent !== message) element.querySelector('p').textContent = message;
-    element.querySelector('button').hidden = resetting || blocked;
+    element.querySelector('button').hidden = resetting || blocked || unconfirmed;
   };
+}
+
+export function showRecoveryNotice(root, notice) {
+  const messages = {
+    reboot_not_confirmed: 'Reboot was not confirmed. The backend still permits access.',
+    factory_reset_failed: 'Factory reset failed. The backend still permits access.'
+  };
+  if (!messages[notice]) return;
+  root.querySelector('.recovery-notice')?.remove();
+  const element = document.createElement('p');
+  element.className = 'recovery-notice';
+  element.setAttribute('role', 'status');
+  element.textContent = messages[notice];
+  (root.querySelector('.content') || root.querySelector('.auth-panel') || root).prepend(element);
 }

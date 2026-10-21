@@ -191,14 +191,26 @@ reboot_wait_timeout_seconds.chargebyte,imx6ull-tarragon-master=120
 
 Compatible strings come from `/proc/device-tree/compatible`; the first valid matching override wins,
 then the base setting, then the 30-second fallback. The waiting overlay retains factory-reset completion
-information even when the session or WebSocket is closed. After the configured wait it changes locally
-to **Login not allowed: waiting for device reboot.** **Reload** makes this local transition immediately;
-it does not clear the backend restriction, retry the operation, or navigate to an unavailable service.
-Underlying pages remain inaccessible. Checks continue from the blocked-access screen. Browser refresh
+information even when the session or WebSocket is closed. After the configured wait, a confirmed operation
+changes locally to **Login not allowed: waiting for device reboot.** An unconfirmed request instead shows
+**Reboot not confirmed** while checking device availability. **Reload** makes this presentation change
+immediately, but never shortens the verification wait or clears a backend restriction. It does not retry
+the operation or navigate to an unavailable service. Underlying pages remain inaccessible until the
+backend permits return. Checks continue from either screen. Browser refresh
 uses saved operation context if the web service is temporarily unreachable; that context never grants access.
 
+Sending a request or losing a connection is not proof of acceptance. Recovery records successful operation
+responses and actual backend restrictions separately from local connection errors. If no acceptance or
+restriction was observed, a new successful `/auth/status` probe started at or after the configured deadline
+may return to the existing authenticated session when `loginAllowed:true`. A received rejection triggers
+that fresh check immediately. The UI shows **Reboot was not confirmed. The backend still permits access.**
+An earlier permissive response or network error cannot release recovery. A known reset failure followed
+by an unrelated disconnect follows the same bounded availability check and retains its failure message.
+Once acceptance or denial has been observed, recovery remains strict and requires an unauthenticated,
+login-allowed status before returning. No login/logout calls or automatic operation retries are added.
+
 Recovery probes `/auth/status` every two seconds with a three-second request limit. Only the backend's
-`loginAllowed` status permits normal login/setup again; Linux boot identity is informational, not permission
+`loginAllowed` status permits access again; Linux boot identity is informational, not permission
 to bypass the restriction. A real reboot or `systemctl restart everest-ui.service` removes the restriction,
 but old sessions remain invalid. Factory reset may require initial setup if it removes credentials.
 The browser only presents this state; the API and webserver enforce it for every client, including clients

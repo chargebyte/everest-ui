@@ -7,7 +7,7 @@ import { formatAuthError } from './ui/authErrors.js';
 
 import { eyeIcon } from './ui/eyeIcon.js';
 import { createTransport } from './transport.js';
-import { createRebootRecovery, createRebootOverlay, probeAuthStatus } from './ui/rebootRecovery.js';
+import { createRebootRecovery, createRebootOverlay, probeAuthStatus, showRecoveryNotice } from './ui/rebootRecovery.js';
 import { renderLayout } from './ui/layout.js';
 import { appendLog, state } from './state.js';
 import { setUiLog, bindUiLogResize } from './ui/uiLog.js';
@@ -43,10 +43,15 @@ function getRebootRecovery() {
         if (view) disposePasswordReset();
         render(view);
       },
-      onAvailable(status) {
+      async onAvailable(status, { notice } = {}) {
         currentAppContext?.state.page?.destroy?.();
         currentAppContext = null;
-        displayAuthStatus(status).catch(() => getRebootRecovery().onLoginRestricted('login_state_unavailable'));
+        try {
+          await displayAuthStatus(status);
+          showRecoveryNotice(createAppRoot(), notice);
+        } catch {
+          getRebootRecovery().onStatusUnavailable();
+        }
       },
       onChange: () => currentAppContext?.state.page?.onRebootAvailabilityChange?.()
     });
@@ -62,7 +67,7 @@ async function init() {
     status = await readAuthStatus();
   } catch (error) {
     if (recovery.isActive()) { recovery.retryRecovery(); return; }
-    recovery.onLoginRestricted('login_state_unavailable');
+    recovery.onStatusUnavailable();
     return;
   }
   if (recovery.observeStatus(status)) return;

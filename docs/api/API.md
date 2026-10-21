@@ -283,7 +283,7 @@ If publishing the restriction fails, reboot is not scheduled and a
 The shared browser overlay blocks interaction during recovery. It probes `/auth/status` with
 `cache: no-store` and same-origin credentials, allowing three seconds per request and waiting two seconds
 between probes. A valid backend status with `loginAllowed:true` and `authenticated:false` permits the normal
-login/setup flow again, including after an administrator restarts the service without a device reboot. A changed
+login/setup flow again after a confirmed operation, including after an administrator restarts the service without a device reboot. A changed
 `bootId`, live proxy, or HTTP 200 alone cannot bypass `loginAllowed:false`. A proxy must forward `/auth/*` and
 `/ws` to the device and must not cache authentication status or substitute its own machine's boot identity.
 
@@ -295,17 +295,37 @@ restrictions remain enforced.
 
 The configured wait period starts when reboot is requested, or when factory reset reports success or
 disconnects. The browser keeps the locally rendered progress overlay even after backend session invalidation
-and WebSocket closure. Successful factory-reset completion remains visible. Expiry changes locally to a
-blocked-access screen: `Login not allowed: waiting for device reboot.` It does not navigate to an unavailable
-web service, cancel an operation, or stop probes. Reload performs this same local transition immediately;
-it is unavailable during reset execution. There is no same-boot dismissal or browser unlock.
+and WebSocket closure. Successful factory-reset completion remains visible. For confirmed operations, expiry
+changes locally to a blocked-access screen: `Login not allowed: waiting for device reboot.` Without evidence
+of acceptance or restriction, it instead shows `Reboot not confirmed` and continues availability checks;
+a known failed reset is described as failed, never completed or accepted. Neither screen navigates to an
+unavailable web service, cancels an operation, or stops probes. Reload performs this presentation transition
+immediately but does not shorten the verification deadline; it is unavailable during reset execution.
+There is no browser action to dismiss a real restriction.
+
+Recovery persists separate `operationAccepted` and `restrictionObserved` presentation flags. A received
+`reboot_expected:true`, an authoritative `waiting_for_reboot` close/error signal, or a status restriction
+confirms the operation or lockout. Sending a request, disconnecting, timing out, or failing to fetch status
+does not. Actual `login_state_unavailable` responses remain fail-closed; a local network error is not such
+a response and must not be treated as an observed backend restriction.
+
+If neither acceptance nor a restriction has been observed, recovery can exit after a successful status
+probe **started at or after** the configured deadline reports `loginAllowed:true`, including when the
+existing session remains `authenticated:true`. Pre-deadline responses cannot be reused for this decision.
+A received correlated rejection requests an immediate fresh status check, without overlapping an active
+probe; backend denial still wins. Returning to an authenticated session displays the non-blocking notice
+`Reboot was not confirmed. The backend still permits access.` A known failed reset followed by a transient
+disconnect uses the same bounded check, with a factory-reset-failed notice instead. No request is replayed.
+Once acceptance or denial is observed, `loginAllowed:true` alone is insufficient: the old session must also
+be unauthenticated. These are browser recovery rules only; backend access restrictions are unchanged.
 
 Operation context, policy, and wait start persist in session storage only to restore presentation on browser
 refresh or network failure. They grant no access and never override backend status. A fresh browser reads
 the same restriction from `/auth/status` without needing that saved state. The waiting screen is independent
 of login controls, contains no authentication mutation logic, and remains usable when frontend authentication
-UI is removed. Once the backend permits access again, normal login or setup is shown locally. No reset,
-reboot, login, or session-restoration action is automatically repeated by reboot recovery.
+UI is removed. Once recovery has validated backend permission, normal login/setup or an existing valid
+session is shown as described above. No reset, reboot, login, logout, or session-creation request is
+automatically repeated by reboot recovery. Public API fields and payloads are unchanged by these rules.
 
 ### Factory Reset
 

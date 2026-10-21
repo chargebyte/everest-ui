@@ -10,7 +10,7 @@ cpSync(path.resolve('public/js'), path.join(root, 'js'), { recursive: true });
 writeFileSync(path.join(root, 'package.json'), '{"type":"module"}\n');
 after(() => rmSync(root, { recursive: true, force: true }));
 const { renderFactoryResetPane } = await import(pathToFileURL(path.join(root, 'js/ui/factoryReset.js')).href);
-const { createRebootRecovery, createRebootOverlay } =
+const { createRebootRecovery, createRebootOverlay, showRecoveryNotice } =
   await import(pathToFileURL(path.join(root, 'js/ui/rebootRecovery.js')).href);
 
 class Element {
@@ -20,6 +20,7 @@ class Element {
   disabled = false;
   hidden = false;
   textContent = '';
+  attributes = new Map();
   set innerHTML(markup) {
     this.children.clear();
     for (const match of markup.matchAll(/<([a-z][a-z0-9]*)\b([^>]*)>/g)) {
@@ -30,10 +31,14 @@ class Element {
     }
   }
   querySelector(selector) {
-    return selector.startsWith('#') ? this.children.get(selector.slice(1))
-      : [...this.children.values()].find(child => child.tag === selector);
+    const direct = selector.startsWith('#') ? this.children.get(selector.slice(1))
+      : [...this.children.values()].find(child => selector.startsWith('.')
+        ? child.className?.split(' ').includes(selector.slice(1)) : child.tag === selector);
+    return direct || [...this.children.values()].map(child => child.querySelector(selector)).find(Boolean);
   }
   appendChild(child) { this.children.set(`child-${this.children.size}`, child); child.parent = this; }
+  prepend(child) { this.children = new Map([[Symbol(), child], ...this.children]); child.parent = this; }
+  setAttribute(name, value) { this.attributes.set(name, value); }
   remove() {
     for (const [key, child] of this.parent?.children || []) if (child === this) this.parent.children.delete(key);
   }
@@ -239,4 +244,39 @@ test('real overlay retains reset completion and Reload switches locally to block
   assert.equal(available, 1);
   assert.equal(app.inert, false);
   assert.equal(recovery.isActive(), false);
+});
+
+test('unconfirmed availability screens do not assert backend denial or successful reset', () => {
+  const app = new Element('main');
+  const render = createRebootOverlay(app, () => {});
+  render({ kind: 'reboot', phase: 'unconfirmed' });
+  const dialog = [...document.body.children.values()].at(-1);
+  assert.equal(dialog.querySelector('h2').textContent, 'Reboot not confirmed');
+  assert.doesNotMatch(dialog.querySelector('p').textContent, /Login not allowed/);
+  for (const phase of ['waiting', 'unconfirmed']) {
+    render({ kind: 'factory_reset', phase, knownFailure: true });
+    assert.equal(dialog.querySelector('h2').textContent, 'Checking device availability');
+    assert.match(dialog.querySelector('p').textContent, /Factory reset failed/);
+    assert.doesNotMatch(dialog.querySelector('p').textContent, /completed|Login not allowed/);
+  }
+  render({ kind: 'reboot', phase: 'blocked', restrictionObserved: true, reason: 'waiting_for_reboot' });
+  assert.equal(dialog.querySelector('h2').textContent, 'Login not allowed');
+  render(null);
+});
+
+test('recovery notices are non-blocking and replace an earlier notice', () => {
+  const app = new Element('main');
+  app.inert = false;
+  const content = new Element('section');
+  content.className = 'content';
+  app.appendChild(content);
+  showRecoveryNotice(app, 'reboot_not_confirmed');
+  assert.equal(content.querySelector('p').textContent, 'Reboot was not confirmed. The backend still permits access.');
+  assert.equal(content.querySelector('p').attributes.get('role'), 'status');
+  assert.equal(app.inert, false);
+  showRecoveryNotice(app, 'factory_reset_failed');
+  assert.equal(content.children.size, 1);
+  assert.equal(content.querySelector('p').textContent, 'Factory reset failed. The backend still permits access.');
+  showRecoveryNotice(app, undefined);
+  assert.equal(content.children.size, 1);
 });

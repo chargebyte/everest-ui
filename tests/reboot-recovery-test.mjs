@@ -29,6 +29,7 @@ function fixture(t, hooks = {}) {
   const sent = [];
   const views = [];
   const available = [];
+  const notices = [];
   let closes = 0;
   let probes = 0;
   let currentStatus = { ...openStatus, authenticated: true };
@@ -41,7 +42,7 @@ function fixture(t, hooks = {}) {
       closeTransport() { closes++; hooks.onClose?.(controller); },
       render(view) { views.push(view); },
       onChange() { hooks.onChange?.(controller); },
-      onAvailable(status) { available.push(status); },
+      onAvailable(status, { notice } = {}) { available.push(status); notices.push(notice); },
       readStatus(signal) { probes++; return read(signal); },
       storage: { getItem: key => memory.get(key), setItem: (key, value) => memory.set(key, value),
         removeItem: key => memory.delete(key) },
@@ -76,7 +77,7 @@ function fixture(t, hooks = {}) {
   };
   const success = () => controller.onMessage({ requestId: 500, type: 'factory_reset.reset.result', ok: true,
     final: true, parameters: { reboot_expected: true } });
-  return { controller, make, settings, reset, success, sent, views, memory, advance, available,
+  return { controller, make, settings, reset, success, sent, views, memory, advance, available, notices,
     setStatus(value) { currentStatus = value; }, setRead(value) { read = value; },
     closes: () => closes, probes: () => probes };
 }
@@ -128,7 +129,7 @@ test('platform wait controls local transition even while requests fail or remain
   await f.advance(30000);
   assert.equal(f.views.at(-1).phase, 'waiting');
   await f.advance(90000);
-  assert.equal(f.views.at(-1).phase, 'blocked');
+  assert.equal(f.views.at(-1).phase, 'unconfirmed');
   assert.equal(f.available.length, 0);
 });
 
@@ -193,12 +194,181 @@ test('missing identity or old dismissal cannot bypass authoritative backend stat
 
 test('an initial offline screen does not invent a restriction once the backend permits access', async t => {
   const f = fixture(t);
-  f.controller.onLoginRestricted('login_state_unavailable');
-  assert.equal(f.views.at(-1).phase, 'blocked');
+  f.controller.onStatusUnavailable();
+  assert.equal(f.views.at(-1).phase, 'unconfirmed');
   f.setStatus({ ...openStatus, authenticated: true });
   await f.advance(0);
   assert.equal(f.available.length, 1);
   assert.equal(f.controller.isActive(), false);
+});
+
+test('an actual unavailable-state denial cannot be confused with a local connection error', async t => {
+  const f = fixture(t);
+  f.controller.onStatusUnavailable();
+  f.setStatus({ ...blockedStatus, loginDisabledReason: 'login_state_unavailable', rebootOperation: '' });
+  await f.advance(0);
+  assert.equal(f.views.at(-1).restrictionObserved, true);
+  f.setStatus({ ...openStatus, authenticated: true });
+  await f.advance(40000);
+  assert.equal(f.available.length, 0);
+  f.setStatus(openStatus);
+  await f.advance(2000);
+  assert.equal(f.available.length, 1);
+});
+
+test('a lost reboot request releases a still-authenticated session only after a fresh post-deadline probe', async t => {
+  const f = fixture(t);
+  f.settings(1);
+  let firstResponse;
+  let reads = 0;
+  f.setRead(() => ++reads === 1 ? new Promise(resolve => { firstResponse = resolve; })
+    : Promise.resolve({ ...openStatus, authenticated: true }));
+  f.controller.requestReboot(rebootAction);
+  await f.advance(0);
+  await f.advance(1000);
+  assert.equal(f.views.at(-1).phase, 'unconfirmed');
+  firstResponse({ ...openStatus, authenticated: true });
+  await flush();
+  assert.equal(f.available.length, 0); // The response belongs to a probe started before the deadline.
+  await f.advance(2000);
+  assert.equal(reads, 2);
+  assert.equal(f.available.length, 1);
+  assert.equal(f.available[0].authenticated, true);
+  assert.equal(f.notices[0], 'reboot_not_confirmed');
+  assert.equal(f.controller.isActive(), false);
+  assert.equal(f.memory.has('everest_ui_reboot_recovery_v1'), false);
+  assert.equal(f.sent.filter(item => item.payload.action === 'reboot').length, 1);
+});
+
+test('a rejected reboot checks backend status immediately even if the socket already disconnected', async t => {
+  const f = fixture(t, { onClose: controller => controller.onDisconnected() });
+  f.settings();
+  f.controller.requestReboot(rebootAction);
+  const request = f.sent.at(-1).payload;
+  f.controller.onMessage({ requestId: request.requestId, type: 'firmware.reboot.error', ok: false,
+    final: true, parameters: { error: 'not_allowed' } });
+  await f.advance(0);
+  assert.equal(f.available.length, 1);
+  assert.equal(f.available[0].authenticated, true);
+  assert.equal(f.notices[0], 'reboot_not_confirmed');
+  assert.equal(f.sent.filter(item => item.payload.action === 'reboot').length, 1);
+});
+
+test('a rejection during a running probe requests a fresh check without overlapping requests', async t => {
+  const f = fixture(t);
+  f.settings();
+  let firstResponse;
+  let reads = 0;
+  f.setRead(() => ++reads === 1 ? new Promise(resolve => { firstResponse = resolve; })
+    : Promise.resolve(blockedStatus));
+  f.controller.requestReboot(rebootAction);
+  await f.advance(0);
+  await f.advance(10);
+  f.controller.onMessage({ requestId: f.sent.at(-1).payload.requestId, type: 'firmware.reboot.error', ok: false,
+    final: true, parameters: { error: 'not_allowed' } });
+  assert.equal(reads, 1);
+  firstResponse({ ...openStatus, authenticated: true });
+  await flush();
+  assert.equal(f.available.length, 0);
+  await f.advance(0);
+  assert.equal(reads, 2);
+  assert.equal(f.views.at(-1).restrictionObserved, true); // The backend restriction wins over the rejection.
+  f.setRead(async () => ({ ...openStatus, authenticated: true }));
+  await f.advance(40000);
+  assert.equal(f.available.length, 0);
+});
+
+test('delayed acceptance and a successful reset remain strict past the unconfirmed deadline', async t => {
+  const f = fixture(t);
+  f.settings();
+  f.controller.requestReboot(rebootAction);
+  await f.advance(20000);
+  assert.equal(f.available.length, 0);
+  f.setStatus(blockedStatus);
+  await f.advance(2000);
+  assert.equal(f.views.at(-1).operationAccepted, true);
+  f.setStatus({ ...openStatus, authenticated: true });
+  await f.advance(30000);
+  assert.equal(f.available.length, 0);
+  assert.equal(f.views.at(-1).phase, 'blocked');
+
+  const successful = fixture(t);
+  successful.reset(); successful.success();
+  await successful.advance(60000); // Acceptance alone is sufficient, even without observing a status restriction.
+  assert.equal(successful.available.length, 0);
+  assert.equal(successful.views.at(-1).operationAccepted, true);
+});
+
+test('failed reset plus unrelated disconnect recovers on the same authenticated service', async t => {
+  const f = fixture(t);
+  f.reset();
+  f.controller.onMessage({ requestId: 500, type: 'factory_reset.reset.error', ok: false, final: true,
+    parameters: { error: 'factory_reset_failed' } });
+  f.controller.onDisconnected();
+  await f.advance(29000);
+  assert.equal(f.available.length, 0);
+  assert.equal(f.views.at(-1).knownFailure, true);
+  assert.notEqual(f.views.at(-1).operationAccepted, true);
+  assert.notEqual(f.views.at(-1).completed, true);
+  await f.advance(2000);
+  assert.equal(f.available.length, 1);
+  assert.equal(f.available[0].authenticated, true);
+  assert.equal(f.notices[0], 'factory_reset_failed');
+  assert.equal(f.sent.filter(item => item.payload.action === 'reset').length, 1);
+});
+
+test('refresh preserves both an unconfirmed deadline and confirmed restriction evidence', async t => {
+  for (const accepted of [false, true]) {
+    const f = fixture(t);
+    f.settings(); f.controller.requestReboot(rebootAction);
+    if (accepted) f.controller.observeStatus(blockedStatus);
+    await f.advance(10000);
+    f.controller.destroy();
+    const resumed = f.make();
+    assert.equal(resumed.resume(), 'waiting');
+    await f.advance(19000);
+    assert.equal(f.available.length, 0);
+    await f.advance(2000);
+    assert.equal(f.available.length, accepted ? 0 : 1);
+    assert.equal(resumed.isActive(), accepted);
+  }
+});
+
+test('deadline does not reuse cached permissive status when the service becomes unavailable', async t => {
+  const f = fixture(t);
+  f.settings(); f.controller.requestReboot(rebootAction);
+  await f.advance(20000);
+  f.setRead(async () => { throw new Error('offline'); });
+  await f.advance(20000);
+  assert.equal(f.views.at(-1).phase, 'unconfirmed');
+  assert.equal(f.available.length, 0);
+  f.setRead(async () => ({ ...openStatus, authenticated: true }));
+  await f.advance(2000);
+  assert.equal(f.available.length, 1);
+});
+
+test('manual Reload changes unconfirmed presentation without shortening the verification wait', async t => {
+  const f = fixture(t);
+  f.settings(); f.controller.requestReboot(rebootAction);
+  assert.equal(f.controller.manualReload(), true);
+  assert.equal(f.views.at(-1).phase, 'unconfirmed');
+  await f.advance(29000);
+  assert.equal(f.available.length, 0);
+  await f.advance(2000);
+  assert.equal(f.available.length, 1);
+});
+
+test('legacy saved unconfirmed recovery can exit, while legacy restriction evidence stays latched', async t => {
+  for (const loginBlocked of [undefined, true]) {
+    const f = fixture(t);
+    f.memory.set('everest_ui_reboot_recovery_v1', JSON.stringify({ version: 1, kind: 'reboot', requestId: 42,
+      phase: 'blocked', bootId: oldBoot, waitSeconds: 1, waitStarted: 0, loginBlocked }));
+    const resumed = f.make();
+    resumed.resume();
+    await f.advance(0);
+    assert.equal(f.available.length, loginBlocked ? 0 : 1);
+    assert.equal(resumed.isActive(), loginBlocked === true);
+  }
 });
 
 test('lost final result still obtains completion context from backend status', async t => {
