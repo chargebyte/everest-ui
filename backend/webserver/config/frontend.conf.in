@@ -16,3 +16,16 @@ password_reset_window_seconds=60
 password_reset_boot_status_path=/sys/bus/nvmem/devices/44440000.bbnsm:nvmem0/nvmem
 # Additional trusted hostnames/IP literals, comma-separated, without schemes or ports.
 allowed_hosts=
+
+# -----------------------------------------------------------------------------
+# Local Overrides (documentation only)
+# This file contains package-owned defaults and may be replaced on update.
+# Put local changes in @EVEREST_UI_INSTALL_FRONTEND_CONFIG@; they override individual keys.
+# If missing, recreate the directory/file with only the desired overrides, not a
+# copy of these defaults. Remove a local directive to inherit its default again.
+# key= supplies an empty value; !key masks an inherited key. Empty/missing values
+# may trigger built-in fallbacks; neither syntax universally means "disable".
+# Required settings must remain valid. Relative root/auth_file paths resolve
+# relative to the file supplying them.
+# Example local override (uncomment in the local file, not here):
+# port=8080
