@@ -215,6 +215,13 @@ For submitted, permitted PT1000 entries with protection enabled, both numeric fi
 
 The cached YAML is the authoritative full-image write baseline. Only submitted, permitted entries are changed; other sections and nested fields are preserved semantically, including parameters not exposed by the GUI. Comments and formatting need not be retained. The external producer must atomically publish a dump for the correct physical controller and refresh it after external changes. External writers must coordinate exclusive access with UI flashing/recovery. The backend does not establish freshness from file age, controller identity, or a generation token; no live pre-flash dump is performed.
 
+The cached document's `version` is authoritative backend-managed metadata, not an editable API field.
+It is preserved unchanged in the conversion input and the cache published after successful flashing.
+Binary creation uses `ra-pb-create --version-from-yaml -i <modified.yaml> -o <parameter-block.bin>`;
+the installed tool must support `--version-from-yaml`. Conversion failure, including an unsupported option
+or rejected YAML version, returns `safety_controller_pb_create_failed` before stopping EVerest or flashing,
+leaving the original cache unchanged. The backend never retries conversion without the option.
+
 Immediately before flashing, the cache is atomically renamed to `<device>.yaml.invalid`; invalidation failure aborts flashing with `safety_controller_cache_invalidation_failed`. Verified flash success publishes the full updated document **before** restarting EVerest. Publication failure returns `safety_controller_yaml_publish_failed_after_flash`, `flash_succeeded: true`, and `cache_state: "unavailable"`.
 
 After a started flash times out, crashes, or exits unsuccessfully, the backend attempts one device-specific `ra-update ... dump-pb <temporary.bin>` followed by `ra-pb-dump <temporary.bin>`, before restarting EVerest. Each command uses the existing process start/run limits (2/30 seconds); the browser continues receiving keepalive acknowledgements. Successful commands and structurally valid YAML are required; YAML output from a CRC-failed conversion is rejected. Recovery does not retry flashing or turn a failed flash into success.

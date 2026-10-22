@@ -107,8 +107,12 @@ the first matching compatible entry takes precedence. Explicitly configured valu
 update an installed `everest_rpc_api_ready_timeout_seconds=15` to `20` to use the new default duration.
 
 Safety Controller settings are read from `/run/ra-utils/<device>.yaml`. Saves preserve the complete YAML
-document, including settings not exposed by the UI. The cache is the write baseline, not a live read:
-its producer must publish atomically for the correct controller and refresh it after external changes.
+document, including settings not exposed by the UI. The cache is the write baseline, not a live read.
+Its `version` is authoritative and is preserved unchanged in the modified YAML and the published cache.
+Binary creation uses `ra-pb-create --version-from-yaml -i <modified.yaml> -o <parameter-block.bin>` so
+the binary matches that version, not the tool's default. The installed tool must support this option;
+conversion failures abort before stopping EVerest or flashing, without a fallback that ignores the version.
+The cache producer must publish atomically for the correct controller and refresh it after external changes.
 External tools must not access that controller concurrently with a UI flash or recovery.
 
 PT1000 channels appear as rows under **Overtemperature Protection**. Disabling a channel greys out its

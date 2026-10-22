@@ -286,11 +286,20 @@ private slots:
         }
     }
 
+    void preservesCompleteYamlWhenEditingAllowedEntries_data() {
+        QTest::addColumn<QByteArray>("version");
+        QTest::newRow("version-1") << QByteArray("1");
+        QTest::newRow("version-3") << QByteArray("3");
+        QTest::newRow("quoted-scalar") << QByteArray("'0003'");
+    }
+
     void preservesCompleteYamlWhenEditingAllowedEntries() {
+        QFETCH(QByteArray, version);
         QTemporaryDir directory;
         const QString path = directory.filePath(QStringLiteral("controller.yaml"));
         const QByteArray original =
-            "version: 3\npt1000s:\n  - abort-temperature: 90 C\n    resistance-offset: 0 Ohm\n"
+            "version: " + version +
+            "\npt1000s:\n  - abort-temperature: 90 C\n    resistance-offset: 0 Ohm\n"
             "    extension: {keep: '0012'}\ncontactors: [{type: normally-open, close-time: 100 ms, open-time: 200 "
             "ms}]\n"
             "estops: [enabled]\nimd: active-low\nrcm: {test: {polarity: active-high, delay: 50 ms}}\n"
@@ -318,6 +327,116 @@ private slots:
                  QStringLiteral("0012"));
         QVERIFY(QString::fromStdString(after["pt1000s"][0]["abort-temperature"].as<std::string>())
                     .startsWith(QStringLiteral("95")));
+    }
+
+    void binaryCreationUsesCachedVersion_data() {
+        QTest::addColumn<int>("version");
+        QTest::addColumn<int>("createExitCode");
+        QTest::newRow("version-1") << 1 << 0;
+        QTest::newRow("version-3") << 3 << 0;
+        QTest::newRow("conversion-failed") << 3 << 2;
+    }
+
+    void binaryCreationUsesCachedVersion() {
+        QFETCH(int, version);
+        QFETCH(int, createExitCode);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        SafetyControllerDevice device;
+        device.name = QStringLiteral("ttyUSB9");
+        device.yamlPath = directory.filePath(QStringLiteral("controller.yaml"));
+        device.resetGpioLineName = QStringLiteral("nSAFETY2_RESET_INT");
+        device.bootModeGpioLineName = QStringLiteral("SAFETY2_BOOTMODE_SET");
+        device.evseIndices = {2};
+        const QByteArray original = "version: " + QByteArray::number(version) +
+                                    "\npt1000s: [disabled]\ncontactors: [disabled]\nestops: [active-low]\n";
+        QVERIFY(writeTextFile(device.yamlPath, original));
+        const auto cached = loadYamlFile(device.yamlPath);
+        QVERIFY(cached.success);
+        const QJsonObject settings{
+            {QStringLiteral("estops_0"), QJsonObject{{QStringLiteral("enabled"), QStringLiteral("disabled")}}}};
+        const auto modified =
+            prepareSafetyControllerYaml(device.yamlPath, settings, cached.yamlRoot, {QStringLiteral("estops")});
+        QVERIFY(!modified.isEmpty());
+        const auto yamlPath = directory.filePath(QStringLiteral("settings.yaml"));
+        const auto binPath = directory.filePath(QStringLiteral("settings.bin"));
+        const auto argumentsPath = directory.filePath(QStringLiteral("create-arguments"));
+        const auto inputPath = directory.filePath(QStringLiteral("create-input.yaml"));
+        const auto flashPath = directory.filePath(QStringLiteral("flash-arguments"));
+        QVERIFY(writeSafetyControllerYamlFile(yamlPath, modified));
+        const auto executable = [&](const QString& name, const QByteArray& body) {
+            const auto path = directory.filePath(name);
+            return writeTextFile(path, "#!/bin/sh\n" + body) &&
+                   QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        };
+        QByteArray createScript = "printf '%s\\n' \"$@\" >> " + quoteShellArgument(argumentsPath).toUtf8() + "\n";
+        createScript += "[ \"$#\" -eq 5 ] && [ \"$1\" = --version-from-yaml ] && "
+                        "[ \"$2\" = -i ] && [ \"$4\" = -o ] || exit 98\n";
+        createScript += "/bin/cp \"$3\" " + quoteShellArgument(inputPath).toUtf8() + " || exit 99\n";
+        if (createExitCode == 0) {
+            createScript += "printf binary > \"$5\" || exit 99\n";
+        }
+        createScript += "exit " + QByteArray::number(createExitCode) + '\n';
+        QVERIFY(executable(QStringLiteral("ra-pb-create"), createScript));
+        QVERIFY(executable(QStringLiteral("ra-update"),
+                           "printf '%s\\n' \"$@\" > " + quoteShellArgument(flashPath).toUtf8() + "\nexit 0\n"));
+        ScopedProcessEnvironment environment(directory.path(), nullptr);
+        SafetyControllerServiceActions actions;
+        QStringList serviceCalls;
+        actions.check = [&](const QList<int>&) {
+            serviceCalls.append(QStringLiteral("check"));
+            return EverestStateAllowedResult{true, {}, {}};
+        };
+        actions.stop = [&]() {
+            serviceCalls.append(QStringLiteral("stop"));
+            return EverestServiceControlResult{true, {}};
+        };
+        actions.restart = [&](const QList<int>&) {
+            serviceCalls.append(QStringLiteral("restart"));
+            return EverestServiceControlResult{true, {}};
+        };
+        actions.monitor = [&](const QList<int>&, bool) {
+            serviceCalls.append(QStringLiteral("monitor"));
+            return EverestErrorPresentResult{false, false, QStringLiteral("everest_error_present_not_detected")};
+        };
+        QObject owner;
+        ModuleResponse result;
+        int completions = 0;
+        auto* operation = new SafetyControllerWriteOperation(
+            {}, device, yamlPath, binPath, modified, &owner,
+            [&](const ModuleResponse& response) {
+                result = response;
+                ++completions;
+            },
+            {}, actions);
+        operation->start();
+        QTRY_COMPARE(completions, 1);
+        QFile arguments(argumentsPath);
+        QVERIFY(arguments.open(QIODevice::ReadOnly));
+        QCOMPARE(arguments.readAll(),
+                 "--version-from-yaml\n-i\n" + yamlPath.toUtf8() + "\n-o\n" + binPath.toUtf8() + '\n');
+        const auto converted = YAML::LoadFile(inputPath.toStdString());
+        QCOMPARE(QString::fromStdString(converted["version"].Scalar()), QString::number(version));
+        QCOMPARE(QString::fromStdString(converted["estops"][0].as<std::string>()), QStringLiteral("disabled"));
+        QFile cache(device.yamlPath);
+        QVERIFY(cache.open(QIODevice::ReadOnly));
+        if (createExitCode == 0) {
+            QVERIFY(result.success);
+            QCOMPARE(serviceCalls, (QStringList{"check", "stop", "restart", "monitor"}));
+            QVERIFY(QFile::exists(flashPath));
+            QCOMPARE(cache.readAll(), modified);
+            const auto published = YAML::LoadFile(device.yamlPath.toStdString());
+            QCOMPARE(QString::fromStdString(published["version"].Scalar()), QString::number(version));
+        } else {
+            QVERIFY(!result.success);
+            QCOMPARE(result.parameters.value(QStringLiteral("error")).toString(),
+                     QStringLiteral("safety_controller_pb_create_failed"));
+            QVERIFY(serviceCalls.isEmpty());
+            QVERIFY(!QFile::exists(flashPath));
+            QVERIFY(!QFile::exists(binPath));
+            QCOMPARE(cache.readAll(), original);
+        }
+        QVERIFY(!QFile::exists(device.yamlPath + QStringLiteral(".invalid")));
     }
 
     void invalidatedCacheIsNotReadAfterInterruptedOperation() {
@@ -980,8 +1099,7 @@ private slots:
         rpc.transientErrorFailures.insert(1, 1);
         rpc.errorsPresent.insert(1, true);
 
-        const EverestErrorPresentResult result =
-            EverestServiceControl::monitorEverestErrorPresent(&rpc, QList<int>{1});
+        const EverestErrorPresentResult result = EverestServiceControl::monitorEverestErrorPresent(&rpc, QList<int>{1});
 
         QVERIFY(result.success);
         QVERIFY(result.errorPresent);

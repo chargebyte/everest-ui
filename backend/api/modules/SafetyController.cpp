@@ -912,8 +912,8 @@ public:
         m_operationElapsed.start();
         logPhase(QStringLiteral("binary_creation"));
         m_step = Step::CreateBinary;
-        startProcess(QStringLiteral("ra-pb-create"),
-                     {QLatin1String(kCmdFlagI), m_yamlPath, QLatin1String(kCmdFlagO), m_binPath});
+        startProcess(QStringLiteral("ra-pb-create"), {QStringLiteral("--version-from-yaml"), QLatin1String(kCmdFlagI),
+                                                      m_yamlPath, QLatin1String(kCmdFlagO), m_binPath});
         return ModuleResponse{
             .requestId = m_response.requestId,
             .group = m_response.group,
