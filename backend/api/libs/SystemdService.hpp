@@ -18,12 +18,16 @@ public:
     bool startUnit(const QString &unitName);
     bool stopUnit(const QString &unitName);
     bool enableUnit(const QString &unitName);
-    bool disableUnit(const QString &unitName);
+    bool disableUnit(const QString& unitName);
     bool reloadManager();
-    bool isUnitActive(const QString &unitName);
-    bool waitForUnitActive(const QString &unitName, bool active, int timeoutMs);
-    bool isUnitAvailable(const QString &unitName);
-    bool isUnitEnabled(const QString &unitName);
+    bool isUnitActive(const QString& unitName);
+    bool waitForUnitActive(const QString& unitName, bool active, int timeoutMs);
+    bool waitForUnitStopped(const QString& unitName, int timeoutMs);
+    bool isUnitAvailable(const QString& unitName);
+    bool isUnitEnabled(const QString& unitName);
+
+protected:
+    virtual bool readUnitState(const QString& unitName, QString* state);
 
 private:
     void init();

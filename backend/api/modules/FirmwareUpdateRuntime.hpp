@@ -23,6 +23,7 @@ public:
     ModuleResponse handleUploadChunkRequest(const ModuleRequest &request);
     ModuleResponse handleUploadFinishRequest(const ModuleRequest &request);
     void handleClientDisconnected();
+    bool isBusy() const { return m_updateRunning || m_uploadRunning || m_rebootPending; }
 
 signals:
     void responseReady(const ModuleResponse &response);
@@ -32,7 +33,6 @@ private:
     void flushStdoutRemainder();
     void handleStdoutLine(const QString &line);
     void handleStreamingFinished(const ConsoleConnector::RunResult &result);
-    void runDeferredRebootCommand(const QString &command);
     bool hasFinishedUpload() const;
     void resetUploadState();
     void abortUploadAndRemovePartialFile();
@@ -56,6 +56,7 @@ private:
     int m_nextExpectedChunkIndex = 0;
     bool m_uploadFinished = false;
     bool m_rebootRequired = false;
+    bool m_rebootPending = false;
 };
 
 #endif // FIRMWARE_UPDATE_RUNTIME_HPP

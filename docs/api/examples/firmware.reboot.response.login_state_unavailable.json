@@ -1,0 +1,8 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "firmware.reboot.error",
+  "parameters": { "error": "login_state_unavailable" },
+  "responseId": "r-2"
+}

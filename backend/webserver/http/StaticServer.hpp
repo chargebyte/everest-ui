@@ -7,6 +7,7 @@
 
 #include "ServerConfig.hpp"
 #include "PasswordReset.hpp"
+#include "LoginState.hpp"
 #include <QSet>
 #include "StaticResponse.hpp"
 
@@ -28,10 +29,12 @@ public:
                           AppTitleResolver *appTitleResolver,
                           UiOccupancyTracker *uiOccupancyTracker,
                           QObject *parent = nullptr);
+    UiRuntime::LoginState refreshLoginState();
 
 signals:
     void webSocketUpgradeRequested(QTcpSocket *socket);
     void credentialsReset();
+    void loginRestricted(const QString &reason);
 
 protected:
     void incomingConnection(qintptr handle) override;
@@ -42,7 +45,7 @@ private:
     bool isPublicFrontendAsset(const ParsedRequest &request) const;
     bool isAuthenticated(const ParsedRequest &request);
     QString sessionIdFromRequest(const ParsedRequest &request) const;
-    StaticResponse handleAuthRequest(const ParsedRequest &request, const QString &peerAddress);
+    StaticResponse handleAuthRequest(const ParsedRequest &request);
     static void sendResponseAndClose(QTcpSocket *socket, const StaticResponse &response);
 
     PasswordReset m_passwordReset;
@@ -55,6 +58,7 @@ private:
     int m_maxRequestBytes = 8192;
     bool m_enforceOrigin = false;
     QUrl m_allowOriginUrl;
+    QString m_loginRestriction;
 };
 
 #endif // STATIC_SERVER_HPP

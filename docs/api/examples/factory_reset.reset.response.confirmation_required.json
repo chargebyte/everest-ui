@@ -1,0 +1,8 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "factory_reset.reset.error",
+  "parameters": { "error": "factory_reset_confirmation_required" },
+  "responseId": "r-1"
+}

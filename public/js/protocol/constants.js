@@ -8,6 +8,7 @@ export const MODULE_IDS = Object.freeze({
   OCPP: 'ocpp',
   PCAP: 'pcap',
   FIRMWARE: 'firmware',
+  FACTORY_RESET: 'factory_reset',
   SYSTEM_LOGS: 'system_logs',
   NETWORK: 'network',
   SSH: 'ssh'

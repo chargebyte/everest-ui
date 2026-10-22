@@ -28,7 +28,7 @@ export function createTransport({
     return true;
   }
 
-  function sendPayload(payload) {
+  function sendPayload(payload, { expectResponse = true } = {}) {
     const requestId = payload && payload.requestId;
     const hasValidRequestId = (
       (typeof requestId === 'number' && Number.isFinite(requestId)) ||
@@ -41,7 +41,7 @@ export function createTransport({
     const requestIdKey = String(requestId);
     const moduleId = typeof payload.group === 'string' ? payload.group : '';
     const actionId = typeof payload.action === 'string' ? payload.action : '';
-    pendingRequests.set(requestIdKey, {
+    if (expectResponse) pendingRequests.set(requestIdKey, {
       payload,
       moduleAction: `${moduleId}:${actionId}`,
       sentAtMs: Date.now(),

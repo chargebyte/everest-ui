@@ -525,6 +525,13 @@
   border-color: #c62828;
 }
 
+.firmware-maintenance {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
 .ssh-password-field {
   display: flex;
   align-items: center;
@@ -959,7 +966,8 @@
     align-items: stretch;
   }
 
-  .firmware-file-row {
+  .firmware-file-row,
+  .firmware-maintenance .firmware-file-upload-file-upload-row {
     flex-direction: column;
     align-items: stretch;
   }

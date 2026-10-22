@@ -173,6 +173,111 @@ The optional `available_features` entry in `backend.conf` is a comma-separated l
 If it is omitted, all features are enabled. The Network Configuration page is enabled when `network` is
 listed; for example, `available_features=network`. Other feature names are reserved for future use.
 
+## Reboot Recovery
+
+Reboot requests are sent once, without waiting for an API acknowledgement: the API is terminated by
+the reboot as well. A blocking overlay keeps progress visible locally and checks for the device's return.
+Successful factory reset and accepted explicit reboot requests invalidate all sessions and block new
+login in the backend. Firmware-update completion alone does not block login until reboot is requested.
+No reset or reboot command is automatically repeated.
+
+The backend supplies the wait period through `system.read_reboot_settings`, not `frontend.conf`:
+
+```ini
+reboot_wait_timeout_seconds=30
+# Example for a slower platform:
+reboot_wait_timeout_seconds.chargebyte,imx6ull-tarragon-master=120
+```
+
+Compatible strings come from `/proc/device-tree/compatible`; the first valid matching override wins,
+then the base setting, then the 30-second fallback. The waiting overlay retains factory-reset completion
+information even when the session or WebSocket is closed. After the configured wait, a confirmed operation
+changes locally to **Login not allowed: waiting for device reboot.** An unconfirmed request instead shows
+**Reboot not confirmed** while checking device availability. **Reload** makes this presentation change
+immediately, but never shortens the verification wait or clears a backend restriction. It does not retry
+the operation or navigate to an unavailable service. Underlying pages remain inaccessible until the
+backend permits return. Checks continue from either screen. Browser refresh
+uses saved operation context if the web service is temporarily unreachable; that context never grants access.
+
+Sending a request or losing a connection is not proof of acceptance. Recovery records successful operation
+responses and actual backend restrictions separately from local connection errors. If no acceptance or
+restriction was observed, a new successful `/auth/status` probe started at or after the configured deadline
+may return to the existing authenticated session when `loginAllowed:true`. A received rejection triggers
+that fresh check immediately. The UI shows **Reboot was not confirmed. The backend still permits access.**
+An earlier permissive response or network error cannot release recovery. A known reset failure followed
+by an unrelated disconnect follows the same bounded availability check and retains its failure message.
+Once acceptance or denial has been observed, recovery remains strict and requires an unauthenticated,
+login-allowed status before returning. No login/logout calls or automatic operation retries are added.
+
+Recovery probes `/auth/status` every two seconds with a three-second request limit. Only the backend's
+`loginAllowed` status permits access again; Linux boot identity is informational, not permission
+to bypass the restriction. A real reboot or `systemctl restart everest-ui.service` removes the restriction,
+but old sessions remain invalid. Factory reset may require initial setup if it removes credentials.
+The browser only presents this state; the API and webserver enforce it for every client, including clients
+without JavaScript. A proxy must forward `/auth/*` and `/ws` and must not cache authentication status.
+Informational status polls do not log blocked-access messages. Failed factory reset does not activate
+this login block. A reboot command that fails after acceptance leaves login blocked until service restart
+or device reboot.
+
+The launcher initializes `/run/everest-ui/login-state.json` (or the directory in `RUNTIME_DIRECTORY`)
+before starting its children, with directory mode `0700` and file mode `0600`. Only this login state is
+reset on service startup; password-recovery allowance state is preserved. Missing, unreadable, malformed,
+or symlinked login state disables login with `login_state_unavailable`. When running helpers manually,
+start them through the launcher so runtime state is initialized. Restarting just the browser or a helper
+does not clear it. No browser unlock action is provided.
+
+## Factory Reset
+
+The Firmware Update page includes a separate Factory Reset pane. Confirming **Factory Reset** checks
+eligibility, stops `everest.service`, and then starts the backend command; cancelling the confirmation
+sends nothing. Maintenance controls stay disabled
+while reset and reboot are pending. Successful reset reboots automatically; the pane has no Reboot
+button. Cancelling the initial confirmation has no effect. A reported failure shows a generic error
+without promising a reboot and allows retry only when the backend reports that reset is eligible.
+
+Distribution defaults and local `backend.conf` overrides support:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `factory_reset_command` | `/usr/sbin/factory-reset --force --reboot` | Executable and arguments, parsed without an implicit shell; the tool reboots on success. |
+| `factory_reset_timeout_seconds` | `20` | Positive execution timeout, starting when the process starts. |
+| `factory_reset_require_unplugged` | `true` | Require every configured EVSE to report exactly `Unplugged` over RpcApi. |
+
+With the safety guard enabled, missing RpcApi, unknown EVSE mappings, missing EVerest configuration,
+or an unreadable EVSE state block reset. The single-EVSE mapping fallback is index `1`.
+Setting `factory_reset_require_unplugged=false` skips RPC and EVSE/config discovery entirely.
+**This explicitly permits reset during charging and is a deployment safety decision.** Empty, missing,
+masked, or invalid safety settings enforce the guard; only case-insensitive `false` disables it.
+
+Regardless of that setting, the backend immediately requests an EVerest stop after the final eligibility
+check, using the same service-control helper as Safety Controller flashing. It waits up to 10 seconds
+for a confirmed systemd `inactive` state before executing the reset tool. A stop failure or timeout
+prevents tool execution and produces the same generic failure as a failed reset command. Status reads
+do not stop EVerest. Stopping prevents normal new sessions through EVerest, but cannot prevent physical
+cable insertion or an external service restart; the check and stop request are not atomic.
+
+The configured tool owns what is restored; the UI does not implement file deletion itself.
+A reboot may terminate the API before it can send a final response; disconnection
+after a confirmed reset starts reboot recovery, not a reset retry or an assertion of success.
+A timeout while the command is still running requests termination, then
+forces termination if needed; partial reset changes are not rolled back. Child processes managed by
+the tool must also stop when it is terminated. Process details stay in the backend journal; the GUI
+receives only generic failure. The Controller Firmware Reboot button continues to use
+`firmware_reboot_command` (default `reboot`), independently of the reset tool's automatic reboot.
+
+EVerest is never automatically restarted after reset, including command startup failure, timeout, or
+unsuccessful exit: its configuration may be partially reset. Recover by rebooting the device or having
+an administrator inspect the configuration and restart `everest.service`. With the default RPC guard,
+reset retries are unavailable while EVerest remains stopped. Restarting only `everest-ui.service` does
+not restart EVerest. The 20-second helper execution budget excludes the service-stop wait; two-second
+keepalives cover both phases.
+
+Browser disconnects do not cancel reset. A successful command response reports `reboot_expected`,
+not reboot completion. The shared backend login restriction remains active across browser reloads and
+is cleared on launcher/service restart or device reboot. See [Factory Reset API](docs/api/API.md#factory-reset) for wire messages.
+Existing local command overrides remain authoritative: update an override without `--reboot` to opt
+into the new default behavior, otherwise automatic reboot may never occur.
+
 ## SSH Configuration
 
 The SSH Configuration page enables or disables SSH and changes the Linux **root account password**.
@@ -254,8 +359,9 @@ stop/start operations. The `everest-ui` launcher passes `RUNTIME_DIRECTORY` to `
 its actual value determines the directory for `password-reset-state.json` and
 `password-reset.lock`, both mode `0600`. A non-blocking `flock` serializes
 initialization and reset. Missing or unusable runtime environment disables reset
-but leaves ordinary login available. Manual starts do not create a fallback
-directory. Tests can supply an existing temporary directory through the variable.
+but does not itself disable ordinary login (the separate reboot login restriction still applies).
+Password recovery does not infer a fallback directory from login state. Tests can supply an existing
+temporary directory through the variable.
 Do not remove the state or lock file during a boot. `/run` is cleared on device
 reboot; the stored Linux boot ID is also checked.
 

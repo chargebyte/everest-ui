@@ -297,6 +297,11 @@ EverestServiceControlResult executeEverestStop() {
 
 EverestServiceControlResult waitForEverestServiceState(bool shouldBeActive) {
     SystemdService systemdService;
+    if (!shouldBeActive) {
+        const bool stopped =
+            systemdService.waitForUnitStopped(QStringLiteral("everest.service"), kEverestRestartWaitTimeoutMs);
+        return {.success = stopped, .error = stopped ? QString() : QStringLiteral("everest_stop_timeout")};
+    }
     bool reachedRequestedState = false;
     bool waitTimedOut = false;
     QEventLoop waitLoop;

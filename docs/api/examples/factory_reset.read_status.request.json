@@ -1,0 +1,6 @@
+{
+  "requestId": 42,
+  "group": "factory_reset",
+  "action": "read_status",
+  "parameters": {}
+}

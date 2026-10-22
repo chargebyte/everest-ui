@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "factory_reset.read_status.result",
+  "parameters": { "state": "idle", "can_reset": true, "reboot_expected": false },
+  "responseId": "r-1"
+}

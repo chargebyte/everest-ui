@@ -183,8 +183,49 @@ bool SystemdService::waitForUnitActive(const QString &unitName, bool active, int
     return !waitTimedOut && reachedRequestedState;
 }
 
-bool SystemdService::readUnitActiveState(const QString &unitName, bool *active)
-{
+bool SystemdService::readUnitActiveState(const QString& unitName, bool* active) {
+    QString state;
+    if (!readUnitState(unitName, &state)) {
+        return false;
+    }
+    if (state != QStringLiteral("active") && state != QStringLiteral("inactive") && state != QStringLiteral("failed") &&
+        state != QStringLiteral("activating") && state != QStringLiteral("deactivating")) {
+        return false;
+    }
+    *active = state == QStringLiteral("active");
+    return true;
+}
+
+bool SystemdService::waitForUnitStopped(const QString& unitName, int timeoutMs) {
+    // Non-active is insufficient: the unit may still be shutting down, or its state may be unreadable.
+    const auto stopped = [&]() {
+        QString state;
+        return readUnitState(unitName, &state) && state == QStringLiteral("inactive");
+    };
+    if (stopped()) {
+        return true;
+    }
+    QEventLoop waitLoop;
+    QTimer pollTimer;
+    QTimer timeoutTimer;
+    bool reachedRequestedState = false;
+    pollTimer.setInterval(100);
+    timeoutTimer.setSingleShot(true);
+    timeoutTimer.setTimerType(Qt::PreciseTimer);
+    QObject::connect(&pollTimer, &QTimer::timeout, &waitLoop, [&]() {
+        if (stopped()) {
+            reachedRequestedState = true;
+            waitLoop.quit();
+        }
+    });
+    QObject::connect(&timeoutTimer, &QTimer::timeout, &waitLoop, &QEventLoop::quit);
+    pollTimer.start();
+    timeoutTimer.start(timeoutMs);
+    waitLoop.exec(QEventLoop::ExcludeUserInputEvents);
+    return reachedRequestedState;
+}
+
+bool SystemdService::readUnitState(const QString& unitName, QString* state) {
     if (!isSystemBusAvailable()) {
         return false;
     }
@@ -219,13 +260,7 @@ bool SystemdService::readUnitActiveState(const QString &unitName, bool *active)
         return false;
     }
 
-    const QString state = activeStateQuery.arguments().at(0).value<QDBusVariant>().variant().toString();
-    if (state != QStringLiteral("active") && state != QStringLiteral("inactive") &&
-        state != QStringLiteral("failed") && state != QStringLiteral("activating") &&
-        state != QStringLiteral("deactivating")) {
-        return false;
-    }
-    *active = state == QStringLiteral("active");
+    *state = activeStateQuery.arguments().at(0).value<QDBusVariant>().variant().toString();
     return true;
 }
 

@@ -1,5 +1,26 @@
 find_package(${QT_PACKAGE_NAME} REQUIRED COMPONENTS Test)
 
+add_executable(factory_reset_test FactoryResetTest.cpp
+    ../backend/api/modules/FactoryResetRuntime.cpp ../backend/api/libs/ConsoleConnector.cpp)
+target_include_directories(factory_reset_test PRIVATE ../backend/api ../backend/api/modules ../backend/api/libs)
+target_link_libraries(factory_reset_test PRIVATE everest_ui_config ${QT_PACKAGE_NAME}::Core ${QT_PACKAGE_NAME}::Test)
+add_test(NAME factory_reset_test COMMAND factory_reset_test)
+
+add_executable(systemd_service_test SystemdServiceTest.cpp ../backend/api/libs/SystemdService.cpp)
+target_include_directories(systemd_service_test PRIVATE ../backend/api/libs)
+target_link_libraries(systemd_service_test PRIVATE ${QT_PACKAGE_NAME}::Core ${QT_PACKAGE_NAME}::DBus ${QT_PACKAGE_NAME}::Test)
+add_test(NAME systemd_service_test COMMAND systemd_service_test)
+
+add_executable(reboot_settings_test RebootSettingsTest.cpp
+    ../backend/api/libs/RebootSettings.cpp ../backend/api/libs/BackendConfig.cpp)
+target_include_directories(reboot_settings_test PRIVATE ../backend/api/libs)
+target_link_libraries(reboot_settings_test PRIVATE everest_ui_config ${QT_PACKAGE_NAME}::Test)
+add_test(NAME reboot_settings_test COMMAND reboot_settings_test)
+
+add_executable(login_state_test LoginStateTest.cpp)
+target_link_libraries(login_state_test PRIVATE everest_ui_config ${QT_PACKAGE_NAME}::Test)
+add_test(NAME login_state_test COMMAND login_state_test)
+
 add_executable(layered_config_test
     LayeredConfigTest.cpp
     ../backend/webserver/config/ServerConfig.cpp
@@ -112,6 +133,7 @@ target_include_directories(request_handler_test PRIVATE
 )
 
 target_link_libraries(request_handler_test
+    everest_ui_config
     ${QT_PACKAGE_NAME}::Core
     ${QT_PACKAGE_NAME}::Network
     ${QT_PACKAGE_NAME}::WebSockets

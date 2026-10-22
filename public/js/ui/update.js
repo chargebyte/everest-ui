@@ -85,6 +85,7 @@ export function renderUpdateBlock(blockConfig, options = {}) {
     updating: false,
     warningText: ''
   };
+  let rebootEnabled = true;
 
   let updateHandler = () => {};
   let rebootHandler = () => {};
@@ -237,6 +238,10 @@ export function renderUpdateBlock(blockConfig, options = {}) {
 
       syncView();
     },
+    setRebootEnabled(flag) {
+      rebootEnabled = flag === true;
+      syncView();
+    },
     setWarning(text) {
       state.warningText = normalizeText(text, '');
       syncView();
@@ -261,7 +266,7 @@ export function renderUpdateBlock(blockConfig, options = {}) {
       state.rebootRequired ||
       !hasSelectedFile(requestResponseObject, updaterDefinition.id);
 
-    rebootButton.disabled = !state.rebootRequired;
+    rebootButton.disabled = !state.rebootRequired || !rebootEnabled;
   }
 }
 

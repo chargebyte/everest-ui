@@ -20,6 +20,7 @@ enum class ModuleGroup {
     Network,
     SSHConfiguration,
     System,
+    FactoryReset,
     Unknown
 };
 

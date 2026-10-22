@@ -34,7 +34,42 @@ POST /auth/reset   {"confirm":true}
 POST /auth/logout
 ```
 
-Login sets the HttpOnly, SameSite=Strict cookie `everest_ui_session`; non-browser clients must retain and send it during the WebSocket handshake. `/auth/status` returns `setupRequired`, `authenticated`, `uiBusy`, `appTitle`, and `passwordReset`. `uiBusy` reports occupancy only for an authenticated requester.
+Login sets the HttpOnly, SameSite=Strict cookie `everest_ui_session`; non-browser clients must retain and send it during the WebSocket handshake. `/auth/status` returns `setupRequired`, `authenticated`, `uiBusy`, `appTitle`, `bootId`, `passwordReset`, `loginAllowed`, `loginDisabledReason`, and `rebootOperation`. `uiBusy` reports occupancy only for an authenticated requester. `bootId` is the device's Linux boot UUID, stable across service restarts but different after a device reboot; it is empty if unavailable. It is public recovery metadata, not a session token.
+
+### Reboot Login Restriction
+
+Successful factory reset and accepted explicit reboot requests activate a backend-enforced login restriction.
+Firmware-update completion alone does not activate it. The API atomically publishes shared runtime state;
+the webserver checks it on requests and monitors it every 250 ms to invalidate all sessions and close active
+WebSockets with code `1008`, reason `waiting_for_reboot` (or `login_state_unavailable` for unusable state).
+Forwarding and new API request dispatch are stopped. The browser does not enforce or clear authorization.
+
+While restricted, `GET /auth/status` remains HTTP 200 and reports `authenticated:false`, `loginAllowed:false`,
+and `loginDisabledReason:"waiting_for_reboot"`. `rebootOperation` is `factory_reset` or `reboot`, allowing a
+client to preserve completion information even if the final operation response was lost. Unrestricted
+status has `loginAllowed:true`, empty reason and empty operation. Missing, unreadable, symlinked, or
+malformed runtime state reports `login_state_unavailable`, with empty operation. Status clears the cookie
+while restricted and reports password recovery unavailable; `setupRequired` still describes credential storage,
+but does not override the restriction.
+
+Login, setup and password-reset POSTs return HTTP 503 with `{"error":"login_not_allowed","reason":"waiting_for_reboot"}`
+(or reason `login_state_unavailable`), and expire the cookie. Protected HTTP resources and WebSocket upgrade
+requests return the same error. Logout and public frontend assets remain accessible. HTTP parsing and Host/method
+checks still apply; the restriction precedes credential checks and setup/reset Content-Type/body validation.
+Session invalidation never deletes stored credentials. A failed reset does not activate the restriction;
+failure of an accepted reboot command does not remove it.
+
+Only launcher/service startup resets `/run/everest-ui/login-state.json` (under `RUNTIME_DIRECTORY` when set).
+It is initialized before both helpers start, using `0700` directory and `0600` file permissions. A device reboot
+or restart of `everest-ui.service` permits login/setup again, with no restoration of old sessions. Browser refresh,
+timeout and helper-only restart do not clear it. Password-recovery allowance files are not reset. Run helpers via
+the launcher; absent initialization fails closed. No API for clearing the restriction is provided.
+
+Examples: [waiting after factory reset](examples/auth.status.response.waiting_for_reboot.json),
+[waiting after explicit reboot](examples/auth.status.response.reboot_requested.json),
+[unusable runtime state](examples/auth.status.response.login_state_unavailable.json),
+and [blocked authentication or protected request](examples/auth.mutation.response.login_not_allowed.json)
+([state unavailable](examples/auth.mutation.response.login_state_unavailable.json)).
 
 ### Password recovery lifecycle
 
@@ -90,7 +125,7 @@ Both `/auth/setup` and `/auth/reset` validate `Host`: it must be an IP literal, 
 
 Both POST endpoints require `Content-Type: application/json`; valid media-type parameters such as `charset=utf-8` are accepted. `Origin` may be omitted. When supplied, it must be an `http://` origin matching the Host hostname and effective port (default `80`); paths, `https://`, and literal `null` are rejected. Forwarded headers and TLS-terminating reverse proxies are not supported by this policy.
 
-Validation order is HTTP framing/parsing, Host validation for these paths, method validation (`POST` required), Content-Type, Origin, then endpoint body and operation checks. Thus malformed requests can fail before any JSON endpoint error is generated. Unsupported methods return plain-text `405 Method Not Allowed` after Host validation.
+Validation order is HTTP framing/parsing, Host validation for these paths, method validation (`POST` required), login restriction, Content-Type, Origin, then endpoint body and operation checks. Thus malformed requests can fail before any JSON endpoint error is generated. Unsupported methods return plain-text `405 Method Not Allowed` after Host validation.
 
 | HTTP status | Body type | Body/error identifier | Shared example |
 | --- | --- | --- | --- |
@@ -150,10 +185,11 @@ Malformed JSON returns `request.parse.error` with `{"error":"invalid_json"}`. A 
 | `safety` | `read_settings`, `write_settings` |
 | `ocpp` | `read_settings`, `write_settings` |
 | `firmware` | `read_version`, `upload_image.start`, `upload_image.chunk`, `upload_image.finish`, `update_image`, `reboot` |
+| `factory_reset` | `read_status`, `reset` |
 | `system_logs` | `read`, `download`, `extract` |
 | `network` | `read_interfaces`, `read_settings`, `write_settings`, `reset_settings`, `cancel_reset_settings`, `apply` |
 | `ssh` | `read`, `enable`, `disable`, `set_password` |
-| `system` | `read_app_title` |
+| `system` | `read_app_title`, `read_reboot_settings` |
 
 Names are defined in `backend/api/ProtocolSchema.hpp`; action-specific fields, results, and errors are in `backend/api/modules/*.cpp`. There is no OpenAPI or JSON Schema document.
 
@@ -221,6 +257,163 @@ With `systemd`, enable prefers `sshd.socket`, falling back to `sshd.service` if 
 
 The target must provide the selected control method's dependencies (`/usr/sbin/ssh-autostart`, or systemd system-bus access and `pkill`) and `chpasswd` for password changes. The backend needs the corresponding operating-system permissions, including permission to change the root password. Web UI authentication does not grant these OS permissions.
 
+### Reboot Recovery
+
+Before enabling reboot or factory reset, read `system.read_reboot_settings` with `{}`. Its final result
+contains `wait_timeout_seconds` (a positive integer) and `boot_id` (the current Linux boot UUID, or an
+empty string if unavailable). The setting is supplied by the backend, not by static assets or frontend
+configuration. See [request](examples/system.read_reboot_settings.request.json) and
+[response](examples/system.read_reboot_settings.response.success.json).
+
+`reboot_wait_timeout_seconds` defaults to `30`. Optional `.<compatible>` suffixes, such as
+`reboot_wait_timeout_seconds.chargebyte,imx6ull-tarragon-master=120`, use the NUL-delimited device-tree
+compatible list in order: first valid matching entry, then base setting, then the default. Invalid,
+empty, non-positive, or values above `2147483` seconds are skipped. The browser caches this policy before
+issuing the operation so it remains available while the backend is down or reset removes local files.
+Settings reads are available during factory-reset execution, but not after the backend login restriction activates.
+
+Send an explicit reboot request once and do not wait for an acknowledgement or final response before
+entering recovery. Any acknowledgement means scheduled, not completed, and may never arrive. The
+existing `firmware.reboot` endpoint and its preconditions remain available. The browser releases its
+WebSocket after sending reboot; a rejection is not guaranteed to reach it. Never resend a reboot command
+because of disconnection, a missing acknowledgement, or a browser timeout.
+If publishing the restriction fails, reboot is not scheduled and a
+[login-state error](examples/firmware.reboot.response.login_state_unavailable.json) may be returned.
+
+The shared browser overlay blocks interaction during recovery. It probes `/auth/status` with
+`cache: no-store` and same-origin credentials, allowing three seconds per request and waiting two seconds
+between probes. A valid backend status with `loginAllowed:true` and `authenticated:false` permits the normal
+login/setup flow again after a confirmed operation, including after an administrator restarts the service without a device reboot. A changed
+`bootId`, live proxy, or HTTP 200 alone cannot bypass `loginAllowed:false`. A proxy must forward `/auth/*` and
+`/ws` to the device and must not cache authentication status or substitute its own machine's boot identity.
+
+The WebSocket is closed when entering reboot waiting, after sending explicit reboot or receiving and
+acknowledging factory-reset success, releasing exclusive UI occupancy. It stays open during reset
+execution for progress and errors. `/auth/status` is informational: `uiBusy` does not mean that the HTTP
+request was rejected, and polling does not produce blocked-access logs. Actual WebSocket occupancy
+restrictions remain enforced.
+
+The configured wait period starts when reboot is requested, or when factory reset reports success or
+disconnects. The browser keeps the locally rendered progress overlay even after backend session invalidation
+and WebSocket closure. Successful factory-reset completion remains visible. For confirmed operations, expiry
+changes locally to a blocked-access screen: `Login not allowed: waiting for device reboot.` Without evidence
+of acceptance or restriction, it instead shows `Reboot not confirmed` and continues availability checks;
+a known failed reset is described as failed, never completed or accepted. Neither screen navigates to an
+unavailable web service, cancels an operation, or stops probes. Reload performs this presentation transition
+immediately but does not shorten the verification deadline; it is unavailable during reset execution.
+There is no browser action to dismiss a real restriction.
+
+Recovery persists separate `operationAccepted` and `restrictionObserved` presentation flags. A received
+`reboot_expected:true`, an authoritative `waiting_for_reboot` close/error signal, or a status restriction
+confirms the operation or lockout. Sending a request, disconnecting, timing out, or failing to fetch status
+does not. Actual `login_state_unavailable` responses remain fail-closed; a local network error is not such
+a response and must not be treated as an observed backend restriction.
+
+If neither acceptance nor a restriction has been observed, recovery can exit after a successful status
+probe **started at or after** the configured deadline reports `loginAllowed:true`, including when the
+existing session remains `authenticated:true`. Pre-deadline responses cannot be reused for this decision.
+A received correlated rejection requests an immediate fresh status check, without overlapping an active
+probe; backend denial still wins. Returning to an authenticated session displays the non-blocking notice
+`Reboot was not confirmed. The backend still permits access.` A known failed reset followed by a transient
+disconnect uses the same bounded check, with a factory-reset-failed notice instead. No request is replayed.
+Once acceptance or denial is observed, `loginAllowed:true` alone is insufficient: the old session must also
+be unauthenticated. These are browser recovery rules only; backend access restrictions are unchanged.
+
+Operation context, policy, and wait start persist in session storage only to restore presentation on browser
+refresh or network failure. They grant no access and never override backend status. A fresh browser reads
+the same restriction from `/auth/status` without needing that saved state. The waiting screen is independent
+of login controls, contains no authentication mutation logic, and remains usable when frontend authentication
+UI is removed. Once recovery has validated backend permission, normal login/setup or an existing valid
+session is shown as described above. No reset, reboot, login, logout, or session-creation request is
+automatically repeated by reboot recovery. Public API fields and payloads are unchanged by these rules.
+
+### Factory Reset
+
+Factory reset is a separate maintenance operation, initially hosted on the Firmware Update page.
+It uses the normal authenticated WebSocket and response ACK protocol, not an HTTP endpoint.
+The pane can be mounted independently and uses the shared reboot overlay; it has no Reboot button.
+
+| Action | Request parameters | Responses |
+| --- | --- | --- |
+| `read_status` | `{}` | Final result with `state`, `can_reset`, and `reboot_expected`. Allowed during reset. |
+| `reset` | `{"confirm":true}` | Initial and two-second non-final `.ack` messages; a final `.result`/`.error` if the API survives command completion. |
+
+`state` is `idle`, `running`, `rebooting`, or `failed`. `running` includes pre-execution safety checks
+and waiting for EVerest to stop; two-second keepalives cover these phases as well as tool execution.
+`can_reset` is boolean eligibility at the time of reading, not a reservation: execution rechecks it.
+`reboot_expected` becomes true only when the reset command exits successfully. The `rebooting` state
+keeps maintenance blocked until reboot; it does not prove the device has rebooted. Failure never enables
+a separate reboot action. The former `factory_reset.reboot` action and `reboot_available` field are removed.
+The backend rejects requests that would wait behind another operation with `factory_reset_busy` rather
+than queueing reset. During reset/reboot, other system-control requests are rejected with the same error;
+reset status and reboot-settings reads remain available during execution. After success the login restriction
+blocks all application access instead. Firmware uploads also exclude reset between requests.
+
+A normal command exit with code `0` produces `factory_reset.reset.result` with
+`{"reboot_expected":true}` if that response can be delivered. Every service-stop or command-attempt failure produces
+`factory_reset.reset.error` with `{"error":"factory_reset_failed"}` if the API is still available. Output, exit codes, and failure causes
+are not transmitted; consult the backend journal. There is no rollback of partial changes.
+
+| Error | Meaning |
+| --- | --- |
+| `factory_reset_confirmation_required` | `confirm` is absent or not boolean `true`; no execution. |
+| `factory_reset_busy` | A conflicting maintenance request is active or reboot is pending; no new reset execution. |
+| `factory_reset_not_allowed` | Pre-execution safety policy failed; no command attempt. |
+| `factory_reset_failed` | EVerest could not be confirmed stopped, or command preparation/execution failed; the device may not reboot automatically. |
+| `login_state_unavailable` | Reset succeeded but publishing the login restriction failed; `reboot_expected:true` is retained. Access fails closed; check the journal. |
+| `unsupported_action` | Unknown action in the factory-reset group. |
+
+See the [restriction-publication failure example](examples/factory_reset.reset.response.login_state_unavailable.json).
+
+The guard defaults to requiring all configured `EvseManager` instances to resolve to EVSE indices and
+report exactly `Unplugged`. A single instance with no mapping falls back to index `1`; an incomplete
+multi-EVSE mapping, absent RPC/configuration, or unreadable state fails closed. The guard is independent
+of `everest_restart_allowed_states`. With `factory_reset_require_unplugged=false`, the backend skips
+EVSE/config discovery and RPC entirely; this explicitly permits resetting during charging.
+
+After the final eligibility check, the backend immediately requests a stop of `everest.service` using
+the shared Safety Controller service-control helper. This stop is mandatory even when the RPC guard is
+disabled. The tool runs only after systemd reports `inactive`, with a separate 10-second stop wait.
+Transitional states and failed state queries are not confirmation. Status reads never stop EVerest.
+The check and stop are not atomic, and stopping the service does not prevent physical cable insertion
+or an external actor restarting it.
+
+`factory_reset_command` defaults to `/usr/sbin/factory-reset --force --reboot` and is executed without an implicit
+shell. `factory_reset_timeout_seconds` defaults to `20`, measured from successful startup; startup has
+a separate two-second budget. Timeout sends termination, escalating to kill after one second, and the
+backend waits for process exit before the final response. The tool is responsible for its descendants.
+The tool reboots automatically on success and may terminate the API before any final response.
+EVerest is left stopped after successful or failed tool execution, including failure to start; no
+automatic restart is attempted against possibly partially reset configuration. Recover through device
+reboot or administrator inspection/restart of EVerest. With the default RPC guard, `can_reset` is false
+while EVerest remains stopped; disabling the guard still permits retries, each with a mandatory stop.
+The helper execution budget does not include the preceding service-stop wait.
+Explicit Controller Firmware reboot still uses
+`firmware_reboot_command` and its `reboot` fallback; the reset tool owns its automatic reboot.
+See [configuration and deployment caveats](../../README.md#factory-reset).
+
+Keepalives are not completion. During command execution, a client may receive a final failure and show
+the generic error without promising reboot. Once a confirmed reset disconnects or reports success,
+enter reboot recovery without requiring a final response. The operation continues without its browser;
+backend state lasts only for that API process and cannot prove a new boot. A disconnect alone does not
+prove that reset succeeded. Closing/cancelling the initial confirmation makes no API call. Status is
+polled every five seconds while the pane is mounted and connected; destructive commands are never replayed.
+If a reported command failure is immediately followed by disconnection within the configured recovery
+window, the browser can still enter reboot recovery: shutdown may have caused the reported process failure.
+
+Examples: [status request](examples/factory_reset.read_status.request.json),
+[idle](examples/factory_reset.read_status.response.idle.json),
+[running](examples/factory_reset.read_status.response.running.json),
+[rebooting](examples/factory_reset.read_status.response.rebooting.json),
+[failed](examples/factory_reset.read_status.response.failed.json),
+[confirmed reset](examples/factory_reset.reset.request.json),
+[keepalive](examples/factory_reset.reset.response.ack.json),
+[success](examples/factory_reset.reset.response.success.json),
+[stop/command failure](examples/factory_reset.reset.response.error.json),
+[missing confirmation](examples/factory_reset.reset.response.confirmation_required.json),
+[safety rejection](examples/factory_reset.reset.response.not_allowed.json),
+[busy rejection](examples/factory_reset.reset.response.busy.json).
+
 ### EVerest configuration
 
 Read and write use nested module/parameter objects:
@@ -255,6 +448,8 @@ WebSocket template filenames use `<group>.<action>.request.json`, `<group>.<acti
 | `firmware.upload_image.finish` | [request](examples/firmware.upload_image.finish.request.json) | [response](examples/firmware.upload_image.finish.response.success.json) | [response](examples/firmware.upload_image.finish.response.error.json) |
 | `firmware.update_image` | [request](examples/firmware.update_image.request.json) | [final response](examples/firmware.update_image.response.success.json), [progress](examples/firmware.update_image.response.progress.json) | [response](examples/firmware.update_image.response.error.json) |
 | `firmware.reboot` | [request](examples/firmware.reboot.request.json) | [response](examples/firmware.reboot.response.success.json) | [response](examples/firmware.reboot.response.error.json) |
+| `factory_reset.read_status` | [request](examples/factory_reset.read_status.request.json) | [idle](examples/factory_reset.read_status.response.idle.json), [running](examples/factory_reset.read_status.response.running.json), [rebooting](examples/factory_reset.read_status.response.rebooting.json), [failed](examples/factory_reset.read_status.response.failed.json) | See [Factory Reset](#factory-reset). |
+| `factory_reset.reset` | [request](examples/factory_reset.reset.request.json) | [acknowledgement](examples/factory_reset.reset.response.ack.json), [result](examples/factory_reset.reset.response.success.json) | [command failure](examples/factory_reset.reset.response.error.json), [confirmation](examples/factory_reset.reset.response.confirmation_required.json), [safety policy](examples/factory_reset.reset.response.not_allowed.json), [busy](examples/factory_reset.reset.response.busy.json) |
 | `system_logs.read` | [request](examples/system_logs.read.request.json) | [response](examples/system_logs.read.response.success.json) | [response](examples/system_logs.read.response.error.json) |
 | `system_logs.download` | [request](examples/system_logs.download.request.json) | [response](examples/system_logs.download.response.success.json) | [response](examples/system_logs.download.response.error.json) |
 | `system_logs.extract` | [request](examples/system_logs.extract.request.json) | [response](examples/system_logs.extract.response.success.json) | [response](examples/system_logs.extract.response.error.json) |
@@ -267,6 +462,7 @@ WebSocket template filenames use `<group>.<action>.request.json`, `<group>.<acti
 | `network.cancel_reset_settings` | [request](examples/network.cancel_reset_settings.request.json) | [response](examples/network.cancel_reset_settings.response.success.json) | [response](examples/network.cancel_reset_settings.response.error.json) |
 | `network.apply` | [request](examples/network.apply.request.json) | [response](examples/network.apply.response.success.json) | [response](examples/network.apply.response.error.json) |
 | `system.read_app_title` | [request](examples/system.read_app_title.request.json) | [response](examples/system.read_app_title.response.success.json) | [response](examples/system.read_app_title.response.error.json) |
+| `system.read_reboot_settings` | [request](examples/system.read_reboot_settings.request.json) | [response](examples/system.read_reboot_settings.response.success.json) | Settings fall back to defaults; boot ID may be empty. |
 | `ssh.read` | [request](examples/ssh.read.request.json) | [helper enabled](examples/ssh.read.response.success.json), [helper disabled](examples/ssh.read.response.disabled.json) | [helper failure](examples/ssh.read.response.error.json), [invalid method](examples/ssh.read.response.config_invalid.json) |
 | `ssh.enable` | [request](examples/ssh.enable.request.json) | [acknowledgement](examples/ssh.enable.response.success.json) | [helper failure](examples/ssh.enable.response.error.json), [systemd failure](examples/ssh.enable.response.systemd_failed.json), [invalid method](examples/ssh.enable.response.config_invalid.json) |
 | `ssh.disable` | [request](examples/ssh.disable.request.json) | [acknowledgement](examples/ssh.disable.response.success.json) | [helper failure](examples/ssh.disable.response.error.json), [systemd failure](examples/ssh.disable.response.systemd_failed.json), [invalid method](examples/ssh.disable.response.config_invalid.json) |

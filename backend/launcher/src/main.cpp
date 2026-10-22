@@ -4,6 +4,7 @@
 
 #include "InstallPaths.hpp"
 #include "LayeredConfig.hpp"
+#include "LoginState.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -183,6 +184,11 @@ public:
     }
 
     int start() {
+        QString loginStateError;
+        if (!UiRuntime::initializeLoginState(loginStateError)) {
+            QTextStream(stderr) << "Cannot initialize login state: " << loginStateError << "\n";
+            return 1;
+        }
         m_backendBinaryPath = resolveBackendBinaryPath();
         m_frontendBinaryPath = resolveFrontendBinaryPath();
         const UiConfig::Snapshot config = UiConfig::load(UiConfig::pathsFor(UiConfig::Kind::Backend));

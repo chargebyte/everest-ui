@@ -4,6 +4,7 @@
 
 #include "WebSocketProxySession.hpp"
 #include "UiOccupancyTracker.hpp"
+#include "LoginState.hpp"
 
 #include <QAbstractSocket>
 #include <QHostAddress>
@@ -32,6 +33,11 @@ WebSocketProxySession::WebSocketProxySession(QWebSocket *clientSocket,
       m_heartbeatTimer(new QTimer(this)),
       m_heartbeatTimeoutTimer(new QTimer(this)),
       m_backend(new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this)) {
+    const auto login = UiRuntime::readLoginState();
+    if (!login.allowed) {
+        restrictLogin(login.reason);
+        return;
+    }
     if (m_uiOccupancyTracker && !m_uiOccupancyTracker->tryClaim(peerAddress())) {
         QTextStream(stdout) << "Rejecting UI session from " << peerAddress();
         if (m_uiOccupancyTracker->hasOwner()) {
@@ -66,6 +72,8 @@ WebSocketProxySession::WebSocketProxySession(QWebSocket *clientSocket,
     // Once the backend WS is connected, flush browser messages queued during
     // backend connection setup.
     connect(m_backend, &QWebSocket::connected, this, [this]() {
+        const auto login = UiRuntime::readLoginState();
+        if (!login.allowed) { restrictLogin(login.reason); return; }
         m_backendConnected = true;
         for (const QString &msg : m_pendingText) {
             m_backend->sendTextMessage(msg);
@@ -87,6 +95,8 @@ WebSocketProxySession::WebSocketProxySession(QWebSocket *clientSocket,
     // WebSocket-upgrade flow, Step 4b: browser -> backend forwarding.
     // Buffer until backend WS connection is established.
     connect(m_client, &QWebSocket::textMessageReceived, this, [this](const QString &msg) {
+        const auto login = UiRuntime::readLoginState();
+        if (!login.allowed) { restrictLogin(login.reason); return; }
         if (m_backendConnected) {
             m_backend->sendTextMessage(msg);
         } else {
@@ -100,6 +110,8 @@ WebSocketProxySession::WebSocketProxySession(QWebSocket *clientSocket,
         }
     });
     connect(m_client, &QWebSocket::binaryMessageReceived, this, [this](const QByteArray &msg) {
+        const auto login = UiRuntime::readLoginState();
+        if (!login.allowed) { restrictLogin(login.reason); return; }
         if (m_backendConnected) {
             m_backend->sendBinaryMessage(msg);
         } else {
@@ -224,6 +236,10 @@ void WebSocketProxySession::sendHeartbeatPing() {
 }
 
 void WebSocketProxySession::invalidateCredentials() {
+    restrictLogin(QStringLiteral("credentials reset"));
+}
+
+void WebSocketProxySession::restrictLogin(const QString &reason) {
     // Cut forwarding immediately, including queued messages and connecting backends.
     m_client->disconnect(this);
     connect(m_client, &QWebSocket::disconnected, m_client, &QObject::deleteLater);
@@ -235,6 +251,6 @@ void WebSocketProxySession::invalidateCredentials() {
     m_backendConnected = false;
     releaseOccupancy();
     m_backend->abort();
-    m_client->close(QWebSocketProtocol::CloseCodePolicyViolated, QStringLiteral("credentials reset"));
+    m_client->close(QWebSocketProtocol::CloseCodePolicyViolated, reason);
     deleteLater();
 }

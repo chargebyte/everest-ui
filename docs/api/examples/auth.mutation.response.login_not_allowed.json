@@ -1,0 +1,11 @@
+{
+  "http_status": 503,
+  "headers": {
+    "Cache-Control": "no-store",
+    "Set-Cookie": "everest_ui_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"
+  },
+  "body": {
+    "error": "login_not_allowed",
+    "reason": "waiting_for_reboot"
+  }
+}

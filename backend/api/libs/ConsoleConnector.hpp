@@ -56,6 +56,7 @@ public:
     inline static constexpr const char kErrorUnknownCommand[] = "unknown_command";
 
     explicit ConsoleConnector(QObject *parent = nullptr);
+    static CommandSpec parseCommand(const QString &command);
 
     // Generic execution: caller provides template and parameters.
     RunResult executeTemplate(const QString &templateStr,
