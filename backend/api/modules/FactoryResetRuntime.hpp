@@ -3,6 +3,7 @@
 #ifndef EVEREST_UI_FACTORY_RESET_RUNTIME_HPP
 #define EVEREST_UI_FACTORY_RESET_RUNTIME_HPP
 
+#include "EverestServiceControl.hpp"
 #include "RequestResponseTypes.hpp"
 
 #include <QList>
@@ -19,6 +20,7 @@ public:
         std::function<QString(const QString&)> config;
         std::function<QJsonObject()> effectiveConfig;
         std::function<bool(const QList<int>&)> unplugged;
+        std::function<EverestServiceControlResult()> stopEverest;
     };
     explicit FactoryResetRuntime(Actions actions, QObject* parent = nullptr);
     ~FactoryResetRuntime() override;
@@ -51,6 +53,7 @@ private:
     QTimer m_keepalive;
     QString m_state = QStringLiteral("idle");
     QString m_command;
+    QString m_phase;
     QByteArray m_stdout;
     QByteArray m_stderr;
     bool m_running = false;

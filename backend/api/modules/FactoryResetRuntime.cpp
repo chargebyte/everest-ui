@@ -126,10 +126,7 @@ ModuleResponse FactoryResetRuntime::handleRequest(const ModuleRequest& request, 
 }
 
 void FactoryResetRuntime::start() {
-    if (!eligible()) {
-        finish(false, false);
-        return;
-    }
+    m_phase = QStringLiteral("preparation");
     m_command = m_actions.config(QStringLiteral("factory_reset_command")).trimmed();
     if (m_command.isEmpty()) {
         m_command = QStringLiteral("/usr/sbin/factory-reset --force --reboot");
@@ -148,11 +145,27 @@ void FactoryResetRuntime::start() {
     m_stderr.clear();
     m_rebootExpected = false;
     const auto command = ConsoleConnector::parseCommand(m_command);
-    qInfo() << "Factory reset starting: command=" << m_command << "timeout_ms=" << m_executionTimeoutMs;
     if (command.program.isEmpty()) {
+        qWarning() << "Factory reset command is empty after parsing";
         finish(false, true);
         return;
     }
+    m_phase = QStringLiteral("safety_check");
+    if (!eligible()) {
+        finish(false, false);
+        return;
+    }
+    m_phase = QStringLiteral("stop_everest");
+    qInfo() << "Factory reset stopping EVerest";
+    const auto stopped = m_actions.stopEverest ? m_actions.stopEverest() : EverestServiceControlResult{};
+    if (!stopped.success) {
+        qWarning() << "Factory reset could not confirm EVerest stopped: error=" << stopped.error;
+        finish(false, true);
+        return;
+    }
+    // Never restart EVerest here: even a failed helper may have partially reset its configuration.
+    m_phase = QStringLiteral("command");
+    qInfo() << "Factory reset starting: command=" << m_command << "timeout_ms=" << m_executionTimeoutMs;
     m_timeout.start(2000);
     m_process.start(command.program, command.args);
 }
@@ -182,13 +195,15 @@ void FactoryResetRuntime::finish(bool success, bool attempted) {
     m_keepalive.stop();
     m_running = false;
     if (attempted) {
-        drainOutput();
         m_state = success ? QStringLiteral("rebooting") : QStringLiteral("failed");
         m_rebootExpected = success;
-        qInfo() << "Factory reset finished: command=" << m_command << "success=" << success
-                << "timed_out=" << m_timedOut << "exit_code=" << m_process.exitCode()
-                << "process_error=" << m_process.errorString() << "stdout_tail=" << m_stdout
-                << "stderr_tail=" << m_stderr;
+        qInfo() << "Factory reset finished: phase=" << m_phase << "success=" << success;
+        if (m_phase == QLatin1String("command")) {
+            drainOutput();
+            qInfo() << "Factory reset command result: command=" << m_command << "timed_out=" << m_timedOut
+                    << "exit_code=" << m_process.exitCode() << "process_error=" << m_process.errorString()
+                    << "stdout_tail=" << m_stdout << "stderr_tail=" << m_stderr;
+        }
     } else {
         m_state = QStringLiteral("idle");
         qWarning() << "Factory reset rejected by Unplugged safety policy";

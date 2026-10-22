@@ -228,8 +228,9 @@ does not clear it. No browser unlock action is provided.
 
 ## Factory Reset
 
-The Firmware Update page includes a separate Factory Reset pane. Confirming **Factory Reset** starts
-the backend command; cancelling the confirmation sends nothing. Maintenance controls stay disabled
+The Firmware Update page includes a separate Factory Reset pane. Confirming **Factory Reset** checks
+eligibility, stops `everest.service`, and then starts the backend command; cancelling the confirmation
+sends nothing. Maintenance controls stay disabled
 while reset and reboot are pending. Successful reset reboots automatically; the pane has no Reboot
 button. Cancelling the initial confirmation has no effect. A reported failure shows a generic error
 without promising a reboot and allows retry only when the backend reports that reset is eligible.
@@ -248,14 +249,28 @@ Setting `factory_reset_require_unplugged=false` skips RPC and EVSE/config discov
 **This explicitly permits reset during charging and is a deployment safety decision.** Empty, missing,
 masked, or invalid safety settings enforce the guard; only case-insensitive `false` disables it.
 
-The configured tool owns what is restored; the UI does not implement file deletion itself or stop
-EVerest separately. A reboot may terminate the API before it can send a final response; disconnection
+Regardless of that setting, the backend immediately requests an EVerest stop after the final eligibility
+check, using the same service-control helper as Safety Controller flashing. It waits up to 10 seconds
+for a confirmed systemd `inactive` state before executing the reset tool. A stop failure or timeout
+prevents tool execution and produces the same generic failure as a failed reset command. Status reads
+do not stop EVerest. Stopping prevents normal new sessions through EVerest, but cannot prevent physical
+cable insertion or an external service restart; the check and stop request are not atomic.
+
+The configured tool owns what is restored; the UI does not implement file deletion itself.
+A reboot may terminate the API before it can send a final response; disconnection
 after a confirmed reset starts reboot recovery, not a reset retry or an assertion of success.
 A timeout while the command is still running requests termination, then
 forces termination if needed; partial reset changes are not rolled back. Child processes managed by
 the tool must also stop when it is terminated. Process details stay in the backend journal; the GUI
 receives only generic failure. The Controller Firmware Reboot button continues to use
 `firmware_reboot_command` (default `reboot`), independently of the reset tool's automatic reboot.
+
+EVerest is never automatically restarted after reset, including command startup failure, timeout, or
+unsuccessful exit: its configuration may be partially reset. Recover by rebooting the device or having
+an administrator inspect the configuration and restart `everest.service`. With the default RPC guard,
+reset retries are unavailable while EVerest remains stopped. Restarting only `everest-ui.service` does
+not restart EVerest. The 20-second helper execution budget excludes the service-stop wait; two-second
+keepalives cover both phases.
 
 Browser disconnects do not cancel reset. A successful command response reports `reboot_expected`,
 not reboot completion. The shared backend login restriction remains active across browser reloads and

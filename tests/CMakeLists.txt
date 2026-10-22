@@ -6,6 +6,11 @@ target_include_directories(factory_reset_test PRIVATE ../backend/api ../backend/
 target_link_libraries(factory_reset_test PRIVATE everest_ui_config ${QT_PACKAGE_NAME}::Core ${QT_PACKAGE_NAME}::Test)
 add_test(NAME factory_reset_test COMMAND factory_reset_test)
 
+add_executable(systemd_service_test SystemdServiceTest.cpp ../backend/api/libs/SystemdService.cpp)
+target_include_directories(systemd_service_test PRIVATE ../backend/api/libs)
+target_link_libraries(systemd_service_test PRIVATE ${QT_PACKAGE_NAME}::Core ${QT_PACKAGE_NAME}::DBus ${QT_PACKAGE_NAME}::Test)
+add_test(NAME systemd_service_test COMMAND systemd_service_test)
+
 add_executable(reboot_settings_test RebootSettingsTest.cpp
     ../backend/api/libs/RebootSettings.cpp ../backend/api/libs/BackendConfig.cpp)
 target_include_directories(reboot_settings_test PRIVATE ../backend/api/libs)

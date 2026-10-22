@@ -338,7 +338,8 @@ The pane can be mounted independently and uses the shared reboot overlay; it has
 | `read_status` | `{}` | Final result with `state`, `can_reset`, and `reboot_expected`. Allowed during reset. |
 | `reset` | `{"confirm":true}` | Initial and two-second non-final `.ack` messages; a final `.result`/`.error` if the API survives command completion. |
 
-`state` is `idle`, `running`, `rebooting`, or `failed`. `running` includes pre-execution safety checks.
+`state` is `idle`, `running`, `rebooting`, or `failed`. `running` includes pre-execution safety checks
+and waiting for EVerest to stop; two-second keepalives cover these phases as well as tool execution.
 `can_reset` is boolean eligibility at the time of reading, not a reservation: execution rechecks it.
 `reboot_expected` becomes true only when the reset command exits successfully. The `rebooting` state
 keeps maintenance blocked until reboot; it does not prove the device has rebooted. Failure never enables
@@ -349,7 +350,7 @@ reset status and reboot-settings reads remain available during execution. After 
 blocks all application access instead. Firmware uploads also exclude reset between requests.
 
 A normal command exit with code `0` produces `factory_reset.reset.result` with
-`{"reboot_expected":true}` if that response can be delivered. Every command-attempt failure produces
+`{"reboot_expected":true}` if that response can be delivered. Every service-stop or command-attempt failure produces
 `factory_reset.reset.error` with `{"error":"factory_reset_failed"}` if the API is still available. Output, exit codes, and failure causes
 are not transmitted; consult the backend journal. There is no rollback of partial changes.
 
@@ -358,11 +359,11 @@ are not transmitted; consult the backend journal. There is no rollback of partia
 | `factory_reset_confirmation_required` | `confirm` is absent or not boolean `true`; no execution. |
 | `factory_reset_busy` | A conflicting maintenance request is active or reboot is pending; no new reset execution. |
 | `factory_reset_not_allowed` | Pre-execution safety policy failed; no command attempt. |
-| `factory_reset_failed` | Command attempt completed unsuccessfully; the device may not reboot automatically. |
+| `factory_reset_failed` | EVerest could not be confirmed stopped, or command preparation/execution failed; the device may not reboot automatically. |
 | `login_state_unavailable` | Reset succeeded but publishing the login restriction failed; `reboot_expected:true` is retained. Access fails closed; check the journal. |
+| `unsupported_action` | Unknown action in the factory-reset group. |
 
 See the [restriction-publication failure example](examples/factory_reset.reset.response.login_state_unavailable.json).
-| `unsupported_action` | Unknown action in the factory-reset group. |
 
 The guard defaults to requiring all configured `EvseManager` instances to resolve to EVSE indices and
 report exactly `Unplugged`. A single instance with no mapping falls back to index `1`; an incomplete
@@ -370,12 +371,24 @@ multi-EVSE mapping, absent RPC/configuration, or unreadable state fails closed. 
 of `everest_restart_allowed_states`. With `factory_reset_require_unplugged=false`, the backend skips
 EVSE/config discovery and RPC entirely; this explicitly permits resetting during charging.
 
+After the final eligibility check, the backend immediately requests a stop of `everest.service` using
+the shared Safety Controller service-control helper. This stop is mandatory even when the RPC guard is
+disabled. The tool runs only after systemd reports `inactive`, with a separate 10-second stop wait.
+Transitional states and failed state queries are not confirmation. Status reads never stop EVerest.
+The check and stop are not atomic, and stopping the service does not prevent physical cable insertion
+or an external actor restarting it.
+
 `factory_reset_command` defaults to `/usr/sbin/factory-reset --force --reboot` and is executed without an implicit
 shell. `factory_reset_timeout_seconds` defaults to `20`, measured from successful startup; startup has
 a separate two-second budget. Timeout sends termination, escalating to kill after one second, and the
 backend waits for process exit before the final response. The tool is responsible for its descendants.
-The tool reboots automatically on success and may terminate the API before any final response. Reset
-itself does not stop EVerest separately. Explicit Controller Firmware reboot still uses
+The tool reboots automatically on success and may terminate the API before any final response.
+EVerest is left stopped after successful or failed tool execution, including failure to start; no
+automatic restart is attempted against possibly partially reset configuration. Recover through device
+reboot or administrator inspection/restart of EVerest. With the default RPC guard, `can_reset` is false
+while EVerest remains stopped; disabling the guard still permits retries, each with a mandatory stop.
+The helper execution budget does not include the preceding service-stop wait.
+Explicit Controller Firmware reboot still uses
 `firmware_reboot_command` and its `reboot` fallback; the reset tool owns its automatic reboot.
 See [configuration and deployment caveats](../../README.md#factory-reset).
 
@@ -396,7 +409,7 @@ Examples: [status request](examples/factory_reset.read_status.request.json),
 [confirmed reset](examples/factory_reset.reset.request.json),
 [keepalive](examples/factory_reset.reset.response.ack.json),
 [success](examples/factory_reset.reset.response.success.json),
-[command failure](examples/factory_reset.reset.response.error.json),
+[stop/command failure](examples/factory_reset.reset.response.error.json),
 [missing confirmation](examples/factory_reset.reset.response.confirmation_required.json),
 [safety rejection](examples/factory_reset.reset.response.not_allowed.json),
 [busy rejection](examples/factory_reset.reset.response.busy.json).

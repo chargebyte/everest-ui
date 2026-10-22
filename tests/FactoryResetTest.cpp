@@ -3,6 +3,7 @@
 #include "FactoryResetRuntime.hpp"
 #include "LoginState.hpp"
 
+#include <QEventLoop>
 #include <QFile>
 #include <QJsonDocument>
 #include <QSignalSpy>
@@ -18,6 +19,9 @@ private:
     QList<int> m_checked;
     bool m_unplugged = true;
     int m_loads = 0;
+    int m_stops = 0;
+    QString m_stopError;
+    QStringList m_events;
     QByteArray m_previousRuntime;
 
     QString script(const QByteArray& body) {
@@ -37,8 +41,17 @@ private:
                     return m_effective;
                 },
                 [this](const QList<int>& indices) {
+                    m_events.append(QStringLiteral("safety_check"));
                     m_checked = indices;
                     return m_unplugged;
+                },
+                [this]() {
+                    ++m_stops;
+                    m_events.append(QStringLiteral("stop_everest"));
+                    if (m_stopError.isEmpty()) {
+                        m_unplugged = false; // RPC becomes unavailable when EVerest stops.
+                    }
+                    return EverestServiceControlResult{m_stopError.isEmpty(), m_stopError};
                 }};
     }
 
@@ -58,8 +71,10 @@ private slots:
     }
 
     void cleanupTestCase() {
-        if (m_previousRuntime.isNull()) qunsetenv("RUNTIME_DIRECTORY");
-        else qputenv("RUNTIME_DIRECTORY", m_previousRuntime);
+        if (m_previousRuntime.isNull())
+            qunsetenv("RUNTIME_DIRECTORY");
+        else
+            qputenv("RUNTIME_DIRECTORY", m_previousRuntime);
     }
 
     void init() {
@@ -71,6 +86,9 @@ private slots:
         m_unplugged = true;
         m_checked.clear();
         m_loads = 0;
+        m_stops = 0;
+        m_stopError.clear();
+        m_events.clear();
     }
 
     void resolvesEveryEvseAndRejectsIncompleteMappings() {
@@ -114,6 +132,7 @@ private slots:
         QCOMPARE(last(responses).parameters.value("error").toString(), QString("factory_reset_not_allowed"));
         QVERIFY(!last(responses).parameters.contains("reboot_expected"));
         QCOMPARE(m_checked, QList<int>{1});
+        QCOMPARE(m_stops, 0);
     }
 
     void bypassNeedsNeitherConfigNorRpcAndRechecksPolicy() {
@@ -129,6 +148,7 @@ private slots:
         QTRY_VERIFY(!responses.isEmpty());
         QVERIFY(!last(responses).success);
         QCOMPARE(m_loads, 1);
+        QCOMPARE(m_stops, 0);
     }
 
     void confirmationAndBusyRejectionsDoNotRun() {
@@ -138,6 +158,119 @@ private slots:
         QVERIFY(!runtime.handleRequest(request("reset", {{"confirm", true}}), true).success);
         QVERIFY(!runtime.handleRequest(request("reboot")).success);
         QCOMPARE(m_loads, 0);
+        QTest::qWait(10);
+        QCOMPARE(m_stops, 0);
+    }
+
+    void stopsAfterSafetyCheckBeforeRunningHelper() {
+        const auto marker = m_dir.filePath(QStringLiteral("helper-started"));
+        m_config.insert("factory_reset_command", script("touch '" + marker.toUtf8() + "'\nexit 0\n"));
+        auto callbacks = actions();
+        const auto stop = callbacks.stopEverest;
+        callbacks.stopEverest = [&]() {
+            // The process must not have started, even though status is already running.
+            if (QFile::exists(marker)) {
+                return EverestServiceControlResult{false, QStringLiteral("helper_started_before_stop")};
+            }
+            return stop();
+        };
+        FactoryResetRuntime runtime(callbacks);
+        QVERIFY(runtime.handleRequest(request("read_status")).parameters.value("can_reset").toBool());
+        QCOMPARE(m_stops, 0);
+        m_events.clear();
+        runtime.handleRequest(request("reset", {{"confirm", true}}));
+        QTRY_VERIFY(!runtime.isRunning());
+        QVERIFY(runtime.isRebootExpected());
+        QCOMPARE(m_events, (QStringList{"safety_check", "stop_everest"}));
+        QCOMPARE(m_stops, 1);
+        QVERIFY(QFile::exists(marker));
+        QVERIFY(QFile::remove(marker));
+    }
+
+    void stopFailureDoesNotRunHelper_data() {
+        QTest::addColumn<QString>("error");
+        QTest::newRow("stop-failed") << QString("everest_stop_failed");
+        QTest::newRow("stop-timeout") << QString("everest_stop_timeout");
+    }
+    void stopFailureDoesNotRunHelper() {
+        QFETCH(QString, error);
+        m_stopError = error;
+        const auto marker = m_dir.filePath(QStringLiteral("unexpected-helper"));
+        m_config.insert("factory_reset_command", script("touch '" + marker.toUtf8() + "'\nexit 0\n"));
+        FactoryResetRuntime runtime(actions());
+        QSignalSpy responses(&runtime, &FactoryResetRuntime::responseReady);
+        runtime.handleRequest(request("reset", {{"confirm", true}}));
+        QTRY_VERIFY(!runtime.isRunning());
+        QVERIFY(!last(responses).success);
+        QCOMPARE(last(responses).parameters, (QJsonObject{{"error", "factory_reset_failed"}}));
+        QCOMPARE(runtime.handleRequest(request("read_status")).parameters.value("state").toString(), QString("failed"));
+        QCOMPARE(m_stops, 1);
+        QVERIFY(!QFile::exists(marker));
+        QVERIFY(UiRuntime::readLoginState().allowed);
+    }
+
+    void keepaliveAndExclusivityDuringStop() {
+        m_config.insert("factory_reset_require_unplugged", "false");
+        m_config.insert("factory_reset_timeout_seconds", "1");
+        auto callbacks = actions();
+        bool keepaliveWhileStopping = false;
+        callbacks.stopEverest = [&]() {
+            ++m_stops;
+            QEventLoop loop;
+            QTimer::singleShot(2200, &loop, &QEventLoop::quit);
+            loop.exec();
+            return EverestServiceControlResult{true, {}};
+        };
+        FactoryResetRuntime runtime(callbacks);
+        connect(&runtime, &FactoryResetRuntime::responseReady, &runtime, [&](const ModuleResponse& reply) {
+            if (!reply.final) {
+                keepaliveWhileStopping = runtime.isRunning();
+                QVERIFY(!runtime.handleRequest(request("reset", {{"confirm", true}})).success);
+                const auto status = runtime.handleRequest(request("read_status"));
+                QCOMPARE(status.parameters.value("state").toString(), QString("running"));
+                QVERIFY(!status.parameters.value("can_reset").toBool());
+            }
+        });
+        runtime.handleRequest(request("reset", {{"confirm", true}}));
+        QTRY_VERIFY_WITH_TIMEOUT(!runtime.isRunning(), 5000);
+        QVERIFY(keepaliveWhileStopping);
+        QVERIFY(runtime.isRebootExpected()); // Stop time did not consume the helper's one-second budget.
+        QCOMPARE(m_stops, 1);
+        QCOMPARE(m_loads, 0);
+    }
+
+    void failedResetRequiresRecoveryBeforeRpcGuardedRetry() {
+        m_config.insert("factory_reset_command", script("exit 9\n"));
+        FactoryResetRuntime runtime(actions());
+        QSignalSpy responses(&runtime, &FactoryResetRuntime::responseReady);
+        runtime.handleRequest(request("reset", {{"confirm", true}}));
+        QTRY_VERIFY(!runtime.isRunning());
+        QCOMPARE(last(responses).parameters.value("error").toString(), QString("factory_reset_failed"));
+        const auto status = runtime.handleRequest(request("read_status"));
+        QCOMPARE(status.parameters.value("state").toString(), QString("failed"));
+        QVERIFY(!status.parameters.value("can_reset").toBool());
+        QVERIFY(!m_unplugged);
+        QCOMPARE(m_stops, 1);
+
+        const int count = responses.count();
+        runtime.handleRequest(request("reset", {{"confirm", true}}));
+        QTRY_VERIFY(responses.count() > count);
+        QCOMPARE(last(responses).parameters.value("error").toString(), QString("factory_reset_not_allowed"));
+        QCOMPARE(m_stops, 1);
+
+        m_unplugged = true; // Administrator has recovered EVerest and RPC reports Unplugged again.
+        QVERIFY(runtime.handleRequest(request("read_status")).parameters.value("can_reset").toBool());
+    }
+
+    void invalidCommandDoesNotStopEverest() {
+        m_config.insert("factory_reset_command", "\"\"");
+        FactoryResetRuntime runtime(actions());
+        QSignalSpy responses(&runtime, &FactoryResetRuntime::responseReady);
+        runtime.handleRequest(request("reset", {{"confirm", true}}));
+        QTRY_VERIFY(!runtime.isRunning());
+        QCOMPARE(last(responses).parameters.value("error").toString(), QString("factory_reset_failed"));
+        QCOMPARE(m_stops, 0);
+        QVERIFY(m_checked.isEmpty());
     }
 
     void commandOutcomes_data() {
@@ -168,6 +301,7 @@ private slots:
         const auto final = last(responses);
         QVERIFY(final.final);
         QCOMPARE(final.success, success);
+        QCOMPARE(m_stops, 1); // Bypassing RPC never bypasses stopping EVerest.
         const auto login = UiRuntime::readLoginState();
         QCOMPARE(login.allowed, !success);
         QCOMPARE(login.reason, success ? QStringLiteral("waiting_for_reboot") : QString());

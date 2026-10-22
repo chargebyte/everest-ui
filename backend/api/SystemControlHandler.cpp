@@ -39,7 +39,8 @@ SystemControl::SystemControl(RpcApiClient* rpcApiClient, QObject* parent) :
                     EverestServiceControl::checkEverestStateAllowed(m_rpcApiClient, indices,
                                                                     {QStringLiteral("Unplugged")})
                         .success;
-         }},
+         },
+         []() { return EverestServiceControl::executeEverestStop(); }},
         this);
     connect(m_factoryReset, &FactoryResetRuntime::responseReady, this, &SystemControl::handleModuleResponse);
     connect(&FirmwareUpdate::runtime(), &FirmwareUpdateRuntime::responseReady, this,
