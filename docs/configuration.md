@@ -95,6 +95,11 @@ No network configuration-editor API is introduced by this change.
 
 Installation creates documented comment-only local files only when absent, including preserving existing
 dangling symlinks. Distribution defaults remain ordinary package-owned files that can change on upgrade.
+Both distribution files end with a comment-only **Local Overrides** guide, separate from active settings.
+It remains available under `/usr/share/everest-ui/config/` in `/usr` installations even if a factory reset
+removes `/etc/everest-ui/`. Recreate missing local directories/files with only the desired overrides;
+do not copy the complete defaults. The existing documented `/etc` templates remain unchanged, and the
+programs do not automatically recreate deleted overlays at runtime.
 Distributions must mark `/etc/everest-ui/backend.conf` and `/etc/everest-ui/frontend.conf` as configuration files
 with their package manager's preserve-local-changes policy. Image-based updates must likewise preserve the
 local `/etc` layer. CMake installation alone cannot control a package manager's update policy.
