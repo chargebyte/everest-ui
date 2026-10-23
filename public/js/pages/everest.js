@@ -203,7 +203,7 @@ export function renderEverestPage(container, {
         if (isMatchingRequest(message, pendingWriteRequestId)) {
           pendingWriteRequestId = null;
           settingsTable.setApplyBusy(false);
-          settingsTable.setStatus(error, 'error');
+          settingsTable.setStatus(configApplyErrorMessage(message, 'configuration save failed'), 'error');
         }
         addLog(`everest.write_config_parameters.error: ${error}`);
       }
@@ -214,8 +214,8 @@ export function renderEverestPage(container, {
       }
 
       if (message.type === 'everest.upload_config.error') {
-        const error = message.parameters.error
-        configLoader.setStatus(error, 'error');
+        const error = message.parameters?.error || 'configuration upload failed';
+        configLoader.setStatus(configApplyErrorMessage(message, 'configuration upload failed'), 'error');
         addLog(`everest.upload_config.error: ${error}`);
       }
     },
@@ -265,6 +265,12 @@ export function renderEverestPage(container, {
     },
     destroy() {}
   };
+}
+
+export function configApplyErrorMessage(message, fallback) {
+  const detail = message.parameters?.message;
+  return typeof detail === 'string' && detail.trim() !== ''
+    ? detail : message.parameters?.error || fallback;
 }
 
 export function hasUnsavedSettings(currentValues, lastLoadedValues) {

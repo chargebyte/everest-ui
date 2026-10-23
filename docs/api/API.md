@@ -432,6 +432,38 @@ Read and write use nested module/parameter objects:
 
 The read response contains requested values and `_available_modules`. `download_config` returns `file` and `config_yaml`. `upload_config` expects `file_name` and `config_yaml`, validates it, installs it, and may restart EVerest. The UI catalog `public/config/parameter_catalog.json` supplies display metadata and `backend_path`; it does not define backend validation.
 
+`upload_config` checks YAML mapping syntax, writes `everest-ui-uploaded-<basename>` in the directory of
+`everest_base_config_path`, and points `everest_config_path` at it via a symlink. Existing same-named files
+are overwritten. It then requests an EVerest restart and waits for the existing configured RPC-readiness
+deadline. The normal restart guard checks EVSE index 1 against `everest_restart_allowed_states`.
+
+For full uploads only, RPC failures `rpc_api_not_connected`, `rpc_api_no_response`, `rpc_api_send_failed`,
+or `rpc_api_client_unavailable` can use a stopped-service recovery exception: systemd must confirm
+`everest.service` is `inactive` or `failed`, both `MainPID` and `ControlPID` are zero, and the state has
+not changed during the queries. Unknown/unreadable properties or a missing unit fail closed. Active or
+transitional states, reported disallowed EVSE states, malformed RPC status, and configuration-policy
+errors do not qualify. Ordinary settings writes and other maintenance operations retain their guards.
+The service is never stopped to qualify; external service management is not atomic with this check.
+
+The same restart helper starts a stopped service and retains normal readiness/error handling. No new
+request flag, action, or response shape is introduced. File and symlink changes remain installed even
+when restart authorization, service startup, or RPC readiness fails; no rollback is attempted.
+
+For both `upload_config` and `write_config_parameters`, a failed readiness wait with
+`rpc_api_not_connected` or `rpc_api_no_response` is followed by a systemd check, without another startup
+wait. If the service is confirmed stopped using the same terminal-state/zero-process checks, the response
+uses `error:"everest_startup_failed"`. If confirmed active, the original RPC error is retained and a
+`message` explains that the service is running but RPC readiness timed out. Transitional or unreadable
+states retain the original error and receive an inconclusive-startup message. A failed restart request
+retains `everest_restart_failed` with a clear message immediately. Other errors retain existing behavior.
+Clients should display a nonempty `parameters.message` when present and fall back to `parameters.error`.
+All messages state that the configuration was saved and recommend checking EVerest service logs; they
+do not imply rollback or successful startup. The original readiness error and diagnostic classification
+remain in the backend journal. Examples: [upload startup failure](examples/everest.upload_config.response.startup_failed.json),
+[running service without RPC readiness](examples/everest.upload_config.response.rpc_not_ready.json), and
+[settings-save startup failure](examples/everest.write_config_parameters.response.startup_failed.json).
+See [upload and recovery instructions](../../README.md#uploading-everest-configurations).
+
 ## Example templates
 
 WebSocket template filenames use `<group>.<action>.request.json`, `<group>.<action>.response.success.json`, and `<group>.<action>.response.error.json`. Each request and response file contains the actual JSON message sent on the WebSocket. The error response uses `<action-specific-error-code>` as a placeholder; see the module implementation for possible concrete errors. Templates use `requestId: 42`; response `requestId` values must match the request.

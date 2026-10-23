@@ -19,7 +19,15 @@ The project installs three binaries:
 - `everest-ui-webserver`
 - `everest-ui`
 
-It installs the runtime configuration files into `/etc/everest-ui/`, the browser assets into `/usr/share/everest-ui/public/`, and the auth store is created at `/var/lib/everest-ui/auth.json`.
+With `CMAKE_INSTALL_PREFIX=/usr`, distribution defaults are installed as
+`/usr/share/everest-ui/config/backend.conf` and `/usr/share/everest-ui/config/frontend.conf`.
+Local overrides belong in `/etc/everest-ui/backend.conf` and `/etc/everest-ui/frontend.conf`; only keys
+specified there override the distribution defaults. Installation creates comment-only local templates
+when absent and preserves existing local files. See [Configuration Layers](docs/configuration.md).
+
+Browser assets are installed into `/usr/share/everest-ui/public/`, and the auth store is created at
+`/var/lib/everest-ui/auth.json`. The defaults and browser-asset directories follow the installation prefix
+(CMake defaults to `/usr/local`); the `/etc/everest-ui/` and auth-store paths remain unchanged.
 
 Example build and install flow:
 
@@ -176,6 +184,58 @@ The UI overlay path is derived using the same rule as everest-core: resolve the 
 The optional `available_features` entry in `backend.conf` is a comma-separated list of enabled UI features.
 If it is omitted, all features are enabled. The Network Configuration page is enabled when `network` is
 listed; for example, `available_features=network`. Other feature names are reserved for future use.
+
+## Uploading EVerest Configurations
+
+On **EVerest Config**, **Upload and Apply** installs a complete YAML configuration. It checks that the
+content parses as a YAML mapping; this is not full EVerest module/schema validation. Uploading `site.yaml`
+with the distribution defaults writes:
+
+```text
+/etc/everest/everest-ui-uploaded-site.yaml
+/etc/everest/config.yaml -> /etc/everest/everest-ui-uploaded-site.yaml
+```
+
+The directory comes from `everest_base_config_path`; the filename is `everest-ui-uploaded-` followed by
+the uploaded basename. Uploading the same name overwrites that file. The backend replaces
+`everest_config_path` with a symlink to it. Normal per-target `user-config` overlays still apply.
+
+The backend then automatically restarts `everest.service` and waits for RpcApi readiness, using
+`everest_rpc_api_ready_timeout_seconds` and its platform overrides. Normally the RPC state check must
+allow the restart according to `everest_restart_allowed_states` (default `Unplugged`); this path currently
+checks EVSE index 1. A reported disallowed EVSE state is never bypassed.
+
+For recovery from a bad configuration, a disconnected/unresponsive RpcApi does not prevent **Upload and
+Apply** from starting EVerest if systemd confirms `everest.service` is `inactive` or `failed`, with both
+`MainPID` and `ControlPID` zero. Running, transitional, unknown, missing, or unreadable service states
+block this exception. The backend rechecks the state before requesting restart, but this is not atomic
+with external service management; do not start EVerest concurrently. It never stops a running service
+to qualify for recovery. This exception applies only to full uploads, not ordinary settings edits or
+Safety Controller operations. Malformed RPC status and configuration-policy errors still block restart.
+
+File installation and symlink replacement occur before restart authorization. If authorization, restart,
+or RPC readiness fails, the UI reports an error, but the uploaded file and symlink remain installed;
+there is no automatic rollback. A stopped service can therefore be rescued by uploading another corrected
+file. After the configured RPC-readiness wait fails, the backend checks the service state:
+
+- If it is confirmed stopped (`inactive` or `failed`, both process IDs zero), the error is
+  `everest_startup_failed`: the configuration was saved, but EVerest is not running after the restart attempt.
+- If the service is confirmed active, the message explains that the service is running but RpcApi did
+  not become ready in time. This does not establish that all EVerest modules are healthy.
+- If the state is transitional or unreadable, the message says startup could not be confirmed, rather
+  than claiming EVerest failed to launch. A rejected restart request is reported immediately.
+
+These explanations apply to uploads and ordinary configuration saves; they do not add another startup
+wait, automatic retry, or rollback. Detailed diagnostics remain in the backend journal. If EVerest still
+fails to start, inspect the logs and, after correcting the configuration, retry or use:
+
+```sh
+systemctl restart everest.service
+journalctl -u everest.service -f
+```
+
+The Web UI can remain available even when EVerest fails. The device's Reboot control is separate from
+this EVerest-only restart.
 
 ## Reboot Recovery
 

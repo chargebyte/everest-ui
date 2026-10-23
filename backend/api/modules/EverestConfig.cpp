@@ -20,6 +20,7 @@
 #include <QTemporaryFile>
 #include <QTimer>
 
+#include <functional>
 #include <stdexcept>
 
 namespace EverestConfig {
@@ -522,18 +523,43 @@ ModuleResponse ensureEverestConfigSymlink(ModuleResponse response) {
     return ensureEverestConfigSymlinkToTarget(baseConfigPathResult.path, response);
 }
 
-ModuleResponse restartEverestStack(ModuleResponse response) {
-    const EverestStateAllowedResult stateAllowedResult =
-        EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
-    if (!stateAllowedResult.success) {
+namespace {
+struct EverestConfigServiceActions {
+    std::function<EverestStateAllowedResult()> checkState = []() {
+        return EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
+    };
+    std::function<bool()> stoppedForRecovery = []() {
+        SystemdService systemd;
+        return systemd.isServiceStoppedForRecovery(QStringLiteral("everest.service"));
+    };
+    std::function<EverestServiceControlResult()> restart = []() {
+        return EverestServiceControl::executeEverestRestart(g_rpcApiClient);
+    };
+    std::function<bool()> serviceActive = []() {
+        SystemdService systemd;
+        return systemd.isUnitActive(QStringLiteral("everest.service"));
+    };
+};
+
+bool rpcUnavailableForRecovery(const QString& error) {
+    return error == QStringLiteral("rpc_api_not_connected") || error == QStringLiteral("rpc_api_no_response") ||
+           error == QStringLiteral("rpc_api_send_failed") || error == QStringLiteral("rpc_api_client_unavailable");
+}
+} // namespace
+
+ModuleResponse restartEverestStack(ModuleResponse response, bool allowStoppedRecovery = false,
+                                   const EverestConfigServiceActions& actions = {}) {
+    const EverestStateAllowedResult stateAllowedResult = actions.checkState();
+    const bool recoverStopped = !stateAllowedResult.success && allowStoppedRecovery &&
+                                rpcUnavailableForRecovery(stateAllowedResult.error) && actions.stoppedForRecovery();
+    if (!stateAllowedResult.success && !recoverStopped) {
         qWarning() << "Unable to check whether EVerest may be restarted"
-                   << "state=" << stateAllowedResult.state
-                   << "error=" << stateAllowedResult.error;
+                   << "state=" << stateAllowedResult.state << "error=" << stateAllowedResult.error;
         QString error = stateAllowedResult.error;
         if (stateAllowedResult.error == QLatin1String(kErrorEverestStateNotAllowed)) {
-            error =
-                QStringLiteral("config could not be applied because EVerest-stack is in state \"%1\" and cannot be restarted, please unplug the EV and try again")
-                    .arg(stateAllowedResult.state);
+            error = QStringLiteral("config could not be applied because EVerest-stack is in state \"%1\" and cannot be "
+                                   "restarted, please unplug the EV and try again")
+                        .arg(stateAllowedResult.state);
         }
 
         response.parameters = QJsonObject{
@@ -542,12 +568,46 @@ ModuleResponse restartEverestStack(ModuleResponse response) {
         return response;
     }
 
-    const EverestServiceControlResult restartResult =
-        EverestServiceControl::executeEverestRestart(g_rpcApiClient);
+    if (recoverStopped) {
+        qInfo() << "Starting EVerest after configuration upload: RPC unavailable, service confirmed stopped";
+    }
+    const EverestServiceControlResult restartResult = actions.restart();
     if (!restartResult.success) {
+        QString error = restartResult.error;
+        QString message;
+        if (error == QStringLiteral("rpc_api_not_connected") || error == QStringLiteral("rpc_api_no_response")) {
+            // The existing readiness wait has finished; diagnose without adding another startup timeout.
+            QString serviceState;
+            if (actions.stoppedForRecovery()) {
+                serviceState = QStringLiteral("confirmed_stopped");
+                error = QStringLiteral("everest_startup_failed");
+                message = QStringLiteral("The configuration was saved, but EVerest is not running after the restart "
+                                         "attempt. Check the EVerest service logs.");
+            } else if (actions.serviceActive()) {
+                serviceState = QStringLiteral("active");
+                message = QStringLiteral("The configuration was saved and the EVerest service is running, but "
+                                         "RpcApi did not become ready within the configured wait period. Check the "
+                                         "EVerest service logs.");
+            } else {
+                serviceState = QStringLiteral("unconfirmed");
+                message = QStringLiteral("The configuration was saved, but RpcApi did not become ready and the "
+                                         "backend could not confirm that EVerest finished starting. The service may "
+                                         "still be restarting or its state may be unavailable. Check the EVerest "
+                                         "service logs.");
+            }
+            qWarning() << "EVerest configuration restart readiness failed: rpc_error=" << restartResult.error
+                       << "service_state=" << serviceState;
+        } else if (error == QStringLiteral("everest_restart_failed")) {
+            message = QStringLiteral("The configuration was saved, but the restart request for EVerest failed. "
+                                     "Check the EVerest service logs.");
+            qWarning() << "EVerest configuration restart request failed: error=" << restartResult.error;
+        }
         response.parameters = QJsonObject{
-            {QLatin1String(kError), restartResult.error},
+            {QLatin1String(kError), error},
         };
+        if (!message.isEmpty()) {
+            response.parameters.insert(QStringLiteral("message"), message);
+        }
         return response;
     }
 
@@ -556,7 +616,7 @@ ModuleResponse restartEverestStack(ModuleResponse response) {
     return response;
 }
 
-ModuleResponse handleReadRequest(const ModuleRequest &request) {
+ModuleResponse handleReadRequest(const ModuleRequest& request) {
     ModuleResponse response{
         .requestId = request.requestId,
         .group = QLatin1String(kGroupEverest),
@@ -743,7 +803,7 @@ ModuleResponse handleUploadRequest(const ModuleRequest &request) {
         return response;
     }
 
-    return restartEverestStack(response);
+    return restartEverestStack(response, true);
 }
 
 ModuleResponse handleRequest(const ModuleRequest &request) {
