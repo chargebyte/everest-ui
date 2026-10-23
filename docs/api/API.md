@@ -432,6 +432,24 @@ Read and write use nested module/parameter objects:
 
 The read response contains requested values and `_available_modules`. `download_config` returns `file` and `config_yaml`. `upload_config` expects `file_name` and `config_yaml`, validates it, installs it, and may restart EVerest. The UI catalog `public/config/parameter_catalog.json` supplies display metadata and `backend_path`; it does not define backend validation.
 
+`upload_config` checks YAML mapping syntax, writes `everest-ui-uploaded-<basename>` in the directory of
+`everest_base_config_path`, and points `everest_config_path` at it via a symlink. Existing same-named files
+are overwritten. It then requests an EVerest restart and waits for the existing configured RPC-readiness
+deadline. The normal restart guard checks EVSE index 1 against `everest_restart_allowed_states`.
+
+For full uploads only, RPC failures `rpc_api_not_connected`, `rpc_api_no_response`, `rpc_api_send_failed`,
+or `rpc_api_client_unavailable` can use a stopped-service recovery exception: systemd must confirm
+`everest.service` is `inactive` or `failed`, both `MainPID` and `ControlPID` are zero, and the state has
+not changed during the queries. Unknown/unreadable properties or a missing unit fail closed. Active or
+transitional states, reported disallowed EVSE states, malformed RPC status, and configuration-policy
+errors do not qualify. Ordinary settings writes and other maintenance operations retain their guards.
+The service is never stopped to qualify; external service management is not atomic with this check.
+
+The same restart helper starts a stopped service and retains normal readiness/error handling. No new
+request flag, action, or response shape is introduced. File and symlink changes remain installed even
+when restart authorization, service startup, or RPC readiness fails; no rollback is attempted.
+See [upload and recovery instructions](../../README.md#uploading-everest-configurations).
+
 ## Example templates
 
 WebSocket template filenames use `<group>.<action>.request.json`, `<group>.<action>.response.success.json`, and `<group>.<action>.response.error.json`. Each request and response file contains the actual JSON message sent on the WebSocket. The error response uses `<action-specific-error-code>` as a placeholder; see the module implementation for possible concrete errors. Templates use `requestId: 42`; response `requestId` values must match the request.

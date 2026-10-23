@@ -20,6 +20,7 @@
 #include <QTemporaryFile>
 #include <QTimer>
 
+#include <functional>
 #include <stdexcept>
 
 namespace EverestConfig {
@@ -522,18 +523,39 @@ ModuleResponse ensureEverestConfigSymlink(ModuleResponse response) {
     return ensureEverestConfigSymlinkToTarget(baseConfigPathResult.path, response);
 }
 
-ModuleResponse restartEverestStack(ModuleResponse response) {
-    const EverestStateAllowedResult stateAllowedResult =
-        EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
-    if (!stateAllowedResult.success) {
+namespace {
+struct EverestConfigServiceActions {
+    std::function<EverestStateAllowedResult()> checkState = []() {
+        return EverestServiceControl::checkEverestStateAllowed(g_rpcApiClient, 1);
+    };
+    std::function<bool()> stoppedForRecovery = []() {
+        SystemdService systemd;
+        return systemd.isServiceStoppedForRecovery(QStringLiteral("everest.service"));
+    };
+    std::function<EverestServiceControlResult()> restart = []() {
+        return EverestServiceControl::executeEverestRestart(g_rpcApiClient);
+    };
+};
+
+bool rpcUnavailableForRecovery(const QString& error) {
+    return error == QStringLiteral("rpc_api_not_connected") || error == QStringLiteral("rpc_api_no_response") ||
+           error == QStringLiteral("rpc_api_send_failed") || error == QStringLiteral("rpc_api_client_unavailable");
+}
+} // namespace
+
+ModuleResponse restartEverestStack(ModuleResponse response, bool allowStoppedRecovery = false,
+                                   const EverestConfigServiceActions& actions = {}) {
+    const EverestStateAllowedResult stateAllowedResult = actions.checkState();
+    const bool recoverStopped = !stateAllowedResult.success && allowStoppedRecovery &&
+                                rpcUnavailableForRecovery(stateAllowedResult.error) && actions.stoppedForRecovery();
+    if (!stateAllowedResult.success && !recoverStopped) {
         qWarning() << "Unable to check whether EVerest may be restarted"
-                   << "state=" << stateAllowedResult.state
-                   << "error=" << stateAllowedResult.error;
+                   << "state=" << stateAllowedResult.state << "error=" << stateAllowedResult.error;
         QString error = stateAllowedResult.error;
         if (stateAllowedResult.error == QLatin1String(kErrorEverestStateNotAllowed)) {
-            error =
-                QStringLiteral("config could not be applied because EVerest-stack is in state \"%1\" and cannot be restarted, please unplug the EV and try again")
-                    .arg(stateAllowedResult.state);
+            error = QStringLiteral("config could not be applied because EVerest-stack is in state \"%1\" and cannot be "
+                                   "restarted, please unplug the EV and try again")
+                        .arg(stateAllowedResult.state);
         }
 
         response.parameters = QJsonObject{
@@ -542,8 +564,10 @@ ModuleResponse restartEverestStack(ModuleResponse response) {
         return response;
     }
 
-    const EverestServiceControlResult restartResult =
-        EverestServiceControl::executeEverestRestart(g_rpcApiClient);
+    if (recoverStopped) {
+        qInfo() << "Starting EVerest after configuration upload: RPC unavailable, service confirmed stopped";
+    }
+    const EverestServiceControlResult restartResult = actions.restart();
     if (!restartResult.success) {
         response.parameters = QJsonObject{
             {QLatin1String(kError), restartResult.error},
@@ -556,7 +580,7 @@ ModuleResponse restartEverestStack(ModuleResponse response) {
     return response;
 }
 
-ModuleResponse handleReadRequest(const ModuleRequest &request) {
+ModuleResponse handleReadRequest(const ModuleRequest& request) {
     ModuleResponse response{
         .requestId = request.requestId,
         .group = QLatin1String(kGroupEverest),
@@ -743,7 +767,7 @@ ModuleResponse handleUploadRequest(const ModuleRequest &request) {
         return response;
     }
 
-    return restartEverestStack(response);
+    return restartEverestStack(response, true);
 }
 
 ModuleResponse handleRequest(const ModuleRequest &request) {

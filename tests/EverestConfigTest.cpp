@@ -14,6 +14,109 @@ class EverestConfigTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void restartPolicy_data() {
+        QTest::addColumn<QString>("rpcError");
+        QTest::addColumn<bool>("upload");
+        QTest::addColumn<bool>("stopped");
+        QTest::addColumn<bool>("expectRestart");
+        QTest::addColumn<bool>("expectServiceQuery");
+        QTest::newRow("normal-allowed-upload") << QString() << true << false << true << false;
+        QTest::newRow("normal-allowed-edit") << QString() << false << false << true << false;
+        for (const auto& error : {QString("rpc_api_not_connected"), QString("rpc_api_no_response"),
+                                  QString("rpc_api_send_failed"), QString("rpc_api_client_unavailable")}) {
+            QTest::newRow(qPrintable(error)) << error << true << true << true << true;
+        }
+        QTest::newRow("running-or-unverified") << QString("rpc_api_not_connected") << true << false << false << true;
+        QTest::newRow("ordinary-edit-does-not-bypass")
+            << QString("rpc_api_not_connected") << false << true << false << false;
+        for (const auto& error :
+             {QString("everest_state_not_allowed"), QString("rpc_api_state_missing"), QString("rpc_api_status_missing"),
+              QString("rpc_api_request_failed"), QString("rpc_api_request_pending"),
+              QString("everest_restart_allowed_states_missing")}) {
+            QTest::newRow(qPrintable(error)) << error << true << true << false << false;
+        }
+    }
+    void restartPolicy() {
+        QFETCH(QString, rpcError);
+        QFETCH(bool, upload);
+        QFETCH(bool, stopped);
+        QFETCH(bool, expectRestart);
+        QFETCH(bool, expectServiceQuery);
+        EverestConfig::EverestConfigServiceActions actions;
+        int serviceQueries = 0;
+        int restarts = 0;
+        actions.checkState = [&]() {
+            return EverestStateAllowedResult{rpcError.isEmpty(), QString("Charging"), rpcError};
+        };
+        actions.stoppedForRecovery = [&]() {
+            ++serviceQueries;
+            return stopped;
+        };
+        actions.restart = [&]() {
+            ++restarts;
+            return EverestServiceControlResult{true, {}};
+        };
+        ModuleResponse response;
+        response.success = false;
+        const auto result = EverestConfig::restartEverestStack(response, upload, actions);
+        QCOMPARE(result.success, expectRestart);
+        QCOMPARE(restarts, expectRestart ? 1 : 0);
+        QCOMPARE(serviceQueries, expectServiceQuery ? 1 : 0);
+        if (expectRestart)
+            QVERIFY(result.parameters.isEmpty());
+        else
+            QVERIFY(result.parameters.contains(QStringLiteral("error")));
+    }
+
+    void stoppedRecoveryRetainsRestartAndReadinessErrors_data() {
+        QTest::addColumn<QString>("error");
+        QTest::newRow("restart-failed") << QString("everest_restart_failed");
+        QTest::newRow("readiness-disconnected") << QString("rpc_api_not_connected");
+        QTest::newRow("readiness-timeout") << QString("rpc_api_no_response");
+    }
+    void stoppedRecoveryRetainsRestartAndReadinessErrors() {
+        QFETCH(QString, error);
+        EverestConfig::EverestConfigServiceActions actions;
+        actions.checkState = []() {
+            return EverestStateAllowedResult{false, {}, QStringLiteral("rpc_api_not_connected")};
+        };
+        actions.stoppedForRecovery = []() { return true; };
+        actions.restart = [&]() { return EverestServiceControlResult{false, error}; };
+        ModuleResponse response;
+        response.success = false;
+        const auto result = EverestConfig::restartEverestStack(response, true, actions);
+        QVERIFY(!result.success);
+        QCOMPARE(result.parameters.value(QStringLiteral("error")).toString(), error);
+    }
+
+    void uploadedFileNamingAndActivationStayUnchanged() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto basePath = directory.filePath(QStringLiteral("everest-ui-config.yaml"));
+        const auto activePath = directory.filePath(QStringLiteral("config.yaml"));
+        const auto name = EverestConfig::sanitizeUploadedConfigFileName(QStringLiteral("/some/path/rescue.yaml"));
+        const auto target = EverestConfig::buildUploadedConfigTargetPath(basePath, activePath, name);
+        QCOMPARE(target, directory.filePath(QStringLiteral("everest-ui-uploaded-rescue.yaml")));
+        const auto yaml = QStringLiteral("active_modules: {}\n");
+        QVERIFY(EverestConfig::writeTextFile(target, yaml));
+        // Install the symlink before checking restart eligibility, as upload does.
+        QVERIFY(QFile::link(target, activePath));
+        QCOMPARE(QFileInfo(activePath).symLinkTarget(), target);
+        EverestConfig::EverestConfigServiceActions actions;
+        actions.checkState = []() {
+            return EverestStateAllowedResult{false, {}, QStringLiteral("rpc_api_not_connected")};
+        };
+        actions.stoppedForRecovery = []() { return false; };
+        actions.restart = []() { return EverestServiceControlResult{true, {}}; };
+        ModuleResponse response;
+        response.success = false;
+        QVERIFY(!EverestConfig::restartEverestStack(response, true, actions).success);
+        QString installed;
+        QVERIFY(EverestConfig::readTextFile(activePath, installed));
+        QCOMPARE(installed, yaml);
+        QCOMPARE(QFileInfo(activePath).symLinkTarget(), target);
+    }
+
     void missingYamlFileReportsOpenFailure() {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());

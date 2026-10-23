@@ -7,6 +7,7 @@
 #include <QDBusMetaType>
 #include <QDBusMessage>
 #include <QDBusInterface>
+#include <QDBusReply>
 #include <QDBusVariant>
 #include <QEventLoop>
 #include <QStringList>
@@ -226,37 +227,19 @@ bool SystemdService::waitForUnitStopped(const QString& unitName, int timeoutMs) 
 }
 
 bool SystemdService::readUnitState(const QString& unitName, QString* state) {
-    if (!isSystemBusAvailable()) {
+    const QString path = unitPath(unitName);
+    if (path.isEmpty()) {
         return false;
     }
-
-    if (!isManagerInterfaceAvailable()) {
-        return false;
-    }
-
-    QDBusMessage getUnitQuery =
-        m_systemdManagerInterface->call(QStringLiteral("GetUnit"), unitName);
-    if (getUnitQuery.type() != QDBusMessage::ReplyMessage ||
-        getUnitQuery.arguments().isEmpty()) {
-        return false;
-    }
-
-    const QDBusObjectPath unitPath =
-        qdbus_cast<QDBusObjectPath>(getUnitQuery.arguments().at(0));
-    QDBusInterface unitInterface(QStringLiteral("org.freedesktop.systemd1"),
-                                 unitPath.path(),
-                                 QStringLiteral("org.freedesktop.DBus.Properties"),
-                                 QDBusConnection::systemBus());
+    QDBusInterface unitInterface(QStringLiteral("org.freedesktop.systemd1"), path,
+                                 QStringLiteral("org.freedesktop.DBus.Properties"), QDBusConnection::systemBus());
     if (!unitInterface.isValid()) {
         return false;
     }
 
-    QDBusMessage activeStateQuery =
-        unitInterface.call(QStringLiteral("Get"),
-                           QStringLiteral("org.freedesktop.systemd1.Unit"),
-                           QStringLiteral("ActiveState"));
-    if (activeStateQuery.type() != QDBusMessage::ReplyMessage ||
-        activeStateQuery.arguments().isEmpty()) {
+    QDBusMessage activeStateQuery = unitInterface.call(
+        QStringLiteral("Get"), QStringLiteral("org.freedesktop.systemd1.Unit"), QStringLiteral("ActiveState"));
+    if (activeStateQuery.type() != QDBusMessage::ReplyMessage || activeStateQuery.arguments().isEmpty()) {
         return false;
     }
 
@@ -264,15 +247,70 @@ bool SystemdService::readUnitState(const QString& unitName, QString* state) {
     return true;
 }
 
-bool SystemdService::isUnitEnabled(const QString &unitName)
-{
+QString SystemdService::unitPath(const QString& unitName) const {
+    if (!isSystemBusAvailable()) {
+        return {};
+    }
+
+    if (!isManagerInterfaceAvailable()) {
+        return {};
+    }
+
+    QDBusMessage getUnitQuery = m_systemdManagerInterface->call(QStringLiteral("GetUnit"), unitName);
+    if (getUnitQuery.type() != QDBusMessage::ReplyMessage || getUnitQuery.arguments().isEmpty()) {
+        return {};
+    }
+
+    return qdbus_cast<QDBusObjectPath>(getUnitQuery.arguments().at(0)).path();
+}
+
+bool SystemdService::readServiceProcessIds(const QString& unitName, quint32* mainPid, quint32* controlPid) {
+    const QString path = unitPath(unitName);
+    if (path.isEmpty()) {
+        return false;
+    }
+    QDBusInterface unitInterface(QStringLiteral("org.freedesktop.systemd1"), path,
+                                 QStringLiteral("org.freedesktop.DBus.Properties"), QDBusConnection::systemBus());
+    if (!unitInterface.isValid()) {
+        return false;
+    }
+
+    const QDBusReply<QVariantMap> properties =
+        unitInterface.call(QStringLiteral("GetAll"), QStringLiteral("org.freedesktop.systemd1.Service"));
+    if (!properties.isValid()) {
+        return false;
+    }
+    const QVariant main = properties.value().value(QStringLiteral("MainPID"));
+    const QVariant control = properties.value().value(QStringLiteral("ControlPID"));
+    if (main.userType() != QMetaType::UInt || control.userType() != QMetaType::UInt) {
+        return false;
+    }
+    *mainPid = main.toUInt();
+    *controlPid = control.toUInt();
+    return true;
+}
+
+bool SystemdService::isServiceStoppedForRecovery(const QString& unitName) {
+    QString state;
+    quint32 mainPid = 0;
+    quint32 controlPid = 0;
+    if (!readUnitState(unitName, &state) ||
+        (state != QStringLiteral("inactive") && state != QStringLiteral("failed")) ||
+        !readServiceProcessIds(unitName, &mainPid, &controlPid) || mainPid != 0 || controlPid != 0) {
+        return false;
+    }
+    // Reject a transition during the separate property reads; external restarts are not atomic with this check.
+    QString finalState;
+    return readUnitState(unitName, &finalState) && finalState == state;
+}
+
+bool SystemdService::isUnitEnabled(const QString& unitName) {
     QString state;
     return readUnitFileState(unitName, &state) &&
            (state == QStringLiteral("enabled") || state == QStringLiteral("enabled-runtime"));
 }
 
-bool SystemdService::isUnitAvailable(const QString &unitName)
-{
+bool SystemdService::isUnitAvailable(const QString& unitName) {
     QString state;
     return readUnitFileState(unitName, &state);
 }
