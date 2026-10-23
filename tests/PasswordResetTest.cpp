@@ -337,6 +337,7 @@ private slots:
         cfg.passwordResetBootStatusPath = marker();
         UiOccupancyTracker occupancy;
         StaticServer server(cfg, &auth, nullptr, &occupancy);
+        QSignalSpy restricted(&server, &StaticServer::loginRestricted);
         QWebSocketServer frontend("test", QWebSocketServer::NonSecureMode);
         QWebSocketServer backend("backend", QWebSocketServer::NonSecureMode);
         QVERIFY(frontend.listen(QHostAddress::LocalHost, 0));
@@ -356,6 +357,44 @@ private slots:
         QTRY_COMPARE(closed.count(), 1);
         QCOMPARE(browser.closeReason(), QStringLiteral("waiting_for_reboot"));
         QVERIFY(!occupancy.isBusy());
+        // The proxy can close independently before the server's session-invalidation timer runs.
+        QTRY_COMPARE(restricted.count(), 1);
+        QVERIFY(!auth.validateSession(session));
+    }
+    void restrictionDuringBackendConnectionInvalidatesSessions() {
+        AuthManager auth(authPath());
+        user(auth);
+        const auto session = auth.createSession("alice");
+        ServerConfig cfg;
+        cfg.passwordResetBootStatusPath = marker();
+        UiOccupancyTracker occupancy;
+        StaticServer server(cfg, &auth, nullptr, &occupancy);
+        QSignalSpy restricted(&server, &StaticServer::loginRestricted);
+        QWebSocketServer frontend("test", QWebSocketServer::NonSecureMode);
+        QWebSocketServer backend("backend", QWebSocketServer::NonSecureMode);
+        QVERIFY(frontend.listen(QHostAddress::LocalHost, 0));
+        QVERIFY(backend.listen(QHostAddress::LocalHost, 0));
+        bool restrictionPublished = false;
+        QString error;
+        connect(&frontend, &QWebSocketServer::newConnection, this, [&] {
+            auto* peer = frontend.nextPendingConnection();
+            new WebSocketProxySession(peer, QUrl(QString("ws://127.0.0.1:%1").arg(backend.serverPort())), &occupancy,
+                                      peer);
+            QVERIFY(occupancy.isBusy());
+            QVERIFY(auth.validateSession(session));
+            // Publish before processing the proxy's asynchronous backend connection. Leave the server
+            // signal disconnected from the proxy so closure must come from its independent state check.
+            restrictionPublished = UiRuntime::blockLoginForReboot(QStringLiteral("reboot"), error);
+        });
+        QWebSocket browser;
+        QSignalSpy closed(&browser, &QWebSocket::disconnected);
+        browser.open(QUrl(QString("ws://127.0.0.1:%1").arg(frontend.serverPort())));
+        QTRY_VERIFY2(restrictionPublished, qPrintable(error));
+        QTRY_COMPARE(closed.count(), 1);
+        QCOMPARE(browser.closeReason(), QStringLiteral("waiting_for_reboot"));
+        QVERIFY(!occupancy.isBusy());
+        QTRY_COMPARE(restricted.count(), 1);
+        QCOMPARE(restricted.at(0).at(0).toString(), QStringLiteral("waiting_for_reboot"));
         QVERIFY(!auth.validateSession(session));
     }
     void authStatusIsInformationalWhileUiOccupied() {
