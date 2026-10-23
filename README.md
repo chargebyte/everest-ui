@@ -19,7 +19,15 @@ The project installs three binaries:
 - `everest-ui-webserver`
 - `everest-ui`
 
-It installs the runtime configuration files into `/etc/everest-ui/`, the browser assets into `/usr/share/everest-ui/public/`, and the auth store is created at `/var/lib/everest-ui/auth.json`.
+With `CMAKE_INSTALL_PREFIX=/usr`, distribution defaults are installed as
+`/usr/share/everest-ui/config/backend.conf` and `/usr/share/everest-ui/config/frontend.conf`.
+Local overrides belong in `/etc/everest-ui/backend.conf` and `/etc/everest-ui/frontend.conf`; only keys
+specified there override the distribution defaults. Installation creates comment-only local templates
+when absent and preserves existing local files. See [Configuration Layers](docs/configuration.md).
+
+Browser assets are installed into `/usr/share/everest-ui/public/`, and the auth store is created at
+`/var/lib/everest-ui/auth.json`. The defaults and browser-asset directories follow the installation prefix
+(CMake defaults to `/usr/local`); the `/etc/everest-ui/` and auth-store paths remain unchanged.
 
 Example build and install flow:
 
