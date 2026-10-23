@@ -80,13 +80,78 @@ private slots:
         actions.checkState = []() {
             return EverestStateAllowedResult{false, {}, QStringLiteral("rpc_api_not_connected")};
         };
-        actions.stoppedForRecovery = []() { return true; };
+        int serviceQueries = 0;
+        actions.stoppedForRecovery = [&]() { return ++serviceQueries == 1; };
+        actions.serviceActive = []() { return false; };
         actions.restart = [&]() { return EverestServiceControlResult{false, error}; };
         ModuleResponse response;
         response.success = false;
         const auto result = EverestConfig::restartEverestStack(response, true, actions);
         QVERIFY(!result.success);
         QCOMPARE(result.parameters.value(QStringLiteral("error")).toString(), error);
+    }
+
+    void restartFailureDiagnostics_data() {
+        QTest::addColumn<QString>("restartError");
+        QTest::addColumn<bool>("stopped");
+        QTest::addColumn<bool>("active");
+        QTest::addColumn<QString>("expectedError");
+        QTest::addColumn<QString>("messageFragment");
+        QTest::addColumn<int>("expectedQueries");
+        QTest::newRow("success") << QString() << true << false << QString() << QString() << 0;
+        QTest::newRow("restart-rejected")
+            << QString("everest_restart_failed") << false << false << QString("everest_restart_failed")
+            << QString("restart request for EVerest failed") << 0;
+        for (const auto& error : {QString("rpc_api_not_connected"), QString("rpc_api_no_response")}) {
+            QTest::newRow(qPrintable(error + "-stopped")) << error << true << false << QString("everest_startup_failed")
+                                                          << QString("not running after the restart attempt") << 1;
+            QTest::newRow(qPrintable(error + "-active"))
+                << error << false << true << error << QString("service is running") << 2;
+            QTest::newRow(qPrintable(error + "-transitional-or-unreadable"))
+                << error << false << false << error << QString("could not confirm") << 2;
+        }
+        QTest::newRow("permanent-rpc-error") << QString("rpc_api_error_present_missing") << true << false
+                                             << QString("rpc_api_error_present_missing") << QString() << 0;
+    }
+    void restartFailureDiagnostics() {
+        QFETCH(QString, restartError);
+        QFETCH(bool, stopped);
+        QFETCH(bool, active);
+        QFETCH(QString, expectedError);
+        QFETCH(QString, messageFragment);
+        QFETCH(int, expectedQueries);
+        for (const bool upload : {false, true}) {
+            EverestConfig::EverestConfigServiceActions actions;
+            int queries = 0;
+            int restarts = 0;
+            actions.checkState = []() { return EverestStateAllowedResult{true, QStringLiteral("Unplugged"), {}}; };
+            actions.stoppedForRecovery = [&]() {
+                ++queries;
+                return stopped;
+            };
+            actions.serviceActive = [&]() {
+                ++queries;
+                return active;
+            };
+            actions.restart = [&]() {
+                ++restarts;
+                return EverestServiceControlResult{restartError.isEmpty(), restartError};
+            };
+            ModuleResponse response;
+            const auto result = EverestConfig::restartEverestStack(response, upload, actions);
+            QCOMPARE(restarts, 1);
+            QCOMPARE(queries, expectedQueries);
+            QCOMPARE(result.success, restartError.isEmpty());
+            QCOMPARE(result.parameters.value(QStringLiteral("error")).toString(), expectedError);
+            if (messageFragment.isEmpty()) {
+                QVERIFY(!result.parameters.contains(QStringLiteral("message")));
+            } else {
+                const auto message = result.parameters.value(QStringLiteral("message")).toString();
+                QVERIFY2(message.contains(messageFragment), qPrintable(message));
+                QVERIFY(message.contains(QStringLiteral("configuration was saved")));
+                QVERIFY(message.contains(QStringLiteral("Check the EVerest service logs")));
+            }
+        }
     }
 
     void uploadedFileNamingAndActivationStayUnchanged() {

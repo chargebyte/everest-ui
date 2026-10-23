@@ -535,6 +535,10 @@ struct EverestConfigServiceActions {
     std::function<EverestServiceControlResult()> restart = []() {
         return EverestServiceControl::executeEverestRestart(g_rpcApiClient);
     };
+    std::function<bool()> serviceActive = []() {
+        SystemdService systemd;
+        return systemd.isUnitActive(QStringLiteral("everest.service"));
+    };
 };
 
 bool rpcUnavailableForRecovery(const QString& error) {
@@ -569,9 +573,41 @@ ModuleResponse restartEverestStack(ModuleResponse response, bool allowStoppedRec
     }
     const EverestServiceControlResult restartResult = actions.restart();
     if (!restartResult.success) {
+        QString error = restartResult.error;
+        QString message;
+        if (error == QStringLiteral("rpc_api_not_connected") || error == QStringLiteral("rpc_api_no_response")) {
+            // The existing readiness wait has finished; diagnose without adding another startup timeout.
+            QString serviceState;
+            if (actions.stoppedForRecovery()) {
+                serviceState = QStringLiteral("confirmed_stopped");
+                error = QStringLiteral("everest_startup_failed");
+                message = QStringLiteral("The configuration was saved, but EVerest is not running after the restart "
+                                         "attempt. Check the EVerest service logs.");
+            } else if (actions.serviceActive()) {
+                serviceState = QStringLiteral("active");
+                message = QStringLiteral("The configuration was saved and the EVerest service is running, but "
+                                         "RpcApi did not become ready within the configured wait period. Check the "
+                                         "EVerest service logs.");
+            } else {
+                serviceState = QStringLiteral("unconfirmed");
+                message = QStringLiteral("The configuration was saved, but RpcApi did not become ready and the "
+                                         "backend could not confirm that EVerest finished starting. The service may "
+                                         "still be restarting or its state may be unavailable. Check the EVerest "
+                                         "service logs.");
+            }
+            qWarning() << "EVerest configuration restart readiness failed: rpc_error=" << restartResult.error
+                       << "service_state=" << serviceState;
+        } else if (error == QStringLiteral("everest_restart_failed")) {
+            message = QStringLiteral("The configuration was saved, but the restart request for EVerest failed. "
+                                     "Check the EVerest service logs.");
+            qWarning() << "EVerest configuration restart request failed: error=" << restartResult.error;
+        }
         response.parameters = QJsonObject{
-            {QLatin1String(kError), restartResult.error},
+            {QLatin1String(kError), error},
         };
+        if (!message.isEmpty()) {
+            response.parameters.insert(QStringLiteral("message"), message);
+        }
         return response;
     }
 

@@ -208,7 +208,18 @@ Safety Controller operations. Malformed RPC status and configuration-policy erro
 File installation and symlink replacement occur before restart authorization. If authorization, restart,
 or RPC readiness fails, the UI reports an error, but the uploaded file and symlink remain installed;
 there is no automatic rollback. A stopped service can therefore be rescued by uploading another corrected
-file. If it still fails to start, inspect the logs and, after correcting the configuration, retry or use:
+file. After the configured RPC-readiness wait fails, the backend checks the service state:
+
+- If it is confirmed stopped (`inactive` or `failed`, both process IDs zero), the error is
+  `everest_startup_failed`: the configuration was saved, but EVerest is not running after the restart attempt.
+- If the service is confirmed active, the message explains that the service is running but RpcApi did
+  not become ready in time. This does not establish that all EVerest modules are healthy.
+- If the state is transitional or unreadable, the message says startup could not be confirmed, rather
+  than claiming EVerest failed to launch. A rejected restart request is reported immediately.
+
+These explanations apply to uploads and ordinary configuration saves; they do not add another startup
+wait, automatic retry, or rollback. Detailed diagnostics remain in the backend journal. If EVerest still
+fails to start, inspect the logs and, after correcting the configuration, retry or use:
 
 ```sh
 systemctl restart everest.service

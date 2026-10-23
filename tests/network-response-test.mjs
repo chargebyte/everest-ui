@@ -14,13 +14,28 @@ import {
   normalizeNetworkSettings,
   parseCanBitRate
 } from '../public/js/pages/network.js';
-import { hasUnsavedSettings } from '../public/js/pages/everest.js';
+import { configApplyErrorMessage, hasUnsavedSettings } from '../public/js/pages/everest.js';
 import {
   kSettingsTableApplyingLabel,
   kSettingsTableReloadLabel,
   kSettingsTableReloadingLabel,
   kUnassignedValueHint
 } from '../public/js/ui/settingsTable.js';
+
+test('configuration errors prefer backend messages and retain compatibility with error-only responses', () => {
+  for (const type of ['everest.upload_config.error', 'everest.write_config_parameters.error']) {
+    assert.equal(configApplyErrorMessage({ type, parameters: { error: 'everest_startup_failed',
+      message: 'EVerest is not running. Check the service logs.' } }, 'fallback'),
+    'EVerest is not running. Check the service logs.');
+    assert.equal(configApplyErrorMessage({ type, parameters: { error: 'rpc_api_no_response' } }, 'fallback'),
+      'rpc_api_no_response');
+    for (const message of ['', '   ', null, 42]) {
+      assert.equal(configApplyErrorMessage({ type, parameters: { error: 'rpc_api_no_response', message } }, 'fallback'),
+        'rpc_api_no_response');
+    }
+    assert.equal(configApplyErrorMessage({ type }, 'fallback'), 'fallback');
+  }
+});
 
 test('ignores settings responses for an older request or interface', () => {
   const current = { requestId: 2, parameters: { interface: 'eth1' } };
