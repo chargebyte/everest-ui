@@ -11,6 +11,17 @@ target_include_directories(systemd_service_test PRIVATE ../backend/api/libs)
 target_link_libraries(systemd_service_test PRIVATE ${QT_PACKAGE_NAME}::Core ${QT_PACKAGE_NAME}::DBus ${QT_PACKAGE_NAME}::Test)
 add_test(NAME systemd_service_test COMMAND systemd_service_test)
 
+add_executable(safety_controller_availability_test SafetyControllerAvailabilityTest.cpp
+    ../backend/api/libs/BackendConfig.cpp ../backend/api/libs/ConsoleConnector.cpp
+    ../backend/api/libs/EverestServiceControl.cpp ../backend/api/libs/SystemdService.cpp
+    ../backend/api/libs/YamlUtils.cpp)
+target_include_directories(safety_controller_availability_test PRIVATE "${CMAKE_BINARY_DIR}"
+    ../backend/api ../backend/api/libs ../backend/api/modules)
+target_link_libraries(safety_controller_availability_test PRIVATE everest_ui_config
+    ${QT_PACKAGE_NAME}::Core ${QT_PACKAGE_NAME}::Network ${QT_PACKAGE_NAME}::WebSockets
+    ${QT_PACKAGE_NAME}::DBus ${QT_PACKAGE_NAME}::Test yaml-cpp)
+add_test(NAME safety_controller_availability_test COMMAND safety_controller_availability_test)
+
 add_executable(reboot_settings_test RebootSettingsTest.cpp
     ../backend/api/libs/RebootSettings.cpp ../backend/api/libs/BackendConfig.cpp)
 target_include_directories(reboot_settings_test PRIVATE ../backend/api/libs)

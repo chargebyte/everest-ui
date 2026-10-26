@@ -110,6 +110,32 @@ defaults. New distribution keys are inherited automatically unless explicitly as
 
 ## Empty and Removed Values
 
+### Safety Controller E-Stop Selection
+
+`safety_controller_available_estops` is an individual-input allowlist inside the existing `estops` group
+of `safety_controller_available_settings`. Its distribution and built-in default is `all`. `none` and
+an explicitly empty assignment select no inputs; comma-separated positive integers such as `1,3`
+select one-based E-stop numbers. Whitespace and duplicate numbers are accepted. Invalid lists select
+none with a backend warning, rather than falling back to a more permissive value. Inputs absent from
+a controller's cached YAML are never exposed.
+
+Resolve exact keys after ordinary distribution/local merging: first configured matching
+`safety_controller_available_estops.<compatible>` in device-tree order, then the global key, then `all`.
+Unlike timeout settings, empty/malformed matching values do not fall through; unlike the network
+whitelist, matching lists are not unioned. No readable/matching device tree means use the global value.
+
+For example, local `safety_controller_available_estops=1,3` does not override a distribution-provided
+`safety_controller_available_estops.chargebyte,imx93-charge-control-y=1` on that platform. Set that exact
+platform key locally to replace it, or use
+`!safety_controller_available_estops.chargebyte,imx93-charge-control-y` to remove it and continue to
+the next matching platform key/global fallback. `!safety_controller_available_estops` removes only
+the global key; it does not mask suffixed keys. Removing a local assignment/mask restores inheritance.
+
+Reads omit excluded roots and writes ignore excluded entries while preserving their native YAML values.
+This controls editing availability, not whether those physical inputs are enabled in the controller.
+
+### Other Settings
+
 The following existing consumer semantics remain unchanged:
 
 | Setting | Important distinction |

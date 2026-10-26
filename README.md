@@ -132,6 +132,27 @@ may remain empty without blocking other settings. Emergency Stops have one dropd
 per row, offering `active-low`, `active-high`, or `disabled`. Contactors retain `disabled` and all three
 feedback modes. The configured settings allowlist still determines which groups are shown.
 
+Within the enabled `estops` group, `safety_controller_available_estops` selects individual inputs:
+
+```ini
+safety_controller_available_estops=1,3
+safety_controller_available_estops.chargebyte,imx93-charge-control-y=1
+```
+
+Numbers are one-based GUI labels: `1,3` shows **E-Stop 1** and **E-Stop 3**, without renumbering.
+The default is `all`; `none` or an explicitly empty value exposes none. Malformed lists expose none
+and log a warning. Numbers beyond a controller's YAML array expose nothing. Excluded E-stops are omitted
+from reads and submitted changes to them are ignored; their YAML settings are preserved, not disabled.
+The existing `safety_controller_available_settings` group gate still applies.
+
+After distribution/local configuration merging, the first configured matching suffix in the NUL-delimited
+`/proc/device-tree/compatible` order wins, then the global key, then `all`. Lists are not combined.
+Empty or malformed platform values do not fall through. If the device tree is unavailable or no key
+matches, use the global value. `!key` masks an exact inherited key, so masking a platform key permits
+the next matching platform/global fallback. A global assignment or mask does not override/remove
+platform-specific keys; override or mask those exact keys separately. Removing a local directive
+restores distribution inheritance. See [E-stop selection](docs/configuration.md#safety-controller-e-stop-selection).
+
 Before flashing, the backend quarantines the cache as `<device>.yaml.invalid`. A verified successful flash
 publishes the updated YAML before EVerest restarts. If a started flash fails, the backend attempts one bounded
 device-specific parameter dump and YAML conversion while EVerest is still stopped. Valid readback replaces

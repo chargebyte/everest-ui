@@ -95,14 +95,14 @@ export function renderSafetyPage(container, {
       return pane;
     }
 
-    const paneConfig = structuredClone(settingsMatrixBlock);
+    const settings = controller.settings || {};
+    const paneConfig = filterSafetyEstopInstances(settingsMatrixBlock, settings);
     paneConfig.sections.forEach((section) => {
       section.id = `${section.id}-controller-${index}`;
     });
     const matrix = renderSettingsMatrixBlock(paneConfig, {
       buttonLabel: 'Save Configuration'
     });
-    const settings = controller.settings || {};
     matrix.applyAvailableParameters(settings);
     matrix.setValues(mapResponse('settings_matrix', matrix.requestResponseObject, {
       parameters: settings
@@ -244,6 +244,16 @@ export function renderSafetyPage(container, {
       pendingWrites.clear();
     }
   };
+}
+
+export function filterSafetyEstopInstances(block, settings) {
+  const config = structuredClone(block);
+  config.sections = config.sections.filter(section => {
+    if (section.id !== 'estops') return true;
+    section.instances = section.instances.filter(instance => Object.hasOwn(settings, `estops_${instance.id}`));
+    return section.instances.length > 0;
+  });
+  return config;
 }
 
 function createSafetyLoadingElement() {

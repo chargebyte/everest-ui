@@ -10,7 +10,7 @@ const root = mkdtempSync(path.join(tmpdir(), 'everest-ui-safety-test-'));
 cpSync(path.resolve('public/js'), path.join(root, 'js'), { recursive: true });
 writeFileSync(path.join(root, 'package.json'), '{"type":"module"}\n');
 after(() => rmSync(root, { recursive: true, force: true }));
-const { safetyWriteRequiresReload, getSafetyWriteErrorMessage } =
+const { safetyWriteRequiresReload, getSafetyWriteErrorMessage, filterSafetyEstopInstances } =
   await import(pathToFileURL(path.join(root, 'js/pages/safety.js')).href);
 
 test('unavailable and refreshed caches lock the selected editor until reload', () => {
@@ -53,6 +53,21 @@ const { renderSettingsMatrixBlock } = await import(pathToFileURL(path.join(root,
 const { loadPageConfig } = await import(pathToFileURL(path.join(root, 'js/config/pageConfigAdapter.js')).href);
 const { buildRequest } = await import(pathToFileURL(path.join(root, 'js/protocol/requestBuilder.js')).href);
 const catalog = JSON.parse(readFileSync('public/config/parameter_catalog.json', 'utf8'));
+
+test('E-stop selection retains original instance numbers and leaves other sections unchanged', () => {
+  const block = loadPageConfig('safety', catalog).blocks.find(block => block.kind === 'settings_matrix');
+  const original = structuredClone(block);
+  const filtered = filterSafetyEstopInstances(block, { estops_0: { enabled: 'active-low' },
+    estops_2: { enabled: 'disabled' } });
+  assert.deepEqual(filtered.sections.find(section => section.id === 'estops').instances,
+    [{ id: '0', display_name: 'E-Stop 1' }, { id: '2', display_name: 'E-Stop 3' }]);
+  assert.deepEqual(filtered.sections.filter(section => section.id !== 'estops'),
+    block.sections.filter(section => section.id !== 'estops'));
+  assert.deepEqual(block, original);
+  assert.equal(filterSafetyEstopInstances(block, {}).sections.some(section => section.id === 'estops'), false);
+  const all = Object.fromEntries([0, 1, 2].map(index => [`estops_${index}`, {}]));
+  assert.deepEqual(filterSafetyEstopInstances(block, all), block);
+});
 
 class MatrixElement {
   constructor(tag) {
@@ -168,6 +183,24 @@ test('PT1000 uses channel rows and E-stops have exactly one dropdown per labeled
     assert.equal(row.querySelectorAll('select').length, 1);
   });
   assert.equal(matrix.element.querySelectorAll('.matrix-grid').length, 1, 'contactor layout stays unchanged');
+});
+
+test('filtered E-stop rows render and serialize only the selected original channels', () => {
+  globalThis.document = { createElement: tag => new MatrixElement(tag) };
+  const block = loadPageConfig('safety', catalog).blocks[0];
+  const filtered = filterSafetyEstopInstances(block, { estops_0: {}, estops_2: {} });
+  const matrix = renderSettingsMatrixBlock(filtered, { buttonLabel: 'Save Configuration' });
+  const table = matrix.element.querySelectorAll('table').find(element => element.attributes['aria-label'] === 'Emergency Stops');
+  const rows = table.querySelectorAll('tbody')[0].children;
+  assert.deepEqual(rows.map(row => row.children[0].textContent), ['E-Stop 1', 'E-Stop 3']);
+  assert.deepEqual(rows.map(row => row.querySelectorAll('select')[0].dataset.backendPath),
+    ['estops_0.enabled', 'estops_2.enabled']);
+  const paths = Object.values(matrix.requestResponseObject).map(entry => entry.backend_path);
+  assert.equal(paths.includes('estops_1.enabled'), false);
+  assert.equal(paths.includes('estops_2.enabled'), true);
+  assert.equal(paths.includes('pt1000_0.abort-temperature'), true);
+  const empty = renderSettingsMatrixBlock(filterSafetyEstopInstances(block, {}), { buttonLabel: 'Save Configuration' });
+  assert.equal(empty.element.querySelectorAll('table').some(element => element.attributes['aria-label'] === 'Emergency Stops'), false);
 });
 
 test('disabled PT1000 inputs retain values and are included in Save payloads', () => {
