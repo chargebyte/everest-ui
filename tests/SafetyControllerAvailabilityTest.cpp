@@ -40,8 +40,12 @@ private slots:
         QFETCH(bool, all);
         QFETCH(QList<int>, indices);
         const auto result = parseAvailableEstops(value);
+        QSet<int> expectedIndices;
+        for (const int index : indices) {
+            expectedIndices.insert(index);
+        }
         QCOMPARE(result.all, all);
-        QCOMPARE(result.indices, QSet<int>(indices.begin(), indices.end()));
+        QCOMPARE(result.indices, expectedIndices);
         QVERIFY(!result.allows(-1));
     }
 
