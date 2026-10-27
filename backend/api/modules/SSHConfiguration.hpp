@@ -31,7 +31,6 @@ struct SystemdOperations {
     std::function<bool(const QString &, bool, int)> waitForUnitActive;
     std::function<bool(const QString &)> isUnitAvailable;
     std::function<bool(const QString &)> isUnitEnabled;
-    std::function<bool()> terminateSessions;
 };
 
 using PasswordWriter = std::function<bool(const QString&)>;

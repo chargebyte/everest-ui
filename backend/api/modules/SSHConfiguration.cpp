@@ -196,22 +196,6 @@ bool setRootPassword(const QString &password) {
     return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
 }
 
-bool terminateSshSessions() {
-    QProcess process;
-    process.start(QStringLiteral("pkill"), {QStringLiteral("-TERM"), QStringLiteral("-f"),
-                                            QStringLiteral("^sshd(-session)?: ")});
-    if (!process.waitForStarted(3000)) {
-        return false;
-    }
-    if (!process.waitForFinished(5000)) {
-        process.kill();
-        process.waitForFinished(1000);
-        return false;
-    }
-
-    return process.exitStatus() == QProcess::NormalExit &&
-           (process.exitCode() == 0 || process.exitCode() == 1);
-}
 } // namespace
 
 namespace SSHConfiguration {
@@ -380,15 +364,6 @@ ModuleResponse handleRequest(const ModuleRequest& request) {
             systemdSucceeded = false;
         }
         if (!systemdSucceeded) {
-            response.parameters = QJsonObject{
-                {QLatin1String(kError), QLatin1String(kErrorSystemdFailed)},
-            };
-            return response;
-        }
-        const bool sessionsTerminated = g_systemdOperationsOverride.terminateSessions
-                                            ? g_systemdOperationsOverride.terminateSessions()
-                                            : terminateSshSessions();
-        if (!sessionsTerminated) {
             response.parameters = QJsonObject{
                 {QLatin1String(kError), QLatin1String(kErrorSystemdFailed)},
             };
