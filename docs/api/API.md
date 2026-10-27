@@ -205,6 +205,21 @@ The backend configuration key `network_iso_high_level_comms_drivers` is a comma-
 
 E-stop `estops_<index>.enabled` is a string enum: `active-low`, `active-high`, or `disabled`; the historical key name does not indicate a boolean. Contactor `contactors_<index>.type` accepts `disabled`, `without-feedback`, `with-feedback-normally-open`, or `with-feedback-normally-closed`. Visibility remains controlled by `safety_controller_available_settings`; clients must not assume every group is exposed.
 
+`safety_controller_available_estops` further limits the E-stop entries exposed for reading/editing.
+It defaults to `all`; `none` or an explicit empty value exposes none. A list such as `1,3` uses one-based
+display numbers but retains zero-based API identities: return `estops_0` and `estops_2`, omitting
+`estops_1`. Do not compact indices or infer availability from the frontend catalog. The GUI hides excluded
+rows and keeps the labels E-Stop 1/E-Stop 3. Excluded or out-of-range E-stop roots are omitted from read
+responses; submitted edits to excluded roots are ignored, preserving those native YAML entries.
+The existing group allowlist can still disable the entire E-stops group. Other sections are unaffected.
+
+Platform suffixes select the first configured matching device-tree compatible string, then the global
+key, then `all`, after standard exact-key distribution/local merging and masking. Empty/malformed
+matches select none rather than falling through, and matching lists are not combined. See
+[configuration semantics](../configuration.md#safety-controller-e-stop-selection) and the
+[filtered read response](examples/safety.read_settings.response.filtered_estops.json), illustrating `1,3`.
+Requests and field names are unchanged; clients must handle subsets of returned setting roots.
+
 PT1000 channels use `overtemperature-protection` (boolean), `abort-temperature` (degrees Celsius), and `resistance-offset` (ohms). Under **Overtemperature Protection**, each channel has an Enable checkbox and two numeric columns. Unknown values are returned as empty strings, not zeroes or omitted keys. Unchecking the checkbox disables those inputs without clearing them; Save still includes both fields. The hardware YAML encodes an off channel as `disabled`, so submitted numeric values do not enable it and are retained only in the open page. No preference storage is introduced: after a reload, unknown values remain empty because the former threshold cannot be recovered from hardware. E-stops are presented as labeled rows with one dropdown per channel. These presentation changes do not rename API fields.
 
 For submitted, permitted PT1000 entries with protection enabled, both numeric fields are mandatory and must contain finite JSON numbers or numeric strings. Missing, null, empty, malformed, and non-finite values are rejected before preparing files or starting any process with `safety_controller_pt1000_invalid_settings` and a concise `message`; see the [invalid-settings response](examples/safety.write_settings.response.pt1000_invalid_settings.json). The GUI reports the first invalid enabled input before sending a request. Explicit zero is valid. Disabled channels may submit empty values without blocking other settings; see the [write request](examples/safety.write_settings.request.json) for retained and empty disabled-channel values.

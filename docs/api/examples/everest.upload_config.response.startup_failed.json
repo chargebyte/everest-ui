@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "everest.upload_config.error",
+  "parameters": {
+    "error": "everest_startup_failed",
+    "message": "The configuration was saved, but EVerest is not running after the restart attempt. Check the EVerest service logs."
+  },
+  "responseId": "r-2"
+}

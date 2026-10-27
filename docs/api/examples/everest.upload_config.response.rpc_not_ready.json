@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "everest.upload_config.error",
+  "parameters": {
+    "error": "rpc_api_no_response",
+    "message": "The configuration was saved and the EVerest service is running, but RpcApi did not become ready within the configured wait period. Check the EVerest service logs."
+  },
+  "responseId": "r-2"
+}

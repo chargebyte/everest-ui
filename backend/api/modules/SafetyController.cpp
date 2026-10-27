@@ -20,6 +20,7 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QSet>
 #include <QStringList>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -33,7 +34,17 @@
 #include <utility>
 
 namespace SafetyController {
+struct AvailableEstops {
+    bool all = true;
+    QSet<int> indices;
+
+    bool allows(int index) const {
+        return index >= 0 && (all || indices.contains(index));
+    }
+};
 QJsonObject readRequestedParametersFromYaml(const QJsonObject& requestParameters, const QJsonObject& yamlRoot);
+QJsonObject readRequestedParametersFromYaml(const QJsonObject& requestParameters, const QJsonObject& yamlRoot,
+                                            const QStringList& availableSettings, const AvailableEstops& estops);
 namespace {
 RpcApiClient* g_rpcApiClient = nullptr;
 constexpr char kModuleEvseManager[] = "EvseManager";
@@ -43,6 +54,7 @@ constexpr char kErrorSafetyControllerFlashFailed[] = "safety_controller_flash_fa
 constexpr char kParametersPt1000[] = "pt1000_";
 constexpr char kParametersContactors[] = "contactors_";
 constexpr char kParametersEstops[] = "estops_";
+constexpr char kConfAvailableEstops[] = "safety_controller_available_estops";
 constexpr char kCmdFlagI[] = "-i";
 constexpr char kCmdFlagO[] = "-o";
 constexpr char kSftyCtrlrParamDisabled[] = "disabled";
@@ -161,9 +173,9 @@ QStringList defaultAvailableSafetyControllerSettings() {
     };
 }
 
-QStringList loadAvailableSafetyControllerSettings() {
+QStringList availableSafetyControllerSettings(const UiConfig::Snapshot& configuration) {
     const QString configuredSettings =
-        ::readBackendConfigValue(QLatin1String(kConfSafetyControllerAvailableSettings)).trimmed();
+        configuration.value(QLatin1String(kConfSafetyControllerAvailableSettings)).trimmed();
     if (configuredSettings.isEmpty()) {
         return defaultAvailableSafetyControllerSettings();
     }
@@ -182,6 +194,55 @@ QStringList loadAvailableSafetyControllerSettings() {
     }
 
     return availableSettings;
+}
+
+QStringList loadAvailableSafetyControllerSettings() {
+    return availableSafetyControllerSettings(readBackendConfiguration());
+}
+
+AvailableEstops parseAvailableEstops(const QString& configured) {
+    const QString value = configured.trimmed();
+    if (value.compare(QStringLiteral("all"), Qt::CaseInsensitive) == 0)
+        return {};
+    AvailableEstops result{false, {}};
+    if (value.isEmpty() || value.compare(QStringLiteral("none"), Qt::CaseInsensitive) == 0)
+        return result;
+    static const QRegularExpression integer(QStringLiteral("^[0-9]+$"));
+    for (const auto& part : value.split(QLatin1Char(','))) {
+        const auto token = part.trimmed();
+        bool valid = false;
+        const int number = token.toInt(&valid);
+        if (!valid || number <= 0 || !integer.match(token).hasMatch()) {
+            qWarning() << "Invalid safety_controller_available_estops; exposing no E-stops:" << configured;
+            return {false, {}};
+        }
+        result.indices.insert(number - 1);
+    }
+    return result;
+}
+
+AvailableEstops availableEstopsForConfiguration(const UiConfig::Snapshot& configuration,
+                                                const QByteArray& compatibleData) {
+    const QString base = QLatin1String(kConfAvailableEstops);
+    for (const auto& compatible : compatibleData.split('\0')) {
+        if (compatible.isEmpty())
+            continue;
+        const QString key = base + QLatin1Char('.') + QString::fromUtf8(compatible);
+        if (configuration.contains(key))
+            return parseAvailableEstops(configuration.value(key));
+    }
+    return configuration.contains(base) ? parseAvailableEstops(configuration.value(base)) : AvailableEstops{};
+}
+
+AvailableEstops loadAvailableEstops() {
+    return availableEstopsForConfiguration(readBackendConfiguration(), readDeviceTreeCompatibleData());
+}
+
+int estopIndex(const QString& parameterKey) {
+    const auto suffix = parameterKey.mid(QLatin1String(kParametersEstops).size());
+    bool valid = false;
+    const int index = suffix.toInt(&valid);
+    return valid && index >= 0 && QString::number(index) == suffix ? index : -1;
 }
 
 bool isSafetyControllerSettingAvailable(const QStringList& availableSettings, const QString& setting) {
@@ -373,7 +434,9 @@ SafetyControllerDeviceResolution resolveSafetyControllerDevices(const QJsonObjec
 }
 
 QJsonObject safetyControllerDeviceToJson(const SafetyControllerDevice& device, const QJsonObject& requestedParameters,
-                                         bool rpcAvailable) {
+                                         bool rpcAvailable,
+                                         const QStringList& availableSettings = loadAvailableSafetyControllerSettings(),
+                                         const AvailableEstops& estops = loadAvailableEstops()) {
     QJsonObject controller{
         {QLatin1String(kKeyDeviceName), device.name},
         {QLatin1String(kKeyBspInstance), device.bspInstance},
@@ -397,8 +460,9 @@ QJsonObject safetyControllerDeviceToJson(const SafetyControllerDevice& device, c
     controller.insert(QLatin1String(kKeyAvailable), true);
     const bool writable = rpcAvailable && device.evseMappingResolved;
     controller.insert(QLatin1String(kKeyWritable), writable);
-    controller.insert(QLatin1String(kKeySettings),
-                      readRequestedParametersFromYaml(requestedParameters, yamlResult.yamlRoot));
+    controller.insert(
+        QLatin1String(kKeySettings),
+        readRequestedParametersFromYaml(requestedParameters, yamlResult.yamlRoot, availableSettings, estops));
     if (!device.evseMappingResolved) {
         controller.insert(QLatin1String(kKeyMessage),
                           QStringLiteral("Settings are read-only because the owning EVSE mapping is unavailable."));
@@ -491,8 +555,14 @@ QJsonObject readEstopParametersFromYaml(const QJsonObject& requestBlock, const Q
 }
 
 QJsonObject readRequestedParametersFromYaml(const QJsonObject& requestParameters, const QJsonObject& yamlRoot) {
+    const auto configuration = readBackendConfiguration();
+    return readRequestedParametersFromYaml(requestParameters, yamlRoot, availableSafetyControllerSettings(configuration),
+                                           availableEstopsForConfiguration(configuration, readDeviceTreeCompatibleData()));
+}
+
+QJsonObject readRequestedParametersFromYaml(const QJsonObject& requestParameters, const QJsonObject& yamlRoot,
+                                           const QStringList& availableSettings, const AvailableEstops& estops) {
     QJsonObject filledParameters = requestParameters;
-    const QStringList availableSettings = loadAvailableSafetyControllerSettings();
     const QJsonArray pt1000Entries = yamlRoot.value(QLatin1String(kSftyCtrlrParamPt1000S)).toArray();
     const QJsonArray contactorEntries = yamlRoot.value(QLatin1String(kSftyCtrlrParamContactors)).toArray();
     const QJsonArray estopEntries = yamlRoot.value(QLatin1String(kSftyCtrlrParamEstops)).toArray();
@@ -532,13 +602,13 @@ QJsonObject readRequestedParametersFromYaml(const QJsonObject& requestParameters
         }
 
         if (parameterKey.startsWith(QLatin1String(kParametersEstops))) {
-            if (!isSafetyControllerSettingAvailable(availableSettings, QLatin1String(kSafetyControllerSettingEstops))) {
+            const int index = estopIndex(parameterKey);
+            if (!isSafetyControllerSettingAvailable(availableSettings, QLatin1String(kSafetyControllerSettingEstops)) ||
+                !estops.allows(index) || index >= estopEntries.size()) {
                 filledParameters.remove(parameterKey);
                 continue;
             }
 
-            const QString indexString = parameterKey.mid(QLatin1String(kParametersEstops).size());
-            const int index = indexString.toInt();
             if (index >= 0 && index < estopEntries.size()) {
                 filledParameters.insert(parameterKey,
                                         readEstopParametersFromYaml(requestBlock, estopEntries.at(index)));
@@ -615,7 +685,8 @@ QJsonValue updateEstopParametersInYaml(const QJsonObject& requestBlock) {
 
 QJsonObject
 updateRequestParametersInYaml(const QJsonObject& requestParameters, const QJsonObject& yamlRoot,
-                              const QStringList& availableSettings = loadAvailableSafetyControllerSettings()) {
+                              const QStringList& availableSettings = loadAvailableSafetyControllerSettings(),
+                              const AvailableEstops& estops = loadAvailableEstops()) {
     QJsonObject updatedYamlRoot = yamlRoot;
     QJsonArray pt1000Entries = updatedYamlRoot.value(QLatin1String(kSftyCtrlrParamPt1000S)).toArray();
     QJsonArray contactorEntries = updatedYamlRoot.value(QLatin1String(kSftyCtrlrParamContactors)).toArray();
@@ -658,10 +729,8 @@ updateRequestParametersInYaml(const QJsonObject& requestParameters, const QJsonO
                 continue;
             }
 
-            const QString indexString = parameterKey.mid(QLatin1String(kParametersEstops).size());
-            bool validIndex = false;
-            const int index = indexString.toInt(&validIndex);
-            if (validIndex && index >= 0 && index < estopEntries.size()) {
+            const int index = estopIndex(parameterKey);
+            if (estops.allows(index) && index < estopEntries.size()) {
                 estopEntries.replace(index, updateEstopParametersInYaml(requestBlock));
             }
         }
@@ -722,13 +791,14 @@ bool writeSafetyControllerYamlFile(const QString& yamlPath, const QJsonObject& y
 
 QByteArray prepareSafetyControllerYaml(const QString& cachePath, const QJsonObject& settings,
                                        const QJsonObject& cachedParameters,
-                                       const QStringList& available = loadAvailableSafetyControllerSettings()) {
+                                       const QStringList& available = loadAvailableSafetyControllerSettings(),
+                                       const AvailableEstops& estops = loadAvailableEstops()) {
     try {
         YAML::Node root = YAML::LoadFile(cachePath.toStdString());
         if (!root.IsMap()) {
             return {};
         }
-        const QJsonObject updated = updateRequestParametersInYaml(settings, cachedParameters, available);
+        const QJsonObject updated = updateRequestParametersInYaml(settings, cachedParameters, available, estops);
         // Patch selected entries in the native document, not a schema-limited reconstruction.
         const auto patchEntries = [&](const QString& prefix, const QString& section, const QString& setting) {
             if (!isSafetyControllerSettingAvailable(available, setting)) {
@@ -737,6 +807,9 @@ QByteArray prepareSafetyControllerYaml(const QString& cachePath, const QJsonObje
             const QJsonArray entries = updated.value(section).toArray();
             for (auto it = settings.begin(); it != settings.end(); ++it) {
                 if (!it.key().startsWith(prefix)) {
+                    continue;
+                }
+                if (setting == QLatin1String(kSafetyControllerSettingEstops) && !estops.allows(estopIndex(it.key()))) {
                     continue;
                 }
                 bool validIndex = false;
@@ -1236,6 +1309,9 @@ ModuleResponse handleReadRequest(const ModuleRequest& request) {
 
     const YamlLoadResult configResult = loadEffectiveEverestConfig();
     const bool rpcAvailable = g_rpcApiClient && g_rpcApiClient->isReady();
+    const auto configuration = readBackendConfiguration();
+    const auto availableSettings = availableSafetyControllerSettings(configuration);
+    const auto estops = availableEstopsForConfiguration(configuration, readDeviceTreeCompatibleData());
     QJsonArray controllers;
     QStringList resolutionErrors;
     if (configResult.success) {
@@ -1243,7 +1319,8 @@ ModuleResponse handleReadRequest(const ModuleRequest& request) {
             resolveSafetyControllerDevices(configResult.yamlRoot, QStringLiteral("/usr/libexec/everest/modules"));
         resolutionErrors = resolution.errors;
         for (const SafetyControllerDevice& device : resolution.devices) {
-            controllers.append(safetyControllerDeviceToJson(device, request.parameters, rpcAvailable));
+            controllers.append(
+                safetyControllerDeviceToJson(device, request.parameters, rpcAvailable, availableSettings, estops));
         }
     } else {
         resolutionErrors.append(configResult.error);
@@ -1275,7 +1352,10 @@ ModuleResponse startWriteRequest(const ModuleRequest& request, QObject* owner,
         response.parameters = {{QLatin1String(kError), QLatin1String(kErrorDeviceInvalid)}};
         return response;
     }
-    if (!validatePt1000Settings(request.parameters)) {
+    const auto configuration = readBackendConfiguration();
+    const auto availableSettings = availableSafetyControllerSettings(configuration);
+    const auto estops = availableEstopsForConfiguration(configuration, readDeviceTreeCompatibleData());
+    if (!validatePt1000Settings(request.parameters, availableSettings)) {
         response.parameters = {
             {QLatin1String(kError), QStringLiteral("safety_controller_pt1000_invalid_settings")},
             {QLatin1String(kKeyMessage), QStringLiteral("Enter an abort temperature and resistance offset as valid "
@@ -1327,7 +1407,7 @@ ModuleResponse startWriteRequest(const ModuleRequest& request, QObject* owner,
     QJsonObject settings = request.parameters;
     settings.remove(QLatin1String(kKeyDeviceName));
     const QByteArray updatedParameters =
-        prepareSafetyControllerYaml(deviceIt->yamlPath, settings, yamlLoadResult.yamlRoot);
+        prepareSafetyControllerYaml(deviceIt->yamlPath, settings, yamlLoadResult.yamlRoot, availableSettings, estops);
     if (updatedParameters.isEmpty() || !writeSafetyControllerYamlFile(yamlPathResult.path, updatedParameters)) {
         response.parameters = {{QLatin1String(kError), QLatin1String(kErrorSafetyControllerYamlWriteFailed)}};
         return response;

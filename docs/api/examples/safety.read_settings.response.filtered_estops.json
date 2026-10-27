@@ -1,0 +1,34 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "safety.read_settings.result",
+  "parameters": {
+    "controllers": [
+      {
+        "device_name": "ttySC0",
+        "bsp_instance": "bsp",
+        "driver_module": "CbParsleyDriver",
+        "available": true,
+        "writable": true,
+        "message": "",
+        "settings": {
+          "pt1000_0": {
+            "overtemperature-protection": true,
+            "abort-temperature": "80",
+            "resistance-offset": "0"
+          },
+          "pt1000_1": {
+            "overtemperature-protection": false,
+            "abort-temperature": "",
+            "resistance-offset": ""
+          },
+          "estops_0": { "enabled": "active-low" },
+          "estops_2": { "enabled": "disabled" }
+        }
+      }
+    ],
+    "rpc_available": true
+  },
+  "responseId": "r-1"
+}
