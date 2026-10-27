@@ -125,10 +125,6 @@ private slots:
             systemdCalled = true;
             return true;
         };
-        operations.terminateSessions = [&] {
-            systemdCalled = true;
-            return true;
-        };
         SSHConfiguration::setSystemdOperationsForTest(operations);
         const bool success = outcome == QStringLiteral("success");
         if (!success) {
@@ -320,10 +316,6 @@ private slots:
                     (active ? QStringLiteral("active") : QStringLiteral("inactive"));
             return true;
         };
-        operations.terminateSessions = [&calls]() {
-            calls << QStringLiteral("terminate_sessions");
-            return true;
-        };
         SSHConfiguration::setSystemdOperationsForTest(operations);
 
         const ModuleResponse response = SSHConfiguration::handleRequest(ModuleRequest{
@@ -337,8 +329,7 @@ private slots:
         QCOMPARE(calls, QStringList({QStringLiteral("stop:sshd.socket"),
                                      QStringLiteral("wait:sshd.socket:inactive"),
                                      QStringLiteral("disable:sshd.socket"),
-                                     QStringLiteral("reload"),
-                                     QStringLiteral("terminate_sessions")}));
+                                     QStringLiteral("reload")}));
     }
 
     void disableStopsAndDisablesAllAvailableUnits() {
@@ -362,10 +353,6 @@ private slots:
                     (active ? QStringLiteral("active") : QStringLiteral("inactive"));
             return true;
         };
-        operations.terminateSessions = [&calls]() {
-            calls << QStringLiteral("terminate_sessions");
-            return true;
-        };
         SSHConfiguration::setSystemdOperationsForTest(operations);
 
         const ModuleResponse response = SSHConfiguration::handleRequest(ModuleRequest{
@@ -381,18 +368,12 @@ private slots:
                                      QStringLiteral("stop:sshd.service"),
                                      QStringLiteral("wait:sshd.service:inactive"),
                                      QStringLiteral("disable:sshd.socket"),
-                                     QStringLiteral("disable:sshd.service"), QStringLiteral("reload"),
-                                     QStringLiteral("terminate_sessions")}));
+                                     QStringLiteral("disable:sshd.service"), QStringLiteral("reload")}));
     }
 
     void disableFailsWhenNoSshUnitIsAvailable() {
-        bool sessionsTerminated = false;
         SSHConfiguration::SystemdOperations operations;
         setAvailableSshUnits(operations, {});
-        operations.terminateSessions = [&sessionsTerminated]() {
-            sessionsTerminated = true;
-            return true;
-        };
         SSHConfiguration::setSystemdOperationsForTest(operations);
 
         const ModuleResponse response = SSHConfiguration::handleRequest(ModuleRequest{
@@ -405,7 +386,6 @@ private slots:
         QVERIFY(!response.success);
         QCOMPARE(response.parameters.value(QLatin1String(kError)).toString(),
                  QStringLiteral("ssh_systemd_failed"));
-        QVERIFY(!sessionsTerminated);
     }
 
     void enableFailureRollsBackBootEnablement() {
