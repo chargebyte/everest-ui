@@ -9,6 +9,7 @@ import { eyeIcon } from './ui/eyeIcon.js';
 import { createTransport } from './transport.js';
 import { createRebootRecovery, createRebootOverlay, probeAuthStatus, showRecoveryNotice } from './ui/rebootRecovery.js';
 import { renderLayout } from './ui/layout.js';
+import { createFeatureAvailability } from './ui/featureAvailability.js';
 import { appendLog, state } from './state.js';
 import { setUiLog, bindUiLogResize } from './ui/uiLog.js';
 import { renderEverestPage } from './pages/everest.js';
@@ -315,14 +316,8 @@ function createAppTransport(appContext) {
       state.connection.connected = true;
       getRebootRecovery().onConnected();
       handlePcapConnectionChange(true);
-      const networkRequest = buildRequest(MODULE_IDS.NETWORK, 'read_interfaces', {
-        expert_mode: { backend_path: 'expert_mode', value_type: 'boolean', value: state.network.expertMode }
-      });
-      state.network.interfacesRequestPending = true;
-      const networkResult = appContext.transport.sendPayload(networkRequest);
-      if (!networkResult.ok) {
-        state.network.interfacesRequestPending = false;
-      }
+      appContext.features.update();
+      appContext.transport.sendPayload(buildRequest('system', 'read_features', {}));
       appContext.state.page?.onConnectionChange?.(true);
     },
     onClose(event) {
@@ -350,9 +345,24 @@ function createAppTransport(appContext) {
       if (isPcapMessage(message)) {
         handlePcapMessage(message, (logMessage) => addLog(appContext, logMessage));
       }
+      if (message.type === 'system.read_features.result') {
+        appContext.features.update(message.parameters);
+        state.network.available = appContext.features.allows('network');
+        if (state.network.available) {
+          state.network.interfacesRequestPending = true;
+          const result = appContext.transport.sendPayload(buildRequest(MODULE_IDS.NETWORK, 'read_interfaces', {
+            expert_mode: { backend_path: 'expert_mode', value_type: 'boolean', value: state.network.expertMode }
+          }));
+          if (!result.ok) state.network.interfacesRequestPending = false;
+        } else {
+          state.network.interfaces = [];
+        }
+      } else if (message.type === 'system.read_features.error') {
+        appContext.features.update();
+      }
       if (message.type === 'network.read_interfaces.result') {
         state.network.interfacesRequestPending = false;
-        const available = message.parameters?.available !== false;
+        const available = appContext.features.allows('network') && message.parameters?.available !== false;
         state.network.available = available;
         state.network.interfaces = Array.isArray(message.parameters?.interfaces)
           ? message.parameters.interfaces
@@ -407,6 +417,15 @@ function createRoutes() {
 }
 
 function startAppRuntime(appContext) {
+  appContext.features = createFeatureAvailability({
+    setPageAvailable: (route, available) => appContext.layout.setPageAvailable(route, available),
+    getActiveRoute: () => appContext.state.activeRoute,
+    returnToDefault() {
+      setActiveRoute(appContext, appContext.state.initialRoute);
+      renderRoute(appContext, appContext.state.initialRoute);
+    }
+  });
+  appContext.features.update();
   appContext.transport = createAppTransport(appContext);
   bindLogout(appContext);
   setupNavTracking(appContext);
@@ -447,7 +466,7 @@ function bindNavClicks(appContext) {
   appContext.layout.navItems.forEach((item) => {
     item.addEventListener('click', () => {
       const route = item.dataset.page;
-      if (!route || route === appContext.state.activeRoute) {
+      if (!route || !appContext.features.allows(route) || route === appContext.state.activeRoute) {
         return;
       }
       setActiveRoute(appContext, route);
@@ -462,6 +481,10 @@ function setActiveRoute(appContext, route) {
 }
 
 function renderRoute(appContext, route) {
+  if (!appContext.features.allows(route)) {
+    route = appContext.state.initialRoute;
+    setActiveRoute(appContext, route);
+  }
   appContext.state.page?.destroy?.();
 
   const renderPage = appContext.routes[route];

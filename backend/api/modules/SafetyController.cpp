@@ -1297,7 +1297,7 @@ private:
 };
 } // namespace
 
-ModuleResponse handleReadRequest(const ModuleRequest& request) {
+static ModuleResponse handleReadRequest(const ModuleRequest& request, bool featureEnabled) {
     ModuleResponse response{
         .requestId = request.requestId,
         .group = QLatin1String(kGroupSafety),
@@ -1307,6 +1307,10 @@ ModuleResponse handleReadRequest(const ModuleRequest& request) {
         .final = true,
     };
 
+    if (!featureEnabled) {
+        response.parameters = {{QLatin1String(kError), QStringLiteral("safety_controller_unavailable")}};
+        return response;
+    }
     const YamlLoadResult configResult = loadEffectiveEverestConfig();
     const bool rpcAvailable = g_rpcApiClient && g_rpcApiClient->isReady();
     const auto configuration = readBackendConfiguration();
@@ -1337,8 +1341,12 @@ ModuleResponse handleReadRequest(const ModuleRequest& request) {
     return response;
 }
 
-ModuleResponse startWriteRequest(const ModuleRequest& request, QObject* owner,
-                                 std::function<void(const ModuleResponse&)> completed) {
+ModuleResponse handleReadRequest(const ModuleRequest& request) {
+    return handleReadRequest(request, backendFeatureAvailable(QStringLiteral("safety")));
+}
+
+static ModuleResponse startWriteRequest(const ModuleRequest& request, QObject* owner,
+                                 std::function<void(const ModuleResponse&)> completed, bool featureEnabled) {
     ModuleResponse response{
         .requestId = request.requestId,
         .group = QLatin1String(kGroupSafety),
@@ -1347,6 +1355,10 @@ ModuleResponse startWriteRequest(const ModuleRequest& request, QObject* owner,
         .success = false,
         .final = true,
     };
+    if (!featureEnabled) {
+        response.parameters = {{QLatin1String(kError), QStringLiteral("safety_controller_unavailable")}};
+        return response;
+    }
     const QString deviceName = request.parameters.value(QLatin1String(kKeyDeviceName)).toString();
     if (!isSafeDeviceName(deviceName)) {
         response.parameters = {{QLatin1String(kError), QLatin1String(kErrorDeviceInvalid)}};
@@ -1416,6 +1428,12 @@ ModuleResponse startWriteRequest(const ModuleRequest& request, QObject* owner,
     auto* operation = new SafetyControllerWriteOperation(request, *deviceIt, yamlPathResult.path, binPathResult.path,
                                                          updatedParameters, owner, std::move(completed));
     return operation->start();
+}
+
+ModuleResponse startWriteRequest(const ModuleRequest& request, QObject* owner,
+                                 std::function<void(const ModuleResponse&)> completed) {
+    return startWriteRequest(request, owner, std::move(completed),
+                             backendFeatureAvailable(QStringLiteral("safety")));
 }
 
 ModuleResponse handleRequest(const ModuleRequest& request) {

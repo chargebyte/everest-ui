@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "network.read_interfaces.result",
+  "parameters": {
+    "available": false,
+    "interfaces": []
+  },
+  "responseId": "r-1"
+}

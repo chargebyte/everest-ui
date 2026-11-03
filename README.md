@@ -202,9 +202,23 @@ The UI overlay path is derived using the same rule as everest-core: resolve the 
 `/etc/everest/config.yaml` linked to `/etc/everest/everest-ui-config.yaml` uses
 `/etc/everest/user-config/everest-ui-config.yaml`.
 
-The optional `available_features` entry in `backend.conf` is a comma-separated list of enabled UI features.
-If it is omitted, all features are enabled. The Network Configuration page is enabled when `network` is
-listed; for example, `available_features=network`. Other feature names are reserved for future use.
+The optional `available_features` entry in `backend.conf` controls the Network Configuration (`network`)
+and Safety Controller (`safety`) pages **and their backend APIs**. If absent, both are enabled; an empty
+value or `none` disables both. An explicit comma-separated list enables only the named features;
+unknown names are ignored. Other pages are unaffected. For example:
+
+```ini
+available_features=network,safety
+available_features.chargebyte,imx93-charge-control-y=safety
+```
+
+After distribution/local exact-key merging, the first configured matching NUL-delimited string in
+`/proc/device-tree/compatible` selects a complete replacement list, not a union. An empty matching
+value disables both features. Without a match (or without device-tree data), the global key applies.
+`!available_features` masks only the global key; it does not remove platform keys. Mask an exact
+platform key with `!available_features.<compatible>` to fall through to the next match/global default.
+The browser obtains flags from `system.read_features` on connection/reconnection; hiding navigation
+is not the security boundary: disabled APIs are also rejected by the backend, including expert mode.
 
 ## Uploading EVerest Configurations
 

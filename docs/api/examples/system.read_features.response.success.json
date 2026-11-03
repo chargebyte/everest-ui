@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "final": true,
+  "requestId": 42,
+  "type": "system.read_features.result",
+  "parameters": {
+    "network": true,
+    "safety": false
+  },
+  "responseId": "r-1"
+}

@@ -17,6 +17,21 @@ class SafetyControllerAvailabilityTest final : public QObject {
     }
 
 private slots:
+    void disabledFeatureRejectsReadsAndAsyncWrites() {
+        ModuleRequest request{42, ModuleGroup::SafetyController, QStringLiteral("read_settings"), {}};
+        auto response = handleReadRequest(request, false);
+        QVERIFY(!response.success);
+        QVERIFY(response.final);
+        QCOMPARE(response.parameters.value("error").toString(), QString("safety_controller_unavailable"));
+        request.action = QStringLiteral("write_settings");
+        bool completed = false;
+        response = startWriteRequest(request, nullptr, [&](const ModuleResponse&) { completed = true; }, false);
+        QVERIFY(!response.success);
+        QVERIFY(response.final);
+        QCOMPARE(response.parameters.value("error").toString(), QString("safety_controller_unavailable"));
+        QVERIFY(!completed);
+    }
+
     void parsesSelection_data() {
         QTest::addColumn<QString>("value");
         QTest::addColumn<bool>("all");

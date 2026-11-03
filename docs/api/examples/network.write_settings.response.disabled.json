@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "final": true,
+  "requestId": 42,
+  "type": "network.write_settings.error",
+  "parameters": {
+    "error": "network_configuration_unavailable"
+  },
+  "responseId": "r-1"
+}
