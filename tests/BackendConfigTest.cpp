@@ -53,6 +53,37 @@ private slots:
         QVERIFY(backendFeatures(config, {}).value("safety").toBool());
     }
 
+    void boardFeaturePrecedenceIgnoresConfigurationLineOrder() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const UiConfig::Paths paths{directory.filePath("defaults.conf"), directory.filePath("local.conf")};
+        const auto write = [](const QString& path, const QByteArray& contents) {
+            QFile file(path);
+            return file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(contents) == contents.size();
+        };
+        QVERIFY(write(paths.defaults, "available_features=none\n"));
+        const QByteArray som = "available_features.phytec,imx93-phycore-som=safety\n";
+        const QByteArray board = "available_features.chargebyte,imx93-charge-control-v=network\n";
+        const QByteArray compatible = QByteArrayLiteral("chargebyte,imx93-charge-control-v\0"
+                                                        "chargebyte,imx93-charge-som\0"
+                                                        "phytec,imx93-phycore-som\0fsl,imx93\0");
+        for (const QByteArray& directives : {som + board, board + som}) {
+            QVERIFY(write(paths.overlay, directives));
+            auto config = UiConfig::load(paths);
+            QVERIFY(config.valid());
+            auto features = backendFeatures(config, compatible);
+            QVERIFY(features.value("network").toBool());
+            QVERIFY(!features.value("safety").toBool());
+
+            QVERIFY(write(paths.overlay, directives + "!available_features.chargebyte,imx93-charge-control-v\n"));
+            config = UiConfig::load(paths);
+            QVERIFY(config.valid());
+            features = backendFeatures(config, compatible);
+            QVERIFY(!features.value("network").toBool());
+            QVERIFY(features.value("safety").toBool());
+        }
+    }
+
     void layeredFeatureMasksAreExact() {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());

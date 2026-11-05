@@ -202,8 +202,12 @@ snapshot reports both flags as false. See [request](examples/system.read_feature
 [response](examples/system.read_features.response.success.json).
 
 `available_features` enables `network` and/or `safety`; absent enables both, empty or `none` enables
-neither. The first configured device-tree matching suffix replaces the global list after exact-key
-layering/masking. Lists are not unioned. See [configuration rules](../configuration.md#optional-feature-selection).
+neither. After exact-key layering/masking, check `/proc/device-tree/compatible` strings in their listed
+order; the first string with a configured platform key replaces the global list. Configuration line
+order has no effect, and lists are not unioned. For example, a `chargebyte,imx93-charge-control-v=network`
+suffix wins over `phytec,imx93-phycore-som=safety` if the board string precedes the SOM string in the
+device tree; masking the exact board key allows fallback to the SOM. See the full example and
+[configuration rules](../configuration.md#optional-feature-selection).
 Other API groups, including PCAP, are unaffected.
 
 When disabled, `network.read_interfaces` succeeds with `available:false` and `interfaces:[]`;
