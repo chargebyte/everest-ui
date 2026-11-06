@@ -200,18 +200,29 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   let dhcpIpv6 = false;
   let canBitRateSource = 'unknown';
   let resetStaged = false;
+  let connected = false;
+  let featuresReady = false;
+  let inventoryReady = false;
+  let pendingInterfacesRequestId = null;
+  let pendingMutationId = null;
+  let verificationRequired = false;
+  let identityInvalid = false;
   expertModeToggle.checked = state.network.expertMode;
 
   function requestInterfaces() {
-    state.network.interfaces = [];
+    if (!connected || !featuresReady || pendingInterfacesRequestId !== null) return;
+    inventoryReady = false;
     state.network.interfacesRequestPending = true;
     const request = buildRequest(kGroup, 'read_interfaces', {
       expert_mode: { backend_path: 'expert_mode', value_type: 'boolean', value: state.network.expertMode }
     });
+    pendingInterfacesRequestId = request.requestId;
     const result = sendPayload(request);
     if (!result.ok) {
       state.network.interfacesRequestPending = false;
+      pendingInterfacesRequestId = null;
     }
+    updateActionButtons();
     addLog(`${kGroup}.read_interfaces ${formatSendStatus(result)}`);
   }
 
@@ -230,6 +241,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   }
 
   function updateActionButtons() {
+    const blocked = !connected || !featuresReady || !inventoryReady || verificationRequired || pendingMutationId !== null;
     const buttons = networkActionState({
       loaded: settingsLoaded,
       editable,
@@ -237,10 +249,11 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
       userOverride,
       resetStaged
     });
-    saveButton.disabled = buttons.saveDisabled;
-    resetButton.disabled = (!resetStaged && buttons.resetDisabled) || pendingResetRequestId !== null;
+    saveButton.disabled = blocked || buttons.saveDisabled;
+    resetButton.disabled = blocked || (!resetStaged && buttons.resetDisabled) || pendingResetRequestId !== null;
     resetButton.textContent = resetStaged ? 'Cancel reset' : 'Reset to factory defaults';
-    applyButton.disabled = buttons.applyDisabled;
+    applyButton.disabled = blocked || buttons.applyDisabled;
+    interfaceSelect.disabled = !connected || !featuresReady || !inventoryReady || verificationRequired || pendingMutationId !== null;
   }
 
   function updateDirtyState(showHint = true) {
@@ -281,6 +294,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   }
 
   function renderInterfaceInfo(info) {
+    identityInvalid = false;
     selectedInfo = info;
     editable = info?.editable === true;
     statusElement.textContent = info
@@ -307,6 +321,9 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   }
 
   function populateInterfaces(interfaces) {
+    const preserve = settingsLoaded;
+    const previous = selectedInfo;
+    const previousName = interfaceSelect.value;
     interfaceSelect.replaceChildren();
     interfaces.forEach((info) => {
       const option = document.createElement('option');
@@ -314,6 +331,30 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
       option.textContent = `${info.name} (${info.kind || 'unknown'})`;
       interfaceSelect.appendChild(option);
     });
+    if (preserve) {
+      const current = interfaces.find(info => info.name === previousName);
+      if (!current) {
+        const option = document.createElement('option');
+        option.value = previousName;
+        option.textContent = `${previousName} (unavailable)`;
+        interfaceSelect.appendChild(option);
+      }
+      interfaceSelect.value = previousName;
+      identityInvalid ||= !current || current.kind?.toLowerCase() !== previous?.kind?.toLowerCase();
+      editable = !identityInvalid && current.editable === true;
+      if (!identityInvalid) selectedInfo = current;
+      statusElement.textContent = identityInvalid
+        ? 'This interface is unavailable or its type changed. Your edits are retained; select an interface again to reload.'
+        : `${current.kind || 'unknown'}; ${current.operational_state || 'unknown'}; setup ${current.setup_state || 'unknown'}`;
+      if (identityInvalid) {
+        verificationRequired = false;
+        pendingMutationId = null;
+      } else if (verificationRequired) {
+        requestSettings(previousName);
+      }
+      updateFieldStates();
+      return;
+    }
     if (interfaces.length === 0) {
       renderInterfaceInfo(null);
       statusElement.textContent = 'No networkd interfaces found';
@@ -329,6 +370,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   }
 
   function requestSettings(name) {
+    if (!connected || !featuresReady || pendingSettingsRequestId !== null) return;
     pendingSettingsInterface = name;
     const request = buildRequest(kGroup, 'read_settings', {
       interface: { backend_path: 'interface', value_type: 'string', value: name },
@@ -344,6 +386,8 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   }
 
   function setSettings(parameters) {
+    verificationRequired = false;
+    pendingMutationId = null;
     pendingSettingsInterface = '';
     pendingSettingsRequestId = null;
     pendingWriteRequestId = null;
@@ -415,6 +459,10 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   }
 
   function sendAction(action, parameters) {
+    if (!connected || !featuresReady || !inventoryReady || verificationRequired || pendingMutationId !== null) {
+      setWarning('Waiting for connection and configuration verification. Your edits are retained.');
+      return { ok: false };
+    }
     const requestResponseObject = {};
     Object.entries(parameters).forEach(([key, value]) => {
       requestResponseObject[key] = {
@@ -432,6 +480,9 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
     addLog(`${kGroup}.${action} ${formatSendStatus(result)}`);
     if (!result.ok) {
       setWarning(`Unable to send network ${action}: ${formatSendStatus(result)}`);
+    } else {
+      pendingMutationId = request.requestId;
+      updateActionButtons();
     }
     return result;
   }
@@ -520,6 +571,9 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
   return {
     onMessage(message) {
       if (message.type === 'network.read_interfaces.result') {
+        if (message.requestId !== pendingInterfacesRequestId) return;
+        pendingInterfacesRequestId = null;
+        inventoryReady = true;
         addLog(`${kGroup}.read_interfaces.result received`);
         state.network.interfacesRequestPending = false;
         state.network.available = message.parameters?.available !== false;
@@ -542,6 +596,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
           return;
         }
         baselineSettings = pendingWriteSettings;
+        pendingMutationId = null;
         if (pendingWriteSettings?.dhcp_ipv4) {
           addressElement.value = '';
           gatewayElement.value = '';
@@ -559,6 +614,8 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
         setWarning('Network configuration saved. Apply it separately when ready.');
         fileElement.textContent = message.parameters?.network_file || fileElement.textContent;
       } else if (isSuccessfulApplyResponse(message)) {
+        if (message.requestId !== pendingMutationId) return;
+        verificationRequired = true;
         addLog(`${kGroup}.${message.type.split('.')[1]} received`);
         setWarning('Network configuration applied. The Web UI may disconnect if this interface carries its connection.');
         const resetWasStaged = resetStaged;
@@ -581,6 +638,7 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
           return;
         }
         pendingResetRequestId = null;
+        verificationRequired = true;
         resetStaged = message.parameters?.reset_staged === true;
         userOverride = selectedInfo?.kind?.toLowerCase() === 'can'
           ? message.parameters?.can_bitrate_override === true
@@ -593,6 +651,8 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
       } else if (message.type.endsWith('.error') && message.type.startsWith(`${kGroup}.`)) {
         const error = message.parameters?.error || 'network operation failed';
         if (message.type === 'network.read_interfaces.error') {
+          if (message.requestId !== pendingInterfacesRequestId) return;
+          pendingInterfacesRequestId = null;
           state.network.interfacesRequestPending = false;
           statusElement.textContent = `Unable to load interfaces: ${error}`;
         }
@@ -603,15 +663,16 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
           }
           pendingSettingsInterface = '';
           pendingSettingsRequestId = null;
-          settingsLoaded = false;
           editable = false;
-          settingsSection.hidden = true;
           updateFieldStates();
         }
         if (message.type === 'network.reset_settings.error' ||
             message.type === 'network.cancel_reset_settings.error') {
           if (message.requestId === pendingResetRequestId) {
             pendingResetRequestId = null;
+            pendingMutationId = null;
+            verificationRequired = true;
+            requestSettings(interfaceSelect.value);
             updateActionButtons();
           }
         }
@@ -621,9 +682,12 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
           pendingWriteRequestId = null;
           pendingWriteSettings = null;
           pendingWriteInterface = '';
+          pendingMutationId = null;
           updateActionButtons();
         }
         if (message.type === 'network.apply.error') {
+          if (message.requestId !== pendingMutationId) return;
+          verificationRequired = true;
           const resetWasStaged = resetStaged;
           if (typeof message.parameters?.reset_staged === 'boolean') {
             resetStaged = message.parameters.reset_staged;
@@ -639,14 +703,45 @@ export function renderNetworkPage(container, { sendPayload, addLog }) {
       }
     },
     onConnectionChange(connected) {
-      if (connected) {
-        if (state.network.interfaces.length > 0) {
-          populateInterfaces(state.network.interfaces);
-        } else if (!state.network.interfacesRequestPending) {
-          requestInterfaces();
-        }
+      setConnected(connected);
+    },
+    onFeatureAvailabilityChange(ready) {
+      featuresReady = ready;
+      if (!ready && settingsLoaded) {
+        setWarning('Waiting for connection and feature availability. Your edits are retained.');
       }
+      updateActionButtons();
+      if (ready) requestInterfaces();
+    },
+    onRequestTimeout({ requestId }) {
+      if (String(requestId) === String(pendingInterfacesRequestId)) {
+        pendingInterfacesRequestId = null;
+        state.network.interfacesRequestPending = false;
+        setWarning('Unable to refresh network interfaces. Reconnect or reopen this page to retry; your edits are retained.');
+      }
+      if (String(requestId) === String(pendingMutationId)) {
+        verificationRequired = true;
+        requestSettings(interfaceSelect.value);
+      }
+      if (String(requestId) === String(pendingSettingsRequestId)) {
+        pendingSettingsRequestId = null;
+        setWarning('Unable to verify network settings. Reconnect or reopen this page to retry; your edits are retained.');
+      }
+      updateActionButtons();
     },
     destroy() {}
   };
+
+  function setConnected(value) {
+    connected = value;
+    if (!connected) {
+      inventoryReady = false;
+      pendingInterfacesRequestId = null;
+      pendingSettingsRequestId = null;
+      verificationRequired ||= pendingMutationId !== null;
+    } else if (featuresReady) {
+      requestInterfaces();
+    }
+    updateActionButtons();
+  }
 }

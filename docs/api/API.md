@@ -220,8 +220,15 @@ See [disabled network discovery](examples/network.read_interfaces.response.disab
 [disabled Safety read](examples/safety.read_settings.response.disabled.json), and
 [disabled Safety write](examples/safety.write_settings.response.disabled.json).
 
-The browser reads feature flags on connection/reconnection, hides disabled navigation, and redirects
-an active disabled page to EVerest Config. Discovery failure leaves optional pages unavailable.
+The browser reads feature flags on connection/reconnection. Initial discovery failure leaves optional
+pages hidden. Reconnect refreshes retain last-confirmed navigation flags and loaded Network/Safety
+drafts; backend actions remain blocked until fresh flags and page availability checks succeed. Only a
+successful fresh response disabling the active feature redirects to EVerest Config. Errors, malformed
+responses, send failures, and timeouts retain drafts and retry discovery after two seconds, with one
+request outstanding per connection. Disconnect/logout cancels retries. Page metadata/inventory
+refresh does not overwrite unsaved inputs. If a mutation was interrupted, the page verifies its state
+before enabling further actions and may reload affected settings; mutations are never replayed
+automatically. Drafts are session-local, not persisted across browser reloads or page navigation.
 
 ### Network interface classification
 

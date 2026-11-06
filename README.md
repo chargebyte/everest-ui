@@ -224,6 +224,13 @@ tree, a board key set to `network` wins over a SOM key set to `safety`, regardle
 order. Mask `!available_features.chargebyte,imx93-charge-control-v` locally to use the SOM entry instead.
 The browser obtains flags from `system.read_features` on connection/reconnection; hiding navigation
 is not the security boundary: disabled APIs are also rejected by the backend, including expert mode.
+On initial connection, optional pages remain hidden until discovery succeeds. On transient reconnects,
+the last confirmed flags, active page, and unsaved Network/Safety inputs are retained. Backend actions
+stay disabled until fresh feature flags and page availability checks succeed. Failed discovery retries
+after two seconds without discarding the draft; an explicit disabled flag redirects to EVerest Config.
+If a mutation was interrupted, its state is verified before another operation is allowed, without
+automatically resending it; verification may reload the affected form. Drafts are not persisted across
+browser reloads, logout, or deliberate page navigation.
 
 ## Uploading EVerest Configurations
 
