@@ -51,6 +51,31 @@ class NetworkConfigurationTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void disabledFeatureRejectsEveryActionBeforeRecovery() {
+        const bool recoveryDone = g_resetRecoveryDone;
+        g_resetRecoveryDone = false;
+        for (const auto* action : {"read_interfaces", "read_settings", "write_settings", "reset_settings",
+                                   "cancel_reset_settings", "apply"}) {
+            ModuleRequest request{42, ModuleGroup::Network, QString::fromLatin1(action),
+                                  {{QStringLiteral("interface"), QStringLiteral("eth0")},
+                                   {QStringLiteral("expert_mode"), true}}};
+            const auto response = NetworkConfiguration::handleRequest(request, false);
+            QCOMPARE(response.requestId, request.requestId);
+            QCOMPARE(response.action, request.action);
+            QVERIFY(response.final);
+            QVERIFY(!g_resetRecoveryDone);
+            if (request.action == "read_interfaces") {
+                QVERIFY(response.success);
+                QVERIFY(!response.parameters.value("available").toBool());
+                QVERIFY(response.parameters.value("interfaces").toArray().isEmpty());
+            } else {
+                QVERIFY(!response.success);
+                QCOMPARE(response.parameters.value("error").toString(), QString("network_configuration_unavailable"));
+            }
+        }
+        g_resetRecoveryDone = recoveryDone;
+    }
+
     void combinesWhitelistEntriesForAllMatchingCompatibleStrings() {
         bool applies = false;
         const QMap<QString, QString> configured{

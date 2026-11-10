@@ -9,6 +9,7 @@ import { eyeIcon } from './ui/eyeIcon.js';
 import { createTransport } from './transport.js';
 import { createRebootRecovery, createRebootOverlay, probeAuthStatus, showRecoveryNotice } from './ui/rebootRecovery.js';
 import { renderLayout } from './ui/layout.js';
+import { createFeatureAvailability } from './ui/featureAvailability.js';
 import { appendLog, state } from './state.js';
 import { setUiLog, bindUiLogResize } from './ui/uiLog.js';
 import { renderEverestPage } from './pages/everest.js';
@@ -44,6 +45,7 @@ function getRebootRecovery() {
         render(view);
       },
       async onAvailable(status, { notice } = {}) {
+        currentAppContext?.features?.destroy();
         currentAppContext?.state.page?.destroy?.();
         currentAppContext = null;
         try {
@@ -94,6 +96,8 @@ async function displayAuthStatus(status) {
 }
 
 async function startAuthenticatedApp(appRoot, appTitle) {
+  currentAppContext?.features?.destroy();
+  currentAppContext?.state.page?.destroy?.();
   disposePasswordReset();
   document.title = appTitle;
   const appContext = await initializeApp(appRoot, appTitle);
@@ -315,19 +319,13 @@ function createAppTransport(appContext) {
       state.connection.connected = true;
       getRebootRecovery().onConnected();
       handlePcapConnectionChange(true);
-      const networkRequest = buildRequest(MODULE_IDS.NETWORK, 'read_interfaces', {
-        expert_mode: { backend_path: 'expert_mode', value_type: 'boolean', value: state.network.expertMode }
-      });
-      state.network.interfacesRequestPending = true;
-      const networkResult = appContext.transport.sendPayload(networkRequest);
-      if (!networkResult.ok) {
-        state.network.interfacesRequestPending = false;
-      }
+      appContext.features.connect();
       appContext.state.page?.onConnectionChange?.(true);
     },
     onClose(event) {
       state.connection.connected = false;
       state.network.interfacesRequestPending = false;
+      appContext.features.disconnect();
       handlePcapConnectionChange(false);
       const expectedReboot = getRebootRecovery().onDisconnected();
       appContext.state.page?.onConnectionChange?.(false);
@@ -350,9 +348,10 @@ function createAppTransport(appContext) {
       if (isPcapMessage(message)) {
         handlePcapMessage(message, (logMessage) => addLog(appContext, logMessage));
       }
+      if (appContext.features.onMessage(message)) return;
       if (message.type === 'network.read_interfaces.result') {
         state.network.interfacesRequestPending = false;
-        const available = message.parameters?.available !== false;
+        const available = appContext.features.allows('network') && message.parameters?.available !== false;
         state.network.available = available;
         state.network.interfaces = Array.isArray(message.parameters?.interfaces)
           ? message.parameters.interfaces
@@ -372,6 +371,7 @@ function createAppTransport(appContext) {
       appContext.state.page?.onPcapStateChange?.();
     },
     onRequestTimeout({ requestId, moduleAction }) {
+      if (appContext.features.onRequestTimeout({ requestId, moduleAction })) return;
       if (getRebootRecovery().onRequestTimeout({ requestId, moduleAction })) return;
       addLog(appContext, `request timeout: ${moduleAction} (${requestId})`);
       if (handlePcapRequestTimeout(requestId, moduleAction)) {
@@ -407,6 +407,16 @@ function createRoutes() {
 }
 
 function startAppRuntime(appContext) {
+  appContext.features = createFeatureAvailability({
+    setPageAvailable: (route, available) => appContext.layout.setPageAvailable(route, available),
+    getActiveRoute: () => appContext.state.activeRoute,
+    requestFeatures: () => appContext.transport.sendPayload(buildRequest('system', 'read_features', {})),
+    onReadyChange: (ready) => appContext.state.page?.onFeatureAvailabilityChange?.(ready),
+    returnToDefault() {
+      setActiveRoute(appContext, appContext.state.initialRoute);
+      renderRoute(appContext, appContext.state.initialRoute);
+    }
+  });
   appContext.transport = createAppTransport(appContext);
   bindLogout(appContext);
   setupNavTracking(appContext);
@@ -416,6 +426,7 @@ function startAppRuntime(appContext) {
 
 function bindLogout(appContext) {
   appContext.layout.logoutButton?.addEventListener('click', async () => {
+    appContext.features.destroy();
     appContext.transport?.close();
     try {
       const response = await fetch('/auth/logout', {
@@ -447,7 +458,7 @@ function bindNavClicks(appContext) {
   appContext.layout.navItems.forEach((item) => {
     item.addEventListener('click', () => {
       const route = item.dataset.page;
-      if (!route || route === appContext.state.activeRoute) {
+      if (!route || !appContext.features.allows(route) || route === appContext.state.activeRoute) {
         return;
       }
       setActiveRoute(appContext, route);
@@ -462,6 +473,10 @@ function setActiveRoute(appContext, route) {
 }
 
 function renderRoute(appContext, route) {
+  if (!appContext.features.allows(route)) {
+    route = appContext.state.initialRoute;
+    setActiveRoute(appContext, route);
+  }
   appContext.state.page?.destroy?.();
 
   const renderPage = appContext.routes[route];
@@ -484,6 +499,7 @@ function renderRoute(appContext, route) {
   if (appContext.transport?.isOpen()) {
     appContext.state.page?.onConnectionChange?.(true);
   }
+  appContext.state.page?.onFeatureAvailabilityChange?.(appContext.features.isReady());
 }
 
 function updateActiveNav(appContext) {

@@ -202,9 +202,35 @@ The UI overlay path is derived using the same rule as everest-core: resolve the 
 `/etc/everest/config.yaml` linked to `/etc/everest/everest-ui-config.yaml` uses
 `/etc/everest/user-config/everest-ui-config.yaml`.
 
-The optional `available_features` entry in `backend.conf` is a comma-separated list of enabled UI features.
-If it is omitted, all features are enabled. The Network Configuration page is enabled when `network` is
-listed; for example, `available_features=network`. Other feature names are reserved for future use.
+The optional `available_features` entry in `backend.conf` controls the Network Configuration (`network`)
+and Safety Controller (`safety`) pages **and their backend APIs**. If absent, both are enabled; an empty
+value or `none` disables both. An explicit comma-separated list enables only the named features;
+unknown names are ignored. Other pages are unaffected. For example:
+
+```ini
+available_features=network,safety
+available_features.chargebyte,imx93-charge-control-y=safety
+```
+
+After distribution/local exact-key merging, check the NUL-delimited strings in
+`/proc/device-tree/compatible` in their listed order. The first string with a configured platform key
+selects a complete replacement list, not a union. Configuration line order does not affect this choice;
+local overrides take precedence over distribution values only for the same exact key. An empty matching
+value disables both features. Without a match (or without device-tree data), the global key applies.
+`!available_features` masks only the global key; it does not remove platform keys. Mask an exact
+platform key with `!available_features.<compatible>` to fall through to the next match/global default.
+For example, if `chargebyte,imx93-charge-control-v` precedes `phytec,imx93-phycore-som` in the device
+tree, a board key set to `network` wins over a SOM key set to `safety`, regardless of configuration line
+order. Mask `!available_features.chargebyte,imx93-charge-control-v` locally to use the SOM entry instead.
+The browser obtains flags from `system.read_features` on connection/reconnection; hiding navigation
+is not the security boundary: disabled APIs are also rejected by the backend, including expert mode.
+On initial connection, optional pages remain hidden until discovery succeeds. On transient reconnects,
+the last confirmed flags, active page, and unsaved Network/Safety inputs are retained. Backend actions
+stay disabled until fresh feature flags and page availability checks succeed. Failed discovery retries
+after two seconds without discarding the draft; an explicit disabled flag redirects to EVerest Config.
+If a mutation was interrupted, its state is verified before another operation is allowed, without
+automatically resending it; verification may reload the affected form. Drafts are not persisted across
+browser reloads, logout, or deliberate page navigation.
 
 ## Uploading EVerest Configurations
 

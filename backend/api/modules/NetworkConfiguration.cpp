@@ -34,7 +34,6 @@
 #include <utility>
 
 namespace {
-constexpr char kConfigAvailableFeatures[] = "available_features";
 constexpr char kConfigNetworkDeviceWhitelistPrefix[] = "network_device_whitelist.";
 constexpr char kParameterAvailable[] = "available";
 constexpr char kParameterInterfaces[] = "interfaces";
@@ -428,23 +427,6 @@ bool kernelCanBitRate(const QString &interfaceName, quint64 &bitRate) {
     }
     bitRate = static_cast<quint64>(numeric);
     return true;
-}
-
-bool featureAvailable(const QString &feature) {
-    const UiConfig::Snapshot config = readBackendConfiguration();
-    if (!config.valid()) {
-        return false;
-    }
-    if (!config.contains(QLatin1String(kConfigAvailableFeatures))) {
-        return true;
-    }
-    const QString configured = config.value(QLatin1String(kConfigAvailableFeatures));
-    for (const QString &entry : configured.split(QLatin1Char(','), kSkipEmptyParts)) {
-        if (entry.trimmed() == feature) {
-            return true;
-        }
-    }
-    return false;
 }
 
 QSet<QString> networkDeviceWhitelistForCompatibleData(const QByteArray &compatibleData,
@@ -1512,18 +1494,20 @@ ModuleResponse errorResponse(const ModuleRequest &request, const QString &error)
 } // namespace
 
 namespace NetworkConfiguration {
-ModuleResponse handleRequest(const ModuleRequest &request) {
+static ModuleResponse handleRequest(const ModuleRequest &request, bool featureEnabled) {
+    if (!featureEnabled) {
+        if (request.action == QLatin1String(kActionReadInterfaces)) {
+            return {request.requestId, QLatin1String(kGroupNetwork), request.action,
+                    {{QLatin1String(kParameterAvailable), false},
+                     {QLatin1String(kParameterInterfaces), QJsonArray{}}}, true, true};
+        }
+        return errorResponse(request, QLatin1String(kErrorUnavailable));
+    }
     if (!recoverResetBackups()) {
         return errorResponse(request, QLatin1String(kErrorRecoveryFailed));
     }
     const bool expertMode = request.parameters.value(QLatin1String(kParameterExpertMode)).toBool();
     if (request.action == QLatin1String(kActionReadInterfaces)) {
-        if (!featureAvailable(QStringLiteral("network"))) {
-            return {request.requestId, QLatin1String(kGroupNetwork), request.action,
-                    {{QLatin1String(kParameterAvailable), false},
-                     {QLatin1String(kParameterInterfaces), QJsonArray{}}},
-                    true, true};
-        }
         bool listSucceeded = false;
         QList<InterfaceInfo> interfaces = readInterfaces(listSucceeded);
         if (!listSucceeded) {
@@ -1548,10 +1532,6 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
                 {{QLatin1String(kParameterAvailable), true},
                  {QLatin1String(kParameterInterfaces), interfaceArray}},
                 true, true};
-    }
-
-    if (!featureAvailable(QStringLiteral("network"))) {
-        return errorResponse(request, QLatin1String(kErrorUnavailable));
     }
 
     const QString interfaceName = request.parameters.value(QLatin1String(kParameterInterface)).toString();
@@ -1815,5 +1795,8 @@ ModuleResponse handleRequest(const ModuleRequest &request) {
     }
 
     throw std::runtime_error("NetworkConfiguration::handleRequest got unsupported action");
+}
+ModuleResponse handleRequest(const ModuleRequest &request) {
+    return handleRequest(request, backendFeatureAvailable(QStringLiteral("network")));
 }
 } // namespace NetworkConfiguration

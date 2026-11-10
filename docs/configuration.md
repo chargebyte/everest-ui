@@ -134,14 +134,54 @@ the global key; it does not mask suffixed keys. Removing a local assignment/mask
 Reads omit excluded roots and writes ignore excluded entries while preserving their native YAML values.
 This controls editing availability, not whether those physical inputs are enabled in the controller.
 
+### Optional Feature Selection
+
+`available_features` controls `network` and `safety` in both navigation and backend access. Names are
+case-sensitive, comma-separated, and whitespace-trimmed; unknown names enable nothing themselves.
+Absent means both enabled; empty or `none` means neither. Other pages are not controlled by this key.
+
+After exact-key distribution/local merging, examine the NUL-delimited strings in
+`/proc/device-tree/compatible` in their listed order, not configuration line order. The first string
+with a configured `available_features.<compatible>` key replaces the entire global list.
+Explicit empty/unknown-only matches disable both without falling through. No match or unreadable
+device-tree data uses the global key, then the absent-key default. Unlike network whitelists, lists
+are not combined. Unlike numeric timeout settings, invalid names do not cause platform fallback.
+
+```ini
+available_features=network,safety
+available_features.chargebyte,imx93-charge-control-y=safety
+```
+
+For example, these local assignments select `network` when the device tree lists
+`chargebyte,imx93-charge-control-v`, `chargebyte,imx93-charge-som`, `phytec,imx93-phycore-som`,
+and `fsl,imx93`, in that order:
+
+```ini
+available_features.phytec,imx93-phycore-som=safety
+available_features.chargebyte,imx93-charge-control-v=network
+```
+
+The board compatible string comes first in the device tree, even though its configuration line comes
+second. Swapping these configuration lines changes nothing. To select the SOM entry instead, add
+`!available_features.chargebyte,imx93-charge-control-v` to the local overlay in place of the board
+assignment. Alternatively, explicitly set the board key to `safety`.
+
+A local global assignment does not outrank a distribution platform key. Override or mask that exact
+platform key instead. `!available_features` masks only the global key; masking a platform key permits
+the next configured device-tree match or global/default fallback. Masking every applicable key
+restores both features, not neither; use `none` to disable. Removing local directives restores inheritance.
+
+Availability is reread for requests. Operations already started finish normally; queued operations
+are checked again before execution. Refresh/reconnect the browser to refresh navigation.
+
 ### Other Settings
 
-The following existing consumer semantics remain unchanged:
+The following consumer semantics apply:
 
 | Setting | Important distinction |
 | --- | --- |
 | `network_device_whitelist.<compatible>` | Empty means no devices for that match. Masking removes that platform entry; other matching platform entries can still restrict devices. |
-| `available_features` | Absent permits all currently supported optional features. Empty or `none` permits none. |
+| `available_features` | Controls `network` and `safety` pages and APIs. Absent permits both; empty or `none` permits neither. First configured device-tree match replaces the global list. |
 | `safety_controller_available_settings` | Empty or absent selects compiled defaults (all sections); use `none` to disable sections. |
 | `network_iso_high_level_comms_drivers` | Empty or absent makes the configured driver list empty. |
 | `pcap_max_size_bytes`, `pcap_max_duration_seconds` | Empty, invalid, or non-positive values restore built-in limits; they do not disable limits. |

@@ -23,6 +23,7 @@
 #include "ResponseBuilder.hpp"
 
 #include <QDebug>
+#include <QJsonArray>
 
 #include <stdexcept>
 
@@ -51,8 +52,27 @@ SystemControl::SystemControl(RpcApiClient* rpcApiClient, QObject* parent) :
 
 void SystemControl::enqueueRequest(const ModuleRequest& request) {
     if (!UiRuntime::readLoginState().allowed) return;
-    if (request.group == ModuleGroup::System && request.action == QLatin1String(kActionReadRebootSettings)) {
+    if (request.group == ModuleGroup::System && (request.action == QLatin1String(kActionReadRebootSettings) ||
+                                                 request.action == QLatin1String(kActionReadFeatures))) {
         emitResponse(handleSystemRequest(request));
+        return;
+    }
+    if (request.group == ModuleGroup::Network && !backendFeatureAvailable(QStringLiteral("network"))) {
+        const bool discovery = request.action == QLatin1String(kActionReadInterfaces);
+        emitResponse(
+            {request.requestId, QLatin1String(kGroupNetwork), request.action,
+             discovery ? QJsonObject{{QStringLiteral("available"), false}, {QStringLiteral("interfaces"), QJsonArray{}}}
+                       : QJsonObject{{QLatin1String(kError), QStringLiteral("network_configuration_unavailable")}},
+             discovery, true});
+        return;
+    }
+    if (request.group == ModuleGroup::SafetyController && !backendFeatureAvailable(QStringLiteral("safety"))) {
+        emitResponse({request.requestId,
+                      QLatin1String(kGroupSafety),
+                      request.action,
+                      {{QLatin1String(kError), QStringLiteral("safety_controller_unavailable")}},
+                      false,
+                      true});
         return;
     }
     const bool busy = m_pendingRequest.has_value() || !m_queue.isEmpty() || FirmwareUpdate::runtime().isBusy();
@@ -195,6 +215,9 @@ void SystemControl::startRequest(const ModuleRequest &request) {
 }
 
 ModuleResponse SystemControl::handleSystemRequest(const ModuleRequest &request) const {
+    if (request.action == QLatin1String(kActionReadFeatures)) {
+        return {request.requestId, QLatin1String(kGroupSystem), request.action, readBackendFeatures(), true, true};
+    }
     if (request.action == QLatin1String(kActionReadRebootSettings)) {
         return {request.requestId, QLatin1String(kGroupSystem), request.action, readRebootSettings(), true, true};
     }

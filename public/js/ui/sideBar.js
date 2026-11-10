@@ -15,7 +15,7 @@ const kNavEntries = [
 
 export function renderSideBar() {
   const items = kNavEntries
-    .map((entry) => `<li class="nav-item" data-page="${entry.page}">${entry.label}</li>`)
+    .map((entry) => `<li class="nav-item" data-page="${entry.page}"${['network', 'safety'].includes(entry.page) ? ' hidden' : ''}>${entry.label}</li>`)
     .join('');
 
   return `

@@ -29,6 +29,46 @@ QByteArray readDeviceTreeCompatibleData() {
     return compatibleFile.readAll();
 }
 
+QJsonObject backendFeatures(const UiConfig::Snapshot& config, const QByteArray& compatibleData) {
+    QJsonObject features{{QStringLiteral("network"), false}, {QStringLiteral("safety"), false}};
+    if (!config.valid()) {
+        return features;
+    }
+    const QString baseKey = QStringLiteral("available_features");
+    QString selectedKey = baseKey;
+    for (const QByteArray& entry : compatibleData.split('\0')) {
+        if (entry.isEmpty()) {
+            continue;
+        }
+        const QString key = baseKey + QLatin1Char('.') + QString::fromUtf8(entry);
+        if (config.contains(key)) {
+            selectedKey = key;
+            break;
+        }
+    }
+    if (!config.contains(selectedKey)) {
+        for (auto it = features.begin(); it != features.end(); ++it) {
+            it.value() = true;
+        }
+        return features;
+    }
+    for (const QString& entry : config.value(selectedKey).split(QLatin1Char(','))) {
+        const QString feature = entry.trimmed();
+        if (features.contains(feature)) {
+            features.insert(feature, true);
+        }
+    }
+    return features;
+}
+
+QJsonObject readBackendFeatures() {
+    return backendFeatures(readBackendConfiguration(), readDeviceTreeCompatibleData());
+}
+
+bool backendFeatureAvailable(const QString& feature) {
+    return readBackendFeatures().value(feature).toBool();
+}
+
 QStringList backendConfigValueCandidates(const QString& baseValue, const QMap<QString, QString>& platformValues,
                                          const QByteArray& compatibleData) {
     QStringList candidates;

@@ -19,9 +19,18 @@ export function renderSafetyPage(container, {
     buttonLabel: 'Save Configuration'
   });
   const pendingWrites = new Map();
+  const verificationDevices = new Set();
   const matrices = [];
   let verificationInProgress = false;
   let readRetryTimer = null;
+  let connected = false;
+  let featuresReady = false;
+  let loaded = false;
+  let metadataReady = false;
+  let pendingReadId = null;
+  let preserveRead = false;
+  const controllerPanes = new Map();
+  let nextPaneIndex = 0;
 
   container.innerHTML = '';
   const pageElement = document.createElement('div');
@@ -38,6 +47,7 @@ export function renderSafetyPage(container, {
   container.appendChild(pageElement);
 
   function requestSettings(message = 'Loading safety controller settings...') {
+    if (!connected || !featuresReady || pendingReadId !== null) return;
     if (readRetryTimer !== null) {
       clearTimeout(readRetryTimer);
       readRetryTimer = null;
@@ -46,25 +56,36 @@ export function renderSafetyPage(container, {
     setSafetyLoadingPending(loadingElement, true);
     setSafetyLoadingMessage(loadingElement, message);
     noticeElement.hidden = true;
-    panesElement.replaceChildren();
-    matrices.length = 0;
+    preserveRead = loaded;
+    metadataReady = false;
+    if (!preserveRead) {
+      panesElement.replaceChildren();
+      matrices.length = 0;
+      controllerPanes.clear();
+    }
+    setAllMatricesDisabled(true);
     const request = buildRequest(
       pageConfig.actions.read_settings.group,
       pageConfig.actions.read_settings.action,
       readTemplate.requestResponseObject
     );
-    sendSafetyRequest(sendPayload, addLog, request,
-      pageConfig.actions.read_settings.group, pageConfig.actions.read_settings.action);
+    pendingReadId = request.requestId;
+    if (!sendSafetyRequest(sendPayload, addLog, request,
+      pageConfig.actions.read_settings.group, pageConfig.actions.read_settings.action)) {
+      pendingReadId = null;
+      scheduleReadRetry(message);
+    }
   }
 
   function setAllMatricesDisabled(disabled) {
-    matrices.forEach(({ matrix, writable }) => {
-      matrix.setDisabled(disabled || !writable);
+    matrices.forEach(({ matrix, writable, reloadRequired }) => {
+      matrix.setDisabled(disabled || !writable || reloadRequired || !connected || !featuresReady ||
+        !metadataReady || verificationInProgress || pendingWrites.size > 0);
     });
   }
 
   function scheduleReadRetry(message) {
-    if (readRetryTimer !== null) {
+    if (readRetryTimer !== null || !connected || !featuresReady) {
       return;
     }
     readRetryTimer = setTimeout(() => {
@@ -73,7 +94,8 @@ export function renderSafetyPage(container, {
     }, 2000);
   }
 
-  function createControllerPane(controller, index) {
+  function createControllerPane(controller) {
+    const index = nextPaneIndex++;
     const pane = document.createElement('section');
     pane.className = 'safety-controller-pane';
 
@@ -87,6 +109,8 @@ export function renderSafetyPage(container, {
     status.setAttribute('role', 'status');
     status.hidden = true;
     pane.appendChild(status);
+    const paneState = { pane, status, deviceName: controller.device_name, matrix: null, writable: false };
+    controllerPanes.set(controller.device_name, paneState);
 
     if (!controller.available) {
       status.textContent = controller.message || 'Safety Controller settings are unavailable.';
@@ -108,7 +132,7 @@ export function renderSafetyPage(container, {
       parameters: settings
     }));
     matrix.setDisabled(!controller.writable);
-    const matrixState = { matrix, writable: controller.writable };
+    const matrixState = Object.assign(paneState, { matrix, writable: controller.writable });
     matrices.push(matrixState);
     pane.appendChild(matrix.element);
 
@@ -119,7 +143,8 @@ export function renderSafetyPage(container, {
     }
 
     matrix.bindSubmit(() => {
-      if (!matrixState.writable) {
+      if (!matrixState.writable || matrixState.reloadRequired || !connected || !featuresReady || !metadataReady ||
+          verificationInProgress) {
         return;
       }
       const request = buildRequest(
@@ -151,12 +176,12 @@ export function renderSafetyPage(container, {
   return {
     onMessage(message) {
       if (message.type === 'safety.read_settings.result') {
+        if (message.requestId !== pendingReadId) return;
+        pendingReadId = null;
         addLog('safety.read_settings.result received');
         loadingElement.hidden = true;
         setSafetyLoadingPending(loadingElement, false);
         const parameters = message.parameters || {};
-        pendingWrites.clear();
-        verificationInProgress = false;
         const controllers = parameters.controllers || [];
         if (parameters.resolution_error) {
           noticeElement.textContent = parameters.resolution_error;
@@ -166,9 +191,36 @@ export function renderSafetyPage(container, {
           noticeElement.textContent = 'No Safety Controller devices were found in the active EVerest configuration.';
           noticeElement.hidden = false;
         }
-        controllers.forEach((controller, index) => {
-          panesElement.appendChild(createControllerPane(controller, index));
+        const present = new Set();
+        controllers.forEach((controller) => {
+          present.add(controller.device_name);
+          const existing = controllerPanes.get(controller.device_name);
+          if (preserveRead && existing?.matrix && !verificationDevices.has(controller.device_name)) {
+            existing.writable = controller.available === true && controller.writable === true;
+            existing.status.textContent = controller.message || (!controller.available
+              ? 'Safety Controller settings are unavailable.' : '');
+            existing.status.hidden = !existing.status.textContent;
+          } else {
+            if (existing?.matrix) matrices.splice(matrices.indexOf(existing), 1);
+            existing?.pane.remove();
+            panesElement.appendChild(createControllerPane(controller));
+          }
         });
+        for (const [name, existing] of controllerPanes) {
+          if (!present.has(name)) {
+            existing.writable = false;
+            existing.status.textContent = 'This Safety Controller is no longer available. Your edits are retained.';
+            existing.status.hidden = false;
+          }
+        }
+        loaded = true;
+        metadataReady = true;
+        if (verificationInProgress) {
+          pendingWrites.clear();
+          verificationDevices.clear();
+          verificationInProgress = false;
+        }
+        setAllMatricesDisabled(false);
         return;
       }
 
@@ -192,7 +244,7 @@ export function renderSafetyPage(container, {
         }
         pendingWrites.delete(String(message.requestId));
         if (safetyWriteRequiresReload(message.parameters)) {
-          pending.matrixState.writable = false;
+          pending.matrixState.reloadRequired = true;
         }
         setAllMatricesDisabled(false);
         pending.status.textContent = message.type === 'safety.write_settings.result'
@@ -203,10 +255,12 @@ export function renderSafetyPage(container, {
       }
 
       if (message.type === 'safety.read_settings.error') {
+        if (message.requestId !== pendingReadId) return;
+        pendingReadId = null;
         const error = message.parameters.error;
         addLog(`safety.read_settings.error: ${error}`);
         if (error === 'safety_controller_busy') {
-          const messageText = 'A Safety Controller write is in progress; waiting to reload settings...';
+          const messageText = 'A Safety Controller write is in progress; waiting to verify settings...';
           loadingElement.hidden = false;
           setSafetyLoadingMessage(loadingElement, messageText);
           setSafetyLoadingPending(loadingElement, true);
@@ -219,24 +273,35 @@ export function renderSafetyPage(container, {
       }
     },
     onConnectionChange(connected) {
-      if (connected === true) {
-        requestSettings();
+      setConnected(connected);
+    },
+    onFeatureAvailabilityChange(ready) {
+      featuresReady = ready;
+      if (!ready && loaded) {
+        noticeElement.textContent = 'Waiting for connection and feature availability. Your edits are retained.';
+        noticeElement.hidden = false;
       }
+      setAllMatricesDisabled(false);
+      if (ready) requestSettings();
     },
     onRequestTimeout({ requestId, moduleAction }) {
-      if (moduleAction === 'safety:read_settings' && verificationInProgress) {
-        addLog(`safety.read_settings verification timed out: ${requestId}`);
-        requestSettings('The write is still being processed; verifying the controller settings...');
+      if (moduleAction === 'safety:read_settings' && String(pendingReadId) === String(requestId)) {
+        pendingReadId = null;
+        addLog(`safety.read_settings timed out: ${requestId}`);
+        scheduleReadRetry(verificationInProgress
+          ? 'The write may still be processing; verifying the controller settings...'
+          : 'Unable to refresh controller availability; retrying. Your edits are retained.');
         return;
       }
       if (moduleAction !== 'safety:write_settings' || !pendingWrites.has(String(requestId))) {
         return;
       }
       addLog(`safety.write_settings timed out: ${requestId}`);
-      verificationInProgress = true;
+      requireVerification();
       requestSettings('The write is still being processed; verifying the controller settings...');
     },
     destroy() {
+      connected = false;
       if (readRetryTimer !== null) {
         clearTimeout(readRetryTimer);
         readRetryTimer = null;
@@ -244,6 +309,25 @@ export function renderSafetyPage(container, {
       pendingWrites.clear();
     }
   };
+
+  function setConnected(value) {
+    connected = value;
+    if (!connected) {
+      metadataReady = false;
+      pendingReadId = null;
+      if (pendingWrites.size > 0) requireVerification();
+      if (readRetryTimer !== null) clearTimeout(readRetryTimer);
+      readRetryTimer = null;
+    } else if (featuresReady) {
+      requestSettings();
+    }
+    setAllMatricesDisabled(false);
+  }
+
+  function requireVerification() {
+    verificationInProgress = true;
+    pendingWrites.forEach(({ matrixState }) => verificationDevices.add(matrixState.deviceName));
+  }
 }
 
 export function filterSafetyEstopInstances(block, settings) {

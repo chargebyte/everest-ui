@@ -8,6 +8,7 @@
 #include "LayeredConfig.hpp"
 
 #include <QByteArray>
+#include <QJsonObject>
 #include <QMap>
 #include <QString>
 #include <QStringList>
@@ -16,6 +17,9 @@ UiConfig::Snapshot readBackendConfiguration();
 QString readBackendConfigValue(const QString& configKey);
 QMap<QString, QString> readBackendConfigValues(const QString& keyPrefix);
 QByteArray readDeviceTreeCompatibleData();
+QJsonObject backendFeatures(const UiConfig::Snapshot& config, const QByteArray& compatibleData);
+QJsonObject readBackendFeatures();
+bool backendFeatureAvailable(const QString& feature);
 QStringList backendConfigValueCandidates(const QString& baseValue, const QMap<QString, QString>& platformValues,
                                          const QByteArray& compatibleData);
 int resolvePositiveIntegerConfigValue(const QStringList& candidates, int defaultValue, int maxValue,

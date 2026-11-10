@@ -189,9 +189,46 @@ Malformed JSON returns `request.parse.error` with `{"error":"invalid_json"}`. A 
 | `system_logs` | `read`, `download`, `extract` |
 | `network` | `read_interfaces`, `read_settings`, `write_settings`, `reset_settings`, `cancel_reset_settings`, `apply` |
 | `ssh` | `read`, `enable`, `disable`, `set_password` |
-| `system` | `read_app_title`, `read_reboot_settings` |
+| `system` | `read_app_title`, `read_reboot_settings`, `read_features` |
 
 Names are defined in `backend/api/ProtocolSchema.hpp`; action-specific fields, results, and errors are in `backend/api/modules/*.cpp`. There is no OpenAPI or JSON Schema document.
+
+### Optional features
+
+`system.read_features` accepts `{}` and returns boolean `network` and `safety` flags in `parameters`.
+It reads configuration only, without RPC, network-interface discovery, or controller-cache access.
+It remains available when either optional feature is disabled. Invalid configuration without a last-good
+snapshot reports both flags as false. See [request](examples/system.read_features.request.json) and
+[response](examples/system.read_features.response.success.json).
+
+`available_features` enables `network` and/or `safety`; absent enables both, empty or `none` enables
+neither. After exact-key layering/masking, check `/proc/device-tree/compatible` strings in their listed
+order; the first string with a configured platform key replaces the global list. Configuration line
+order has no effect, and lists are not unioned. For example, a `chargebyte,imx93-charge-control-v=network`
+suffix wins over `phytec,imx93-phycore-som=safety` if the board string precedes the SOM string in the
+device tree; masking the exact board key allows fallback to the SOM. See the full example and
+[configuration rules](../configuration.md#optional-feature-selection).
+Other API groups, including PCAP, are unaffected.
+
+When disabled, `network.read_interfaces` succeeds with `available:false` and `interfaces:[]`;
+all other network actions fail with `network_configuration_unavailable`, even in expert mode.
+This check precedes reset-backup recovery and any operational work. Both Safety actions fail with
+`safety_controller_unavailable` before controller/file/process access. These are backend restrictions,
+not just hidden navigation. The existing per-controller `available`/`writable` fields describe runtime
+controller availability only when the Safety feature is enabled. Already-running work is not cancelled.
+See [disabled network discovery](examples/network.read_interfaces.response.disabled.json),
+[disabled Safety read](examples/safety.read_settings.response.disabled.json), and
+[disabled Safety write](examples/safety.write_settings.response.disabled.json).
+
+The browser reads feature flags on connection/reconnection. Initial discovery failure leaves optional
+pages hidden. Reconnect refreshes retain last-confirmed navigation flags and loaded Network/Safety
+drafts; backend actions remain blocked until fresh flags and page availability checks succeed. Only a
+successful fresh response disabling the active feature redirects to EVerest Config. Errors, malformed
+responses, send failures, and timeouts retain drafts and retry discovery after two seconds, with one
+request outstanding per connection. Disconnect/logout cancels retries. Page metadata/inventory
+refresh does not overwrite unsaved inputs. If a mutation was interrupted, the page verifies its state
+before enabling further actions and may reload affected settings; mutations are never replayed
+automatically. Drafts are session-local, not persisted across browser reloads or page navigation.
 
 ### Network interface classification
 
@@ -507,16 +544,17 @@ WebSocket template filenames use `<group>.<action>.request.json`, `<group>.<acti
 | `system_logs.read` | [request](examples/system_logs.read.request.json) | [response](examples/system_logs.read.response.success.json) | [response](examples/system_logs.read.response.error.json) |
 | `system_logs.download` | [request](examples/system_logs.download.request.json) | [response](examples/system_logs.download.response.success.json) | [response](examples/system_logs.download.response.error.json) |
 | `system_logs.extract` | [request](examples/system_logs.extract.request.json) | [response](examples/system_logs.extract.response.success.json) | [response](examples/system_logs.extract.response.error.json) |
-| `network.read_interfaces` | [request](examples/network.read_interfaces.request.json) | [response](examples/network.read_interfaces.response.success.json) | [response](examples/network.read_interfaces.response.error.json) |
-| `network.read_settings` | [request](examples/network.read_settings.request.json) | [response](examples/network.read_settings.response.success.json) | [response](examples/network.read_settings.response.error.json) |
-| `network.write_settings` | [request](examples/network.write_settings.request.json) | [response](examples/network.write_settings.response.success.json) | [response](examples/network.write_settings.response.error.json) |
+| `network.read_interfaces` | [request](examples/network.read_interfaces.request.json) | [response](examples/network.read_interfaces.response.success.json), [disabled](examples/network.read_interfaces.response.disabled.json) | [response](examples/network.read_interfaces.response.error.json) |
+| `network.read_settings` | [request](examples/network.read_settings.request.json) | [response](examples/network.read_settings.response.success.json) | [response](examples/network.read_settings.response.error.json), [disabled](examples/network.read_settings.response.disabled.json) |
+| `network.write_settings` | [request](examples/network.write_settings.request.json) | [response](examples/network.write_settings.response.success.json) | [response](examples/network.write_settings.response.error.json), [disabled](examples/network.write_settings.response.disabled.json) |
 | `network.read_settings` (CAN) | [request](examples/network.read_settings.can.request.json) | [response](examples/network.read_settings.can.response.success.json) | [response](examples/network.read_settings.response.error.json) |
 | `network.write_settings` (CAN) | [request](examples/network.write_settings.can.request.json) | [response](examples/network.write_settings.can.response.success.json) | [response](examples/network.write_settings.response.error.json) |
-| `network.reset_settings` | [request](examples/network.reset_settings.request.json) | [response](examples/network.reset_settings.response.success.json) | [response](examples/network.reset_settings.response.error.json) |
-| `network.cancel_reset_settings` | [request](examples/network.cancel_reset_settings.request.json) | [response](examples/network.cancel_reset_settings.response.success.json) | [response](examples/network.cancel_reset_settings.response.error.json) |
-| `network.apply` | [request](examples/network.apply.request.json) | [response](examples/network.apply.response.success.json) | [response](examples/network.apply.response.error.json) |
+| `network.reset_settings` | [request](examples/network.reset_settings.request.json) | [response](examples/network.reset_settings.response.success.json) | [response](examples/network.reset_settings.response.error.json), [disabled](examples/network.reset_settings.response.disabled.json) |
+| `network.cancel_reset_settings` | [request](examples/network.cancel_reset_settings.request.json) | [response](examples/network.cancel_reset_settings.response.success.json) | [response](examples/network.cancel_reset_settings.response.error.json), [disabled](examples/network.cancel_reset_settings.response.disabled.json) |
+| `network.apply` | [request](examples/network.apply.request.json) | [response](examples/network.apply.response.success.json) | [response](examples/network.apply.response.error.json), [disabled](examples/network.apply.response.disabled.json) |
 | `system.read_app_title` | [request](examples/system.read_app_title.request.json) | [response](examples/system.read_app_title.response.success.json) | [response](examples/system.read_app_title.response.error.json) |
 | `system.read_reboot_settings` | [request](examples/system.read_reboot_settings.request.json) | [response](examples/system.read_reboot_settings.response.success.json) | Settings fall back to defaults; boot ID may be empty. |
+| `system.read_features` | [request](examples/system.read_features.request.json) | [response](examples/system.read_features.response.success.json) | Configuration failure without a last-good snapshot returns both flags false. |
 | `ssh.read` | [request](examples/ssh.read.request.json) | [helper enabled](examples/ssh.read.response.success.json), [helper disabled](examples/ssh.read.response.disabled.json) | [helper failure](examples/ssh.read.response.error.json), [invalid method](examples/ssh.read.response.config_invalid.json) |
 | `ssh.enable` | [request](examples/ssh.enable.request.json) | [acknowledgement](examples/ssh.enable.response.success.json) | [helper failure](examples/ssh.enable.response.error.json), [systemd failure](examples/ssh.enable.response.systemd_failed.json), [invalid method](examples/ssh.enable.response.config_invalid.json) |
 | `ssh.disable` | [request](examples/ssh.disable.request.json) | [acknowledgement](examples/ssh.disable.response.success.json) | [helper failure](examples/ssh.disable.response.error.json), [systemd failure](examples/ssh.disable.response.systemd_failed.json), [invalid method](examples/ssh.disable.response.config_invalid.json) |
